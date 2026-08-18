@@ -125,6 +125,11 @@ const PESS_UI_PANEL_REL = './js/ui/pess-panel.js';
 // cannot join it silently.
 const EIC_PANEL_REL = './js/ui/eic-panel.js';
 const EIC_TICKER_PANEL_REL = './js/ui/eic-ticker-analysis-panel.js';
+// EIC PR 4, the last of the family: the live deep dive (eicFetchLegs ×2,
+// eicDXLinkDeepDive, eicRunDXLink). Named explicitly for the same reason as
+// every entry above — an exact-set inventory, never an `eic-*` glob — and with
+// this entry the EIC family is closed at four modules.
+const EIC_LIVE_DEEP_DIVE_REL = './js/ui/eic-live-deep-dive.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2371,7 +2376,9 @@ section('30. physical script order');
   // after it, the DSB panel extracted by PR 3, the SFS UI panel extracted by SFS
   // PR 3, the PESS batch panel extracted by PESS PR 3, the PESS UI panel
   // extracted by PESS PR 4 which closed that family, the EIC panel extracted by
-  // EIC PR 2, and the EIC ticker-analysis panel extracted by EIC PR 3. The BDSP relocation itself still contributed only one — which
+  // EIC PR 2, the EIC ticker-analysis panel extracted by EIC PR 3, and the EIC
+  // live deep dive extracted by EIC PR 4 which closed THAT family. The BDSP
+  // relocation itself still contributed only one — which
   // is what this exact-set assertion pins; it is an inventory, not a budget, so
   // it is stated as the full sorted set rather than a count or a lower bound.
   // Each new entry is NAMED: there is deliberately no `js/ui/eic-*` pattern, so
@@ -2380,8 +2387,8 @@ section('30. physical script order');
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
      [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL, PESS_UI_PANEL_REL,
-      EIC_PANEL_REL, EIC_TICKER_PANEL_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly eight scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel and the EIC ticker-analysis panel');
+      EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly nine scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel, the EIC ticker-analysis panel and the EIC live-deep-dive module');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

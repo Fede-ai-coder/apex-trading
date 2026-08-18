@@ -1,4 +1,11 @@
 'use strict';
+// An unhandled rejection anywhere in the async proof chains would otherwise
+// stop the suite silently: the final summary would never print and the process
+// would still exit 0, reporting green while having proved less than it claims.
+process.on('unhandledRejection', (e) => {
+  console.log('UNHANDLED REJECTION in the contract harness: ' + (e && e.stack ? e.stack : e));
+  process.exit(1);
+});
 // ═════════════════════════════════════════════════════════════════════════════
 // EIC EXTRACTION BOUNDARY CONTRACT
 //
@@ -13,11 +20,16 @@
 //
 // THE PLAN (option E of the post-PESS audit, PR #374 — evidence-only)
 //   SCREENING_RULES   js/services/eic-screening-rules.js        4 / 14,368   SHIPPED
-//   PANEL             js/ui/eic-panel.js                        2 / 15,268   pending
-//   TICKER_ANALYSIS   js/ui/eic-ticker-analysis-panel.js        1 / 13,990   pending
-//   LIVE_DEEP_DIVE    js/ui/eic-live-deep-dive.js               4 / 23,726   pending
+//   PANEL             js/ui/eic-panel.js                        2 / 15,268   SHIPPED
+//   TICKER_ANALYSIS   js/ui/eic-ticker-analysis-panel.js        1 / 13,990   SHIPPED
+//   LIVE_DEEP_DIVE    js/ui/eic-live-deep-dive.js               4 / 23,726   SHIPPED
 //                                                              ──────────────
-//                                                             11 / 67,352
+//                                                             11 / 67,352   COMPLETE
+//
+//   THE FAMILY IS CLOSED. Inline EIC residue is 0 sites / 0 chars, the ratchet
+//   reads 11 → 7 → 5 → 4 → 0, and that ZERO IS TERMINAL: guardRatchet refuses a
+//   later positive allowance, and guardInlineResidue refuses any EIC declaration
+//   reappearing in the monolith. There is no PR 5.
 //
 //   Note the SITE counts. Eleven sites, nine unique names: both `eicLiqFromLegs`
 //   and `eicFetchLegs` are declared TWICE. This contract counts sites
@@ -83,6 +95,7 @@ const G = require('./lib/eic-contract-guards.js');
 const EIC_UNDO = require('./lib/eic-pr1-undo.js');
 const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 const EIC_UNDO3 = require('./lib/eic-pr3-undo.js');
+const EIC_UNDO4 = require('./lib/eic-pr4-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const MODULE_REL = 'js/services/eic-screening-rules.js';
@@ -114,6 +127,8 @@ const PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-panel.js');
 const PANEL_SRC = fs.readFileSync(PANEL_PATH, 'utf8');
 const TA_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-ticker-analysis-panel.js');
 const TA_SRC = fs.readFileSync(TA_PATH, 'utf8');
+const LDD_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-live-deep-dive.js');
+const LDD_SRC = fs.readFileSync(LDD_PATH, 'utf8');
 const SCRIPT_TAGS = L.parseScriptTags(HTML);
 const SCRIPT_MODEL = SCRIPT_TAGS.map((t) => ({
   src: t.src ? String(t.src).trim() : null,
@@ -129,6 +144,11 @@ const ORDERED = L.loadOrderedScriptSources();
 const MODULE_DECLS = scanTopLevelDeclarations(MODULE_SRC);
 const PANEL_DECLS = scanTopLevelDeclarations(PANEL_SRC);
 const TA_DECLS = scanTopLevelDeclarations(TA_SRC);
+const LDD_DECLS = scanTopLevelDeclarations(LDD_SRC);
+// Assigned by §9F once the BASE transcripts exist, for the same reason
+// TA_TRANSCRIPT_GUARD is: §12 mutates the real bodies through it, so a parity
+// regression is proved rather than asserted.
+let LDD_TRANSCRIPT_GUARD = null;
 // Assigned by §9D once the BASE transcript exists, for the same reason
 // PANEL_TRANSCRIPT_GUARD is: §12 mutates the real body through it, so a parity
 // regression is proved rather than asserted.
@@ -161,13 +181,14 @@ const MANIFEST = [
   ['eicBuildLiveContext', SCREENING_RULES, 8499, 'function', 1953770],
   ['eicRunDXLink', LIVE_DEEP_DIVE, 10623, 'async function', 1962349],
 ];
-const RATCHET = [11, 7, 5, 4];
+const RATCHET = [11, 7, 5, 4, 0];
 // PR 1's three names. Sections 8 and 9 are PR 1's purity and parity proofs and
 // must keep meaning exactly that; the panel gets its own sections, because a
 // panel is not pure and proving it "pure" would be proving something false.
 const MOVED_NAMES = G.PR1_NAMES;
 const PANEL_NAMES = G.PANEL_NAMES;
 const TA_NAMES = G.TICKER_ANALYSIS_NAMES;
+const LDD_NAMES = G.LIVE_DEEP_DIVE_NAMES;
 
 function git(args) { return execFileSync('git', args, { cwd: ROOT, maxBuffer: 1 << 30, encoding: 'utf8' }); }
 function baseHtml() {
@@ -206,6 +227,18 @@ function basePr2Html() {
 const BASE_PR2_HTML = basePr2Html();
 const BASE_PR2_MONO = BASE_PR2_HTML ? monolithOf(BASE_PR2_HTML) : null;
 
+// PR 4 was cut from a FOURTH base: the post-PR3 application, i.e. dev-clean
+// after #377 merged. Same pattern, verified by hash so a wrong blob cannot
+// silently stand in for the right one.
+const BASE_PR3_REF = EIC_UNDO4.POST_PR3_REF;
+function basePr3Html() {
+  let s = null;
+  try { s = git(['show', BASE_PR3_REF + ':index.html']); } catch (_) { return null; }
+  return sha256(s) === EIC_UNDO4.POST_PR3_INDEX_SHA256 ? s : null;
+}
+const BASE_PR3_HTML = basePr3Html();
+const BASE_PR3_MONO = BASE_PR3_HTML ? monolithOf(BASE_PR3_HTML) : null;
+
 // Three of the strongest proofs below — byte-for-byte relocation (§4), BASE vs
 // HEAD parity (§9) and the whole-file comparison (§10) — need the base blob.
 // They degrade to a skip when it is unreachable, which is right for a shallow
@@ -220,8 +253,8 @@ function isShallow() {
 const SHALLOW = isShallow();
 
 console.log('════════════════════════════════════════════════════════════════════════════════');
-console.log('  EIC EXTRACTION BOUNDARY CONTRACT — PRs 1-3 of 4');
-console.log('  (SCREENING_RULES, PANEL, TICKER_ANALYSIS · LIVE_DEEP_DIVE pending)');
+console.log('  EIC EXTRACTION BOUNDARY CONTRACT — PRs 1-4 of 4, COMPLETE');
+console.log('  (SCREENING_RULES, PANEL, TICKER_ANALYSIS, LIVE_DEEP_DIVE · 0 inline residue)');
 console.log('════════════════════════════════════════════════════════════════════════════════');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -254,6 +287,51 @@ eq(new Set(MANIFEST.map((m) => m[0])).size, G.FAMILY_NAMES, '2.3 …which are ni
 eq(MANIFEST.reduce((a, m) => a + m[2], 0), G.FAMILY_CHARS, '2.4 …totalling 67,352 chars');
 const dupNames = Array.from(new Set(MANIFEST.map((m) => m[0]))).filter((n) => MANIFEST.filter((m) => m[0] === n).length > 1);
 deepEq(dupNames.sort(), ['eicFetchLegs', 'eicLiqFromLegs'], '2.5 exactly two names are declared twice');
+// ── every site has EXACTLY ONE declared owner, checked against the SOURCE ───
+// While the family was mid-extraction, guardManifest's shipped/pending
+// arithmetic caught a wrong owner because it moved a site between buckets. Now
+// that all four owners have shipped, that arithmetic no longer distinguishes
+// them, so ownership is cross-checked against what the modules really declare.
+const DECLS_BY_MODULE = {
+  './js/services/eic-screening-rules.js': MODULE_DECLS.map((d) => d.name),
+  './js/ui/eic-panel.js': PANEL_DECLS.map((d) => d.name),
+  './js/ui/eic-ticker-analysis-panel.js': TA_DECLS.map((d) => d.name),
+  './js/ui/eic-live-deep-dive.js': LDD_DECLS.map((d) => d.name),
+};
+expectClean(G.guardOwnership(MANIFEST, DECLS_BY_MODULE), '2.6 all eleven sites have exactly one declared owner, and it is the module that declares them');
+eq(Object.keys(DECLS_BY_MODULE).length, 4, '2.7 exactly four owning modules');
+eq(Object.keys(DECLS_BY_MODULE).reduce((a, k) => a + DECLS_BY_MODULE[k].length, 0), G.FAMILY_SITES,
+  '2.8 …declaring eleven sites between them — application-wide declaration conservation is exact');
+deepEq(Object.keys(DECLS_BY_MODULE).map((k) => G.canonicalLocalSrc(k)).sort(), G.EIC_MODULE_FILES.slice().sort(),
+  '2.9 …and they are exactly the four modules the inventory declares by name');
+
+// ── THE DISK INVENTORY ──────────────────────────────────────────────────────
+// Script tags say what the application LOADS. This says what EXISTS. A fifth
+// eic-*.js module sitting unreferenced in js/ui/ is still a fifth module of a
+// family that is supposed to be closed at four — it would be swept up by any
+// later glob, bundler or audit — so both inventories are checked.
+//
+// The directories are named explicitly, for the same reason the file list is:
+// a recursive walk of js/ would quietly extend the rule's reach as the tree
+// grows, and this contract only owns the three directories the family could
+// plausibly land in.
+const EIC_SCAN_DIRS = ['js/services', 'js/ui', 'js/adapters'];
+const DISK_JS_FILES = [];
+for (const d of EIC_SCAN_DIRS) {
+  const abs = path.join(ROOT, d);
+  if (!fs.existsSync(abs)) continue;
+  for (const f of fs.readdirSync(abs)) {
+    if (/\.js$/.test(f)) DISK_JS_FILES.push(d + '/' + f);
+  }
+}
+const DISK_EIC_FILES = DISK_JS_FILES.filter((f) => G.isEicModulePath(G.canonicalLocalSrc(f))).sort();
+deepEq(DISK_EIC_FILES, G.EIC_MODULE_FILES.slice().sort(),
+  '2.10 exactly four eic-*.js files EXIST on disk across js/services, js/ui and js/adapters — no unreferenced fifth');
+ok(DISK_JS_FILES.length > DISK_EIC_FILES.length,
+  '2.11 …found among ' + DISK_JS_FILES.length + ' .js files in those directories, so the scan really looked');
+for (const f of G.EIC_MODULE_FILES) {
+  ok(fs.existsSync(path.join(ROOT, f)), '2.12 the declared module exists on disk: ' + f);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 section('3. THE MODULE');
@@ -291,7 +369,7 @@ if (BASE_MONO) {
     if (modText === baseText) direct++;
   }
   eq(direct, 4, '4.4 4/4 sites byte-identical to the real base blob');
-  const baseEic = scanTopLevelDeclarations(BASE_MONO).filter((d) => /^eic/i.test(d.name) || d.name === 'runEICPanel');
+  const baseEic = scanTopLevelDeclarations(BASE_MONO).filter(G.isEicFamilyDecl);
   eq(baseEic.length, G.FAMILY_SITES, '4.5 the base monolith declared all eleven EIC sites');
   eq(baseEic.reduce((a, d) => a + d.chars, 0), G.FAMILY_CHARS, '4.6 …totalling 67,352 chars');
   note('4/4 byte-identical, verified against the base blob at ' + BASE_REF.slice(0, 10));
@@ -304,15 +382,55 @@ if (BASE_MONO) {
 section('5. WHAT REMAINS INLINE — the ratchet');
 // ═════════════════════════════════════════════════════════════════════════════
 expectClean(G.guardInlineResidue(INLINE), '5.1 the inline residue satisfies the residue contract');
-const inlineEic = INLINE_DECLS.filter((d) => /^eic/i.test(d.name) || d.name === 'runEICPanel');
-eq(inlineEic.length, G.PENDING_SITES, '5.2 exactly four EIC sites remain inline');
-eq(inlineEic.reduce((a, d) => a + d.chars, 0), G.PENDING_CHARS, '5.3 …totalling 23,726 chars');
-deepEq(inlineEic.map((d) => d.name), G.PENDING_ORDER, '5.4 …and they are exactly the pending LIVE_DEEP_DIVE sites, in physical order');
-eq(inlineEic.filter((d) => d.name === 'eicFetchLegs').length, 2,
-  '5.5 eicFetchLegs is still declared TWICE inline — PR 4 must move both');
+const inlineEic = INLINE_DECLS.filter(G.isEicFamilyDecl);
+eq(inlineEic.length, G.PENDING_SITES, '5.2 ZERO EIC sites remain inline — the family is closed');
+eq(inlineEic.reduce((a, d) => a + d.chars, 0), G.PENDING_CHARS, '5.3 …totalling 0 chars');
+deepEq(inlineEic.map((d) => d.name), G.PENDING_ORDER, '5.4 …and the residue list is empty');
+eq(inlineEic.filter((d) => d.name === 'eicFetchLegs').length, 0,
+  '5.5 NEITHER eicFetchLegs copy is left inline — PR 4 moved both');
 expectClean(G.guardRatchet(RATCHET, inlineEic.length), '5.6 the ratchet satisfies the shrink-only contract');
-deepEq(RATCHET, [11, 7, 5, 4], '5.7 the inline allowance ratcheted 11 → 7 → 5 → 4');
-eq(new Set(inlineEic.map((d) => d.name)).size, 3, '5.8 …across exactly three unique inline names, all owned by PR 4');
+deepEq(RATCHET, [11, 7, 5, 4, 0], '5.7 the inline allowance ratcheted 11 → 7 → 5 → 4 → 0');
+eq(new Set(inlineEic.map((d) => d.name)).size, 0, '5.8 …across zero unique inline names');
+// ── the ZERO IS TERMINAL, three ways ───────────────────────────────────────
+eq(RATCHET[RATCHET.length - 1], 0, '5.9 zero is the FINAL value of the ratchet');
+eq(Math.min.apply(null, RATCHET), 0, '5.10 …and the MINIMUM — nothing sits below it');
+eq(RATCHET.indexOf(0), RATCHET.length - 1, '5.11 …and it occurs exactly once, at the end: no allowance was appended after it');
+ok(G.guardRatchet(RATCHET.concat([2]), 2).violations.some((v) => /RATCHET_REOPENED/.test(v)),
+  '5.12 appending a positive allowance AFTER the zero is REJECTED by name (RATCHET_REOPENED)');
+ok(G.guardRatchet([11, 7, 5, 4, 0], 1).violations.some((v) => /RATCHET_ZERO_UNEARNED/.test(v)),
+  '5.13 …and a zero that is merely asserted while a declaration is still inline is REJECTED too');
+// Every EIC name, application-wide, is declared in a MODULE and nowhere inline.
+for (const n of G.SHIPPED_NAMES) {
+  eq(INLINE_DECLS.filter((d) => d.name === n).length, 0,
+    '5.14 ' + n + ' is not declared inline');
+}
+eq(INLINE_DECLS.filter(G.isEicFamilyDecl).length, 0,
+  '5.15 no declaration whose name LOOKS like an EIC name survives inline — checked by the shared family PREDICATE, not by the shipped list');
+// The predicate is the load-bearing half of 5.15, so it is proved here rather
+// than assumed. An independent review found the original inline expression
+// (`/^eic/i.test(name) || name === 'runEICPanel'`) missed two ordinary shapes,
+// which meant 5.15 was asserting something the filter could not deliver.
+{
+  const MUST = ['eicFoo', 'EICFoo', '_eicFoo', 'runEICFoo', 'runEICSomething', '_eicBootstrap',
+    'runEICPanel', 'eicRunDXLink', 'eicFetchLegs', 'EIC_THING', '$eicX'];
+  const MUST_NOT = ['deiceThing', 'receiptTotal', 'pessAnalyzeAll', 'computeSetupScore',
+    'runPESSPanel', 'specificThing', 'eiffelTower', 'sfsPanel', 'bdspRender'];
+  let wrong = 0;
+  for (const n of MUST) if (!G.isEicFamilyName(n)) { wrong++; ok(false, '5.16 the family predicate MISSED ' + n); }
+  for (const n of MUST_NOT) if (G.isEicFamilyName(n)) { wrong++; ok(false, '5.16 the family predicate FALSE-POSITIVED on ' + n); }
+  eq(wrong, 0, '5.16 the shared EIC family predicate classifies all ' + (MUST.length + MUST_NOT.length)
+    + ' controls correctly — including the two shapes the old inline regex missed');
+  // The two shapes that used to slip through, named individually so a
+  // regression names them back.
+  ok(G.isEicFamilyName('_eicBootstrap'), '5.17 a leading underscore does not hide an EIC name (the old ^eic anchor missed it)');
+  ok(G.isEicFamilyName('runEICSomething'), '5.18 EIC in the MIDDLE of a name is detected (the old rule hardcoded only runEICPanel)');
+  ok(!G.isEicFamilyName('deiceThing'), '5.19 …and it matches SEGMENTS, so a name that merely contains the letters is not swept in');
+  // Every one of the nine shipped names is recognised by the predicate, so the
+  // pattern layer and the exact-name layer agree about the family they describe.
+  for (const n of G.SHIPPED_NAMES) {
+    ok(G.isEicFamilyName(n), '5.20 the predicate recognises the shipped name ' + n);
+  }
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 section('6. THE DUPLICATE — analysed, not tidied');
@@ -415,8 +533,8 @@ ok(MOD_SLOT >= 0 && MONO_SLOT > MOD_SLOT, '7.8 the module loads before the inlin
 const DOWNSTREAM = ORDERED.slice(MOD_SLOT + 1, MONO_SLOT).filter((s) => s.isAppJs && s.code != null);
 const OBSERVER_SOURCES = DOWNSTREAM.map((s) => ({ label: s.src, code: s.code }))
   .concat([{ label: '(inline monolith)', code: ORDERED[MONO_SLOT].code }]);
-eq(DOWNSTREAM.length, 26, '7.9 twenty-six local scripts execute between the module and the monolith');
-eq(OBSERVER_SOURCES.length, 27, '7.10 …and all 27 downstream sources are scanned, monolith included');
+eq(DOWNSTREAM.length, 27, '7.9 twenty-seven local scripts execute between the module and the monolith (PR 4 added one)');
+eq(OBSERVER_SOURCES.length, 28, '7.10 …and all 28 downstream sources are scanned, monolith included');
 expectClean(G.guardNoLoadTimeObservers(OBSERVER_SOURCES, MOVED_NAMES),
   '7.11 no downstream source READS a relocated binding at evaluation time');
 const REAL_OBS = {};
@@ -631,6 +749,153 @@ note('ticker-analysis observers — ' + TA_OBSERVER_SOURCES.length + ' sources (
   deepEq(census.map((x) => x[0]).sort(),
     ['./js/ui/eic-panel.js', './js/ui/eic-ticker-analysis-panel.js'].sort(),
     '7D.10 …and those two occurrences are the module that declares it and the panel that calls it — none left in the monolith');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('7E. THE LIVE-DEEP-DIVE LOAD-TIME OBSERVER PROOF — EIC PR 4');
+//
+// Moving three names into an earlier classic script changes WHEN their global
+// bindings start existing. In a pure relocation that is the only load-time
+// semantic difference available, so it is the thing this section measures — for
+// all THREE unique names, not just the interesting one.
+//
+// The analysis distinguishes three things that are easy to conflate:
+//
+//   EVALUATION-TIME  read while the script that contains it is executing. This
+//                    is the only kind that can break a relocation, and the only
+//                    kind that must be zero.
+//   CALL-TIME        parked inside a function body, resolved when that function
+//                    is later called.
+//   CLICK/LISTENER   parked inside a listener callback, resolved when the event
+//                    fires. A special case of call-time, counted separately
+//                    because it is the shape the one real caller takes.
+//
+// Top-level `if`/`for`/`while`/`switch` blocks are EVALUATION-TIME and are
+// re-proved as such here. The inherited scanner used to misread them as deferred
+// function bodies; PR 3 fixed that and 7E-a re-pins all four forms against the
+// PR 4 names, so the repair cannot regress in the PR that most depends on it —
+// `if (typeof eicRunDXLink === 'function') { … }` is exactly the shape a
+// load-time read of this module's names would take.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── 7E-a. the scanner proves itself on the PR 4 names, before the real scan ──
+const LDD_OBSERVER_CONTROLS = [
+  ['a top-level read', 'var boot = eicRunDXLink;', 'load'],
+  ['a top-level call', 'eicRunDXLink("AAPL");', 'load'],
+  ['a top-level typeof probe', 'typeof eicDXLinkDeepDive;', 'load'],
+  ['registration by reference', 'register(eicFetchLegs);', 'load'],
+  ['assignment onto window', 'window.h = eicRunDXLink;', 'load'],
+  ['an IIFE that calls it', '(function(){ eicDXLinkDeepDive("A"); })();', 'load'],
+  ['an array literal', 'var a = [eicFetchLegs];', 'load'],
+  ['an object value', 'var o = { fn: eicRunDXLink };', 'load'],
+  // The four control-flow forms. A reference inside ANY of them is read while
+  // the script evaluates, and hiding them as deferred bodies is the one direction
+  // this scanner must never get wrong.
+  ['inside a top-level if-block', 'if (ready) { eicRunDXLink("A"); }', 'load'],
+  ['inside a top-level typeof-guard if', 'if (typeof eicRunDXLink === "function") { eicRunDXLink("A"); }', 'load'],
+  ['inside a top-level for-block', 'for (var i=0;i<1;i++) { eicFetchLegs("A"); }', 'load'],
+  ['inside a top-level while-block', 'while (go) { eicDXLinkDeepDive("A"); }', 'load'],
+  ['inside a top-level switch-block', 'switch (k) { case 1: eicRunDXLink("A"); }', 'load'],
+  // …and the forms that are genuinely deferred and must STAY deferred.
+  ['parked in a function body', 'function later(){ eicRunDXLink("AAPL"); }', 'call'],
+  ['parked in an async function body', 'async function later(){ await eicDXLinkDeepDive("A"); }', 'call'],
+  ['parked in a setTimeout callback', 'setTimeout(function(){ eicRunDXLink("A"); }, 10);', 'call'],
+  ['parked in a click listener', 'el.addEventListener("click", function(){ eicRunDXLink("A"); });', 'call'],
+  ['parked in a method shorthand', 'var o = { run(){ eicRunDXLink("A"); } };', 'call'],
+  ['parked in a class method', 'class A { run(){ eicFetchLegs("A"); } }', 'call'],
+  ['parked in an arrow block', 'var f = () => { eicDXLinkDeepDive("A"); };', 'call'],
+  ['parked in an arrow concise body', 'var f = x => eicRunDXLink(x);', 'call'],
+  // Text that merely MENTIONS a name is not a JS read at all.
+  ['a mention inside a string', 'var s = "eicRunDXLink(x)";', 'none'],
+  ['a mention inside a line comment', '// eicRunDXLink is called on click', 'none'],
+  ['a mention inside a block comment', '/* eicDXLinkDeepDive(x) */', 'none'],
+  ['an unrelated property of the same name', 'obj.eicRunDXLink = 1;', 'none'],
+];
+let lddControlFails = 0;
+for (const [label, code, want] of LDD_OBSERVER_CONTROLS) {
+  const c = classifyReferences(code, LDD_NAMES);
+  const got = c.loadTime.length ? 'load' : (c.callTime.length ? 'call' : 'none');
+  if (got !== want) { lddControlFails++; ok(false, '7E.1 control [' + label + '] expected ' + want + ', got ' + got); }
+}
+eq(lddControlFails, 0, '7E.1 all ' + LDD_OBSERVER_CONTROLS.length
+  + ' scanner controls classify correctly — including the five top-level control-flow forms, which are LOAD-TIME');
+eq(LDD_OBSERVER_CONTROLS.filter((c) => c[2] === 'load').length, 13, '7E.2 thirteen positive (evaluation-time) controls');
+eq(LDD_OBSERVER_CONTROLS.filter((c) => c[2] === 'call').length, 8, '7E.3 eight deferred (call-time) controls');
+eq(LDD_OBSERVER_CONTROLS.filter((c) => c[2] === 'none').length, 4, '7E.4 four non-reads (comments, strings, unrelated properties)');
+
+// ── 7E-b. the real scan, in the live-deep-dive module's own window ──────────
+const LDD_SLOT = ORDERED.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+ok(LDD_SLOT >= 0, '7E.5 the live-deep-dive module has a slot in the real load order');
+ok(LDD_SLOT < MONO_SLOT, '7E.6 …before the inline monolith');
+eq(LDD_SLOT, TA_SLOT + 1, '7E.7 …and immediately after the ticker-analysis panel');
+const LDD_DOWNSTREAM = ORDERED.slice(LDD_SLOT + 1, MONO_SLOT).filter((s) => s.isAppJs && s.code != null);
+const LDD_OBSERVER_SOURCES = LDD_DOWNSTREAM.map((s) => ({ label: s.src, code: s.code }))
+  .concat([{ label: '(inline monolith)', code: ORDERED[MONO_SLOT].code }]);
+expectClean(G.guardNoLoadTimeObservers(LDD_OBSERVER_SOURCES, LDD_NAMES),
+  '7E.8 no source downstream of the live-deep-dive module READS any of its three names at evaluation time');
+const LDD_OBS = {};
+for (const nm of LDD_NAMES) {
+  let load = 0, call = 0;
+  for (const s of LDD_OBSERVER_SOURCES) {
+    const c = classifyReferences(s.code, [nm]);
+    load += c.loadTime.length; call += c.callTime.length;
+  }
+  LDD_OBS[nm] = { load, call };
+  eq(load, 0, '7E.9 ' + nm + ' — load-time observers downstream of the module');
+}
+note('live-deep-dive observers — ' + LDD_OBSERVER_SOURCES.length + ' sources ('
+  + LDD_DOWNSTREAM.length + ' local + the monolith) · '
+  + LDD_NAMES.map((n) => n + ': ' + LDD_OBS[n].load + ' load / ' + LDD_OBS[n].call + ' call').join(' · '));
+
+// ── 7E-c. the UPSTREAM caller, and the CLICK-TIME classification ────────────
+// js/ui/eic-ticker-analysis-panel.js loads BEFORE this module, so it is not in
+// the scan window above — and it holds the only application reference to any of
+// these three names. Being upstream is precisely why it has to be classified
+// explicitly: if that reference were evaluation-time, it would read a binding
+// that does not exist yet and the relocation would be unsafe in a way no
+// downstream scan could see.
+{
+  const c = classifyReferences(TA_SRC, LDD_NAMES);
+  eq(c.loadTime.length, 0,
+    '7E.10 js/ui/eic-ticker-analysis-panel.js — which loads BEFORE this module — never reads a PR 4 name at evaluation time');
+  eq(c.callTime.length, 1, '7E.11 …it holds exactly ONE deferred reference');
+  eq(c.callTime[0].name, 'eicRunDXLink', '7E.12 …and it is eicRunDXLink');
+  // CLICK-TIME specifically, not merely "deferred": the reference sits inside an
+  // addEventListener callback, so it resolves when the user clicks.
+  ok(/addEventListener\([^)]*['"]click['"][\s\S]{0,200}eicRunDXLink/.test(TA_SRC),
+    '7E.13 …inside an addEventListener("click", …) callback — resolved off the global scope at CLICK time');
+  // Application-wide census, with comments and strings masked so a mention
+  // cannot inflate or deflate the count.
+  const census = {};
+  for (const nm of LDD_NAMES) {
+    census[nm] = [];
+    for (const s of ORDERED.filter((x) => x.isAppJs && x.code != null)) {
+      const n = (G.maskLiterals(s.code).match(new RegExp('\\b' + nm + '\\b', 'g')) || []).length;
+      if (n) census[nm].push([String(s.src || '(monolith)'), n]);
+    }
+  }
+  // eicFetchLegs: TWO declarations, ZERO callers. Dead code, and pinned as such.
+  deepEq(census.eicFetchLegs.map((x) => x[0]), ['./js/ui/eic-live-deep-dive.js'],
+    '7E.14 eicFetchLegs occurs ONLY in its own module — it has zero call sites anywhere in the application');
+  eq(census.eicFetchLegs.reduce((a, x) => a + x[1], 0), 2,
+    '7E.15 …exactly twice: its two declarations, and nothing else. Both copies are DEAD CODE, recorded not repaired');
+  // eicDXLinkDeepDive: one declaration + one in-module caller.
+  deepEq(census.eicDXLinkDeepDive.map((x) => x[0]), ['./js/ui/eic-live-deep-dive.js'],
+    '7E.16 eicDXLinkDeepDive occurs only in its own module');
+  eq(census.eicDXLinkDeepDive.reduce((a, x) => a + x[1], 0), 2,
+    '7E.17 …twice: its declaration and the in-module call from eicRunDXLink');
+  // eicRunDXLink: one declaration + one CROSS-MODULE caller, upstream.
+  deepEq(census.eicRunDXLink.map((x) => x[0]).sort(),
+    ['./js/ui/eic-live-deep-dive.js', './js/ui/eic-ticker-analysis-panel.js'].sort(),
+    '7E.18 eicRunDXLink occurs in its own module and in the ticker-analysis panel — and NOWHERE in the monolith');
+  eq(census.eicRunDXLink.reduce((a, x) => a + x[1], 0), 2,
+    '7E.19 …twice: its declaration and its one caller');
+  // Nothing at all is left in the monolith.
+  const monoMasked = G.maskLiterals(ORDERED[MONO_SLOT].code);
+  for (const nm of LDD_NAMES) {
+    eq((monoMasked.match(new RegExp('\\b' + nm + '\\b', 'g')) || []).length, 0,
+      '7E.20 ' + nm + ' does not appear in the inline monolith at all — not as a declaration, not as a reference');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1515,13 +1780,21 @@ if (BASE_PR2_MONO) {
       '9E.7 eicScreenTicker still comes from js/services/eic-screening-rules.js');
     eq(String(HEAD_APP3.ctx.runEICPanel), panelText('runEICPanel'), '9E.8 runEICPanel still comes from js/ui/eic-panel.js');
     eq(String(HEAD_APP3.ctx.eicAnalyzeAll), panelText('eicAnalyzeAll'), '9E.9 …and so does eicAnalyzeAll');
-    // The PR 4 names must STILL be the monolith's — proving PR 4 was not started.
+    // The PR 4 names. This assertion INVERTED when PR 4 shipped, and the
+    // inversion is the point: while PR 4 was pending they had to resolve out of
+    // the monolith, and now they must resolve out of the module instead. BASE
+    // here is the post-PR2 application, where they were still inline — so
+    // comparing the two sides proves the bytes are the same while the SOURCE
+    // changed, which is exactly what a relocation is.
     const monoCode = ORDERED[MONO_SLOT].code;
     for (const nm of ['eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink']) {
       eq(typeof HEAD_APP3.ctx[nm], 'function', '9E.10 ' + nm + ' resolves as a global function');
-      ok(monoCode.indexOf(String(HEAD_APP3.ctx[nm])) >= 0,
-        '9E.11 …and its text is still found INSIDE the inline monolith — PR 4 has not shipped');
-      eq(String(HEAD_APP3.ctx[nm]), String(BASE_APP3.ctx[nm]), '9E.12 …identical on BASE and HEAD');
+      ok(monoCode.indexOf(String(HEAD_APP3.ctx[nm])) < 0,
+        '9E.11 …and its text is NO LONGER found inside the inline monolith — PR 4 has shipped');
+      ok(LDD_SRC.indexOf(String(HEAD_APP3.ctx[nm])) >= 0,
+        '9E.11b …it is found in js/ui/eic-live-deep-dive.js instead');
+      eq(String(HEAD_APP3.ctx[nm]), String(BASE_APP3.ctx[nm]),
+        '9E.12 …byte-identical to what BASE bound from the monolith — the bytes did not change, only their file did');
     }
   }
 
@@ -1950,6 +2223,648 @@ if (BASE_PR2_MONO) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+section('9F. LIVE-DEEP-DIVE BEHAVIOURAL PARITY — BASE vs HEAD, by transcript');
+//
+// §9 compares RETURN VALUES, which works for pure functions. Nothing here is
+// pure: these functions call a backend, open a WebSocket, render into the DOM,
+// mutate a scan row and log. Comparing what they RETURN would miss almost
+// everything they do — and would miss the defects this PR is required to
+// preserve. So both sides are driven under one deterministic sandbox and the
+// ORDERED TRANSCRIPT of everything they did is compared, character for
+// character.
+//
+// WHAT IS REAL AND WHAT IS STUBBED
+//   The BODIES are real: BASE's are evaluated out of the post-PR3 monolith blob,
+//   HEAD's out of the shipped module. Nothing re-implements them and nothing
+//   emulates a browser. Only COLLABORATORS are stubbed, at their boundaries, and
+//   identically on both sides: ttCall, the WebSocket, document, callAgent,
+//   setAS/showToast/logEv/appendSysMsg/appendAgentMsg, computeSetupScore and
+//   computeFinalDecision. The REAL eicScreenTicker and eicBuildLiveContext from
+//   PR 1's shipped module are used by both sides, so a cross-module regression
+//   would surface here rather than hide.
+//
+//   The WebSocket stub is a scripted DXLink SERVER, not a mock with canned
+//   returns: it answers SETUP with SETUP, AUTH with AUTH_STATE, CHANNEL_REQUEST
+//   with CHANNEL_OPENED and FEED_SUBSCRIPTION with the fixture's FEED_DATA. The
+//   real protocol state machine in the body therefore actually runs.
+//
+// THESE FUNCTIONS ARE ASYNCHRONOUS, AND THAT IS THE POINT
+//   Almost everything worth checking in eicDXLinkDeepDive and eicRunDXLink
+//   happens AFTER an await. Every fixture is awaited to settlement before its
+//   transcript is compared; a synchronous-prefix comparison would have declared
+//   parity on the first few lines and missed the rest.
+//
+// BRANCH COVERAGE IS ASSERTED FROM THE TRANSCRIPTS
+//   "0 differences" over fixtures that all take the same path proves nothing.
+//   The assertions below require the transcripts to CONTAIN evidence of each
+//   branch — success, rejection, malformed data, missing DOM, credential/token
+//   failure, transport failure and timeout — so the fixtures are proved to have
+//   exercised what they claim.
+// ═════════════════════════════════════════════════════════════════════════════
+let LDD_DIFFS = 0, LDD_FIX_COUNT = 0;
+if (BASE_PR3_MONO) {
+  const baseLdd = scanTopLevelDeclarations(BASE_PR3_MONO)
+    .filter((x) => G.LIVE_DEEP_DIVE_NAMES.indexOf(x.name) >= 0);
+  eq(baseLdd.length, 4, '9F.1 the four declarations were located in the post-PR3 base monolith');
+  const BASE_LDD_SRC = baseLdd.map((d) => BASE_PR3_MONO.slice(d.start, d.end + 1)).join('\n\n');
+  const HEAD_LDD_SRC = LDD_DECLS.map((d) => LDD_SRC.slice(d.start, d.end + 1)).join('\n\n');
+  eq(BASE_LDD_SRC, HEAD_LDD_SRC, '9F.2 …and the concatenated declaration text is identical on both sides');
+
+  // PR 1's module supplies the REAL siblings both sides call.
+  const RULES_SRC = MODULE_SRC;
+
+  /**
+   * One sandbox, one transcript. `fx` describes the fixture: the scan rows, the
+   * ttCall behaviour, the DXLink script, whether the DOM host exists, and what
+   * callAgent does.
+   */
+  function makeLdd(fx, src) {
+    const T = [];
+    const rec = (...a) => T.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' | '));
+    const ctx = {
+      console: { log() {}, warn() {}, error() {} },
+      // The DXLink budget. The callback is captured, and — when the fixture asks
+      // for it — fired from a HOST macrotask rather than from inside the socket
+      // script. That ordering is deliberate: setImmediate runs after every
+      // pending microtask, so the feed (delivered on a microtask) always lands
+      // first and the timeout fires against whatever data actually arrived.
+      // Firing it from the subscription handler instead would never reach the
+      // fixtures where the socket stalls BEFORE subscribing — never opens, or is
+      // refused at AUTH — and those fixtures would hang rather than fail.
+      setTimeout(fn, ms) {
+        rec('setTimeout', ms);
+        ctx.__timeoutFn = fn;
+        if (fx.fireTimeout) setImmediate(() => {
+          const f = ctx.__timeoutFn;
+          if (!f) return;
+          ctx.__timeoutFn = null;
+          try { f(); } catch (e) { rec('timeout.threw', String(e && e.name), String(e && e.message)); }
+        });
+        return 77;
+      },
+      clearTimeout(id) { rec('clearTimeout', String(id)); ctx.__timeoutFn = null; },
+      setInterval() { return 0; }, clearInterval() {},
+    };
+    class FixedDate extends Date {
+      constructor(...a) { if (a.length === 0) super(FIXED_NOW); else super(...a); }
+      static now() { return FIXED_NOW; }
+    }
+    ctx.Date = FixedDate;
+
+    // ── the DOM host ────────────────────────────────────────────────────────
+    const mkEl = (id) => {
+      const node = {
+        _html: '', _text: '', _children: [], className: '', style: { cssText: '' },
+        get innerHTML() { return node._html; },
+        set innerHTML(v) { node._html = String(v); rec('innerHTML=', id, String(v).length); },
+        get textContent() { return node._text; },
+        set textContent(v) { node._text = String(v); rec('textContent=', id, String(v)); },
+        querySelector(sel) {
+          const hit = node._children.some((c) => c.className && ('.' + c.className) === sel);
+          rec('querySelector', id, sel, hit ? 'found' : 'null');
+          return hit ? node._children.filter((c) => ('.' + c.className) === sel)[0] : null;
+        },
+        appendChild(c) { node._children.push(c); rec('appendChild', id, c.className || '?'); return c; },
+      };
+      return node;
+    };
+    const host = fx.noDom ? null : mkEl('eicResults');
+    ctx.document = {
+      getElementById(i) { rec('getElementById', i, host ? 'found' : 'null'); return i === 'eicResults' ? host : null; },
+      createElement(t) { rec('createElement', t); return mkEl('new:' + t); },
+    };
+
+    // ── the scripted DXLink server ──────────────────────────────────────────
+    ctx.WebSocket = function (url) {
+      rec('new WebSocket', url);
+      if (fx.wsThrow) { throw new Error('ws construct failed'); }
+      const ws = this;
+      ws.close = function () { rec('ws.close'); };
+      ws.send = function (raw) {
+        let msg = null; try { msg = JSON.parse(raw); } catch (e) { /* recorded below */ }
+        // The PAYLOAD, not just the frame type. A type-only transcript cannot
+        // see the credential being dropped or the subscription losing an event
+        // class — two mutations that change what this module puts on the wire
+        // while every frame still arrives in the same order.
+        if (!msg) { rec('ws.send', 'unparseable'); }
+        else if (msg.type === 'SETUP') rec('ws.send', 'SETUP', 'version=' + msg.version, 'keepalive=' + msg.keepaliveTimeout);
+        else if (msg.type === 'AUTH') rec('ws.send', 'AUTH', 'hasToken=' + (msg.token !== undefined), 'token=' + String(msg.token), 'channel=' + msg.channel);
+        else if (msg.type === 'CHANNEL_REQUEST') rec('ws.send', 'CHANNEL_REQUEST', 'channel=' + msg.channel, 'service=' + msg.service, 'contract=' + (msg.parameters && msg.parameters.contract));
+        else if (msg.type === 'FEED_SETUP') rec('ws.send', 'FEED_SETUP', 'format=' + msg.acceptDataFormat,
+          'agg=' + msg.acceptAggregationPeriod, 'events=' + Object.keys(msg.acceptEventFields || {}).sort().join('/'),
+          'fields=' + JSON.stringify(msg.acceptEventFields));
+        else if (msg.type === 'FEED_SUBSCRIPTION') rec('ws.send', 'FEED_SUBSCRIPTION', 'adds=' + (msg.add || []).length,
+          'types=' + Array.from(new Set((msg.add || []).map((x) => x.type))).sort().join('/'),
+          'symbols=' + Array.from(new Set((msg.add || []).map((x) => x.symbol))).sort().join(','));
+        else rec('ws.send', msg.type, 'channel=' + msg.channel);
+        if (!msg || fx.deaf) return;
+        // An exception thrown by an event handler does not propagate back to
+        // whoever dispatched the event — in a browser it goes to window.onerror.
+        // Modelling that faithfully is what lets a mutant which REMOVES the
+        // malformed-data fallback show up as a transcript difference instead of
+        // tearing down the harness as an unhandled rejection.
+        const deliver = (obj) => {
+          if (!ws.onmessage) return;
+          try { ws.onmessage({ data: typeof obj === 'string' ? obj : JSON.stringify(obj) }); }
+          catch (e) { rec('onmessage.threw', String(e && e.name), String(e && e.message)); }
+        };
+        if (msg.type === 'SETUP') deliver({ type: 'SETUP' });
+        else if (msg.type === 'AUTH') deliver({ type: 'AUTH_STATE', state: fx.authState || 'AUTHORIZED' });
+        else if (msg.type === 'CHANNEL_REQUEST') deliver({ type: 'CHANNEL_OPENED', channel: msg.channel });
+        else if (msg.type === 'FEED_SUBSCRIPTION') {
+          if (fx.malformedFrame) deliver('{not json');
+          if (fx.keepalive) deliver({ type: 'KEEPALIVE' });
+          for (const frame of (fx.feed || [])) deliver(frame);
+          if (fx.thenError && ws.onerror) { try { ws.onerror(); } catch (e) { rec('onerror.threw', String(e && e.name)); } }
+          if (fx.thenClose && ws.onclose) { try { ws.onclose(); } catch (e) { rec('onclose.threw', String(e && e.name)); } }
+        }
+      };
+      // The body assigns onopen/onmessage/onerror/onclose synchronously right
+      // after construction, so kicking the protocol off on a microtask is what a
+      // real socket does and what keeps the handlers in place.
+      Promise.resolve().then(() => {
+        if (fx.neverOpen || !ws.onopen) return;
+        try { ws.onopen(); } catch (e) { rec('onopen.threw', String(e && e.name), String(e && e.message)); }
+      });
+    };
+
+    // ── collaborators ───────────────────────────────────────────────────────
+    ctx.ttCall = function (url) {
+      rec('ttCall', url);
+      const r = fx.tt ? fx.tt(url) : undefined;
+      if (r && r.__reject) return Promise.reject(new Error(r.__reject));
+      return Promise.resolve(r === undefined ? null : r);
+    };
+    ctx.callAgent = function (a, text) {
+      rec('callAgent', a, 'ctxChars=' + String(text).length);
+      if (fx.agentReject) return Promise.reject(new Error(fx.agentReject));
+      return Promise.resolve(fx.agent || 'VERDICT APPROVATO ok');
+    };
+    ctx.setAS = (...a) => rec('setAS', ...a);
+    ctx.showToast = (...a) => rec('showToast', ...a);
+    ctx.logEv = (...a) => rec('logEv', ...a);
+    ctx.appendSysMsg = (...a) => rec('appendSysMsg', ...a);
+    ctx.appendAgentMsg = (...a) => rec('appendAgentMsg', ...a);
+    ctx.computeSetupScore = function (d) { rec('computeSetupScore', d ? d.ticker : null);
+      return { setupGrade: 'OK', setupScore: 61, setupHardReject: null }; };
+    ctx.computeFinalDecision = function (o) { rec('computeFinalDecision', JSON.stringify(o));
+      return { finalTradingDecision: 'TRADE_SMALL' }; };
+    ctx.S = { scanData: fx.scanData || [], marketContextRisk: fx.macro || null };
+
+    vm.createContext(ctx);
+    // PR 1's REAL module first, so eicScreenTicker/eicBuildLiveContext are the
+    // shipped ones on BOTH sides.
+    vm.runInContext(RULES_SRC, ctx, { filename: 'eic-screening-rules.js', timeout: 20000 });
+    vm.runInContext(src, ctx, { filename: 'ldd-under-test.js', timeout: 20000 });
+    return { ctx, T, rec, host };
+  }
+
+  const quote = (sym, bid, ask) => ({ type: 'Quote', eventSymbol: sym, bidPrice: bid, askPrice: ask });
+  // Deliberately MORE decimals than the body keeps. The real code rounds delta
+  // to 4 places, gamma to 6, theta/vega to 4 and volatility to 2 after scaling —
+  // feeding it values that are already short would make every one of those
+  // toFixed() calls invisible, and a mutant that changes a precision would
+  // survive because the fixture, not the guard, was too weak to see it.
+  const greeks = (sym, d) => ({ type: 'Greeks', eventSymbol: sym, delta: d,
+    gamma: 0.0123456789, theta: -0.5432198, vega: 0.2198765, volatility: 0.4213579 });
+  const SYMS = ['.AAA C1', '.AAA C2', '.AAA P1', '.AAA P2'];
+  const fullFeed = () => [{ type: 'FEED_DATA', channel: 1, data: [
+    quote(SYMS[0], 1.1098765, 1.2012345), greeks(SYMS[0], 0.1234567),
+    quote(SYMS[1], 0.4098765, 0.5012345), greeks(SYMS[1], 0.2536789),
+    quote(SYMS[2], 1.0598765, 1.1512345), greeks(SYMS[2], -0.1342876),
+    quote(SYMS[3], 0.3598765, 0.4512345), greeks(SYMS[3], -0.2418642),
+  ] }];
+  const partialFeed = () => [{ type: 'FEED_DATA', channel: 1, data: [
+    quote(SYMS[0], 1.1098765, 1.2012345), greeks(SYMS[0], 0.1234567),
+    quote(SYMS[1], 0.4098765, 0.5012345), greeks(SYMS[1], 0.2536789),
+  ] }];
+  const legs = () => ({ legs: {
+    shortCall: { strike: 200, bid: 1.0, ask: 1.3 }, longCall: { strike: 205, bid: 0.3, ask: 0.6 },
+    shortPut: { strike: 180, bid: 1.0, ask: 1.3 }, longPut: { strike: 175, bid: 0.3, ask: 0.6 } },
+    executionVerdict: 'EXECUTABLE', markVsTheo: { theoreticalConfidence: 'MED' } });
+  const chain = () => ({ strikes: [
+    { strike: 200, callStreamer: SYMS[0], putStreamer: '.x1' },
+    { strike: 205, callStreamer: SYMS[1], putStreamer: '.x2' },
+    { strike: 180, callStreamer: '.x3', putStreamer: SYMS[2] },
+    { strike: 175, callStreamer: '.x4', putStreamer: SYMS[3] }] });
+  const row = (o) => Object.assign({ ticker: 'AAA', name: 'Alpha', price: 190, ivRank: 70, iv: 0.35,
+    iv30: 0.3, volume: 3000000, liq: 1, bid: 189.98, ask: 190.02, rsi: 60, beta: 1.1, score: 70,
+    signal: 'LONG', squeeze: 'OFF', ma200dist: '+5%',
+    nextEarnings: new Date(FIXED_NOW + 7 * 86400000).toISOString(), eicLegs: legs() }, o);
+  const okTt = (u) => (/quote-token/.test(u) ? { token: 'TKN', dxlinkUrl: 'wss://fake/rt' }
+    : /chain-symbols/.test(u) ? chain() : { ok: true });
+
+  // ── the fixture matrix ──────────────────────────────────────────────────
+  // Each entry names the BRANCH it exists to exercise. `fn` selects which of the
+  // three names is driven, so all four moved sites are covered — including both
+  // eicFetchLegs copies through the final hoisted binding.
+  const LDD_FIX = [
+    // eicFetchLegs — success and rejection
+    ['fetchLegs: backend resolves', { fn: 'eicFetchLegs', args: ['AAA'], tt: () => ({ legs: 'payload' }) }],
+    ['fetchLegs: backend REJECTS → null', { fn: 'eicFetchLegs', args: ['AAA'], tt: () => ({ __reject: 'boom' }) }],
+    ['fetchLegs: backend resolves null', { fn: 'eicFetchLegs', args: ['AAA'], tt: () => null }],
+    // eicDXLinkDeepDive — the credential/token branch
+    ['deepDive: quote token MISSING → throw → catch', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: () => ({}) }],
+    ['deepDive: quote token call REJECTS', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: () => ({ __reject: 'token transport down' }) }],
+    // …the chain-symbols branch
+    ['deepDive: chain symbols MISSING → throw', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: (u) => (/quote-token/.test(u) ? okTt(u) : {}) }],
+    ['deepDive: expiration is threaded into the chain URL', { fn: 'eicDXLinkDeepDive', args: ['AAA', '2026-02-20'],
+      scanData: [row({})], tt: okTt, feed: fullFeed() }],
+    // …the malformed / missing leg-data branch
+    ['deepDive: scan row has NO eicLegs → throw', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({ eicLegs: null })], tt: okTt }],
+    ['deepDive: ticker absent from scanData → throw', { fn: 'eicDXLinkDeepDive', args: ['ZZZ', null],
+      scanData: [row({})], tt: okTt }],
+    // …the transport branches
+    ['deepDive: WebSocket constructor THROWS → resolve(null) → timeout fallback', { fn: 'eicDXLinkDeepDive',
+      args: ['AAA', null], scanData: [row({})], tt: okTt, wsThrow: true }],
+    ['deepDive: socket never opens, timeout fires with 0 legs', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, neverOpen: true, fireTimeout: true }],
+    ['deepDive: onerror before any data', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: [], thenError: true }],
+    ['deepDive: onclose before any data', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: [], thenClose: true }],
+    // …the data branches
+    ['deepDive: FULL feed → all four legs live → confidence high', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed() }],
+    ['deepDive: PARTIAL feed then timeout → confidence partial', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: partialFeed(), fireTimeout: true }],
+    ['deepDive: MALFORMED frame is swallowed by the JSON.parse guard', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, malformedFrame: true, feed: fullFeed() }],
+    ['deepDive: KEEPALIVE is answered', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, keepalive: true, feed: fullFeed() }],
+    ['deepDive: AUTH is REFUSED → no channel → timeout', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, authState: 'UNAUTHORIZED', fireTimeout: true }],
+    ['deepDive: a strike has no exact match → nearest-strike fallback', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({ eicLegs: Object.assign(legs(), { legs: Object.assign(legs().legs,
+        { shortCall: { strike: 201.5, bid: 1, ask: 1.3 } }) }) })], tt: okTt, feed: fullFeed() }],
+    // …the missing-DOM branch, on both the success and failure paths
+    ['deepDive: NO #eicResults host, success path', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), noDom: true }],
+    ['deepDive: NO #eicResults host, failure path', { fn: 'eicDXLinkDeepDive', args: ['AAA', null],
+      scanData: [row({})], tt: () => ({}), noDom: true }],
+    // eicRunDXLink — every branch it has
+    ['runDXLink: ticker not found → toast → return', { fn: 'eicRunDXLink', args: ['ZZZ', null],
+      scanData: [row({})], tt: okTt }],
+    ['runDXLink: deep dive returns null → toast + warn → return', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: () => ({}) }],
+    ['runDXLink: confidence none → extra toast, then continues', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, neverOpen: true, fireTimeout: true }],
+    ['runDXLink: FULL success path — reaches the fdColor ReferenceError', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed() }],
+    ['runDXLink: PARTIAL confidence, success path', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: partialFeed(), fireTimeout: true }],
+    ['runDXLink: callAgent REJECTS → catch → setAS err', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), agentReject: 'agent unavailable' }],
+    ['runDXLink: agent says SCARTATO', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), agent: 'VERDICT SCARTATO no' }],
+    ['runDXLink: agent says neither → NEUTRO', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), agent: 'nothing decisive here' }],
+    ['runDXLink: macro context present', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), macro: 'ELEVATED' }],
+    ['runDXLink: a prior eicSetupResult is reused instead of recomputed', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({ eicSetupResult: { setupGrade: 'STRONG', setupScore: 88, setupHardReject: null } })],
+      tt: okTt, feed: fullFeed() }],
+    ['runDXLink: NO #eicResults host', { fn: 'eicRunDXLink', args: ['AAA', null],
+      scanData: [row({})], tt: okTt, feed: fullFeed(), noDom: true }],
+  ];
+  LDD_FIX_COUNT = LDD_FIX.length;
+
+  /** Drive one fixture on one source, and return its settled transcript. */
+  function driveLdd(fx, src) {
+    let s;
+    try { s = makeLdd(fx, src); }
+    catch (e) { return Promise.resolve(['EVAL THREW | ' + String(e && e.message)]); }
+    const fn = s.ctx[fx.fn];
+    if (typeof fn !== 'function') return Promise.resolve(['NOT A FUNCTION | ' + fx.fn]);
+    let p;
+    try { p = fn.apply(null, fx.args); }
+    catch (e) { s.rec('threw synchronously', String(e && e.name), String(e && e.message)); return Promise.resolve(s.T); }
+    // A fixture that never settles is a real failure, and must look like one.
+    // Without this race the whole PARITY_TAIL chain would simply stop, the final
+    // summary would never print, and the suite would exit 0 having proved less
+    // than it claims — the exact silent-green failure these contracts exist to
+    // prevent.
+    let hung;
+    const timer = new Promise((res) => { hung = setTimeout(() => res('__HUNG__'), 15000); });
+    if (hung && hung.unref) hung.unref();
+    return Promise.race([Promise.resolve(p).then(() => '__DONE__', () => '__DONE__'), timer])
+      .then((how) => { clearTimeout(hung); if (how === '__HUNG__') { s.rec('DID NOT SETTLE within 15s'); return s.T; } return null; })
+      .then((early) => (early !== null ? early : Promise.resolve(p).then(
+      (v) => { s.rec('resolved', v === null ? 'null' : v === undefined ? 'undefined' : typeof v);
+        if (v && typeof v === 'object') s.rec('resolved.keys', Object.keys(v).sort().join(','));
+        if (v && v.confidence !== undefined) s.rec('resolved.confidence', String(v.confidence));
+        if (v && v.liveLegCount !== undefined) s.rec('resolved.liveLegCount', String(v.liveLegCount));
+        // the scan-row mutation, as the caller would observe it
+        const r = s.ctx.S.scanData[0];
+        if (r) s.rec('row', 'eicLegsLive=' + (r.eicLegsLive ? r.eicLegsLive.confidence : 'absent'),
+          'eicFinalDecision=' + (r.eicFinalDecision ? r.eicFinalDecision.finalTradingDecision : 'absent'),
+          'eicFinalDecisionTicker=' + String(r.eicFinalDecisionTicker));
+        return s.T; },
+      (e) => { s.rec('rejected', String(e && e.name), String(e && e.message));
+        const r = s.ctx.S.scanData[0];
+        if (r) s.rec('row', 'eicLegsLive=' + (r.eicLegsLive ? r.eicLegsLive.confidence : 'absent'),
+          'eicFinalDecision=' + (r.eicFinalDecision ? r.eicFinalDecision.finalTradingDecision : 'absent'),
+          'eicFinalDecisionTicker=' + String(r.eicFinalDecisionTicker));
+        return s.T; })));
+  }
+
+  // §12 mutates the real module through this guard, so a parity regression is
+  // PROVED rather than asserted. It returns a promise, and §12's second pass
+  // awaits it — a synchronous read would call every async mutant a survivor.
+  const BASE_TRANSCRIPTS = [];
+  PARITY_TAIL = PARITY_TAIL.then(() => {
+    let chainP = Promise.resolve();
+    for (const [, fx] of LDD_FIX) {
+      chainP = chainP.then(() => driveLdd(fx, BASE_LDD_SRC)).then((t) => { BASE_TRANSCRIPTS.push(t.join('\n')); });
+    }
+    return chainP;
+  }).then(() => {
+    LDD_TRANSCRIPT_GUARD = function (candidateSrc) {
+      let chainP = Promise.resolve();
+      const violations = [];
+      LDD_FIX.forEach(([label, fx], i) => {
+        chainP = chainP.then(() => driveLdd(fx, candidateSrc)).then((t) => {
+          if (t.join('\n') !== BASE_TRANSCRIPTS[i]) violations.push('PARITY: [' + label + '] transcript differs');
+        });
+      });
+      return chainP.then(() => ({ violations, threw: null }));
+    };
+    return LDD_TRANSCRIPT_GUARD(HEAD_LDD_SRC);
+  }).then((res) => {
+    LDD_DIFFS = res.violations.length;
+    for (const v of res.violations) ok(false, '9F.x ' + v);
+    eq(LDD_DIFFS, 0, '9F.3 all ' + LDD_FIX.length
+      + ' fixtures produce IDENTICAL ordered transcripts on BASE and HEAD, awaited to settlement');
+
+    // ── BRANCH COVERAGE, asserted from the transcripts themselves ───────────
+    const all = BASE_TRANSCRIPTS.join('\n');
+    ok(all.indexOf("ttCall | /eic/legs/AAA") >= 0, '9F.4 branch: eicFetchLegs hit its endpoint');
+    ok(all.indexOf('resolved | object') >= 0, '9F.5 branch: a success path resolved with a payload');
+    ok(all.indexOf('resolved | null') >= 0, '9F.6 branch: a failure path resolved with null');
+    ok(all.indexOf('ttCall | /quote-token') >= 0, '9F.7 branch: the CREDENTIAL call was made');
+    ok(/logEv \| earnings-ic \| DXLink deepdive failed: Quote token non disponibile/.test(all),
+      '9F.8 branch: the missing-quote-token path threw and was caught');
+    ok(/DXLink deepdive failed: Chain symbols non disponibili/.test(all),
+      '9F.9 branch: the missing-chain-symbols path threw and was caught');
+    ok(/DXLink deepdive failed: Leg data non disponibile/.test(all),
+      '9F.10 branch: the MALFORMED/missing leg-data path threw and was caught');
+    ok(/DXLink deepdive failed: token transport down/.test(all),
+      '9F.11 branch: a TRANSPORT rejection propagated into the catch');
+    ok(all.indexOf('ttCall | /eic/chain-symbols/AAA?expiration=2026-02-20') >= 0,
+      '9F.12 branch: the expiration argument reached the chain URL');
+    ok(all.indexOf('ttCall | /eic/chain-symbols/AAA') >= 0, '9F.13 branch: …and the no-expiration form exists too');
+    ok(all.indexOf('new WebSocket | wss://fake/rt') >= 0, '9F.14 branch: the DXLink socket was opened at the URL the token supplied');
+    ok(all.indexOf('ws.send | SETUP') >= 0 && all.indexOf('ws.send | AUTH') >= 0
+      && all.indexOf('ws.send | CHANNEL_REQUEST') >= 0 && all.indexOf('ws.send | FEED_SETUP') >= 0
+      && all.indexOf('ws.send | FEED_SUBSCRIPTION') >= 0,
+      '9F.15 branch: the full DXLink handshake ran — SETUP → AUTH → CHANNEL_REQUEST → FEED_SETUP → FEED_SUBSCRIPTION');
+    ok(all.indexOf('ws.send | KEEPALIVE') >= 0, '9F.16 branch: a KEEPALIVE was answered');
+    ok(all.indexOf('resolved.confidence | high') >= 0, '9F.17 branch: a FULL feed produced confidence=high');
+    ok(all.indexOf('resolved.confidence | partial') >= 0, '9F.18 branch: a PARTIAL feed produced confidence=partial');
+    ok(all.indexOf('resolved.confidence | none') >= 0, '9F.19 branch: the 0-leg timeout produced confidence=none');
+    ok(all.indexOf('resolved.liveLegCount | 4/4') >= 0 && all.indexOf('resolved.liveLegCount | 0/4') >= 0,
+      '9F.20 branch: both the 4/4 and 0/4 leg counts were produced');
+    ok(all.indexOf('setTimeout | 9000') >= 0, '9F.21 branch: the 9-second timeout budget was armed, unchanged');
+    ok(all.indexOf('getElementById | eicResults | null') >= 0,
+      '9F.22 branch: the MISSING-DOM path ran — every `if(res)` guard was exercised with res falsy');
+    ok(all.indexOf('getElementById | eicResults | found') >= 0, '9F.23 branch: …and the present-DOM path too');
+    ok(all.indexOf('querySelector | eicResults | .dxlink-status | null') >= 0
+      && all.indexOf('createElement | div') >= 0 && all.indexOf('appendChild | eicResults | dxlink-status') >= 0,
+      '9F.24 branch: the status element was created on first use and reused after');
+    ok(all.indexOf('showToast | Ticker non trovato | warn') >= 0, '9F.25 branch: eicRunDXLink’s not-found guard');
+    ok(all.indexOf('showToast | DXLink: errore critico per AAA | warn') >= 0,
+      '9F.26 branch: eicRunDXLink’s null-liveData guard');
+    ok(all.indexOf('showToast | DXLink: 0/4 legs — output con dati DELAYED/ESTIMATED | warn') >= 0,
+      '9F.27 branch: eicRunDXLink’s confidence=none warning, which then CONTINUES');
+    ok(all.indexOf('callAgent | earnings-ic') >= 0, '9F.28 branch: the agent was called with the generated context');
+    ok(/logEv \| earnings-ic \| DXLink re-analysis error: agent unavailable \| err/.test(all),
+      '9F.29 branch: a REJECTING agent was caught and reported');
+    ok(all.indexOf('computeFinalDecision') >= 0, '9F.30 branch: the final-decision layer ran');
+    ok(all.indexOf('row | eicLegsLive=high') >= 0, '9F.31 branch: the scan ROW was mutated with live data');
+    ok(all.indexOf('eicFinalDecision=TRADE_SMALL') >= 0, '9F.32 branch: …and with the final decision');
+    // THE DEFECT, proved to behave identically on both sides.
+    ok(/logEv \| earnings-ic \| DXLink re-analysis error: fdColor is not defined \| err/.test(all),
+      '9F.33 DEFECT PRESERVED: the success path throws ReferenceError "fdColor is not defined", is caught by'
+      + ' eicRunDXLink’s own catch, and is reported through logEv — identically on BASE and HEAD');
+    ok(/setAS \| earnings-ic \| err \| fdColor is not defined/.test(all),
+      '9F.34 …and through setAS, so the relocation preserved the SYMPTOM as well as the bug');
+    ok(all.indexOf('appendSysMsg') < 0,
+      '9F.35 …and because it throws BEFORE them, appendSysMsg/appendAgentMsg never run — pinned as the real behaviour, not repaired');
+    note('live-deep-dive parity — ' + LDD_FIX.length + ' fixtures · differences ' + LDD_DIFFS);
+  });
+} else {
+  ok(true, '9F.3 live-deep-dive parity skipped: the post-PR3 base blob is unavailable in this checkout');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+section('9G. PR 4 CROSS-MODULE RESOLUTION — the FORWARD edge, proved not assumed');
+//
+// §9F evaluates the four declarations in isolation. That proves the bytes behave
+// identically; it does NOT prove that, in the real document, the boundary this
+// PR creates actually resolves. And this boundary is the interesting one,
+// because it points FORWARD:
+//
+//   js/ui/eic-ticker-analysis-panel.js loads BEFORE js/ui/eic-live-deep-dive.js
+//   and calls eicRunDXLink.
+//
+// Every previous EIC PR could lean on load ORDER: the callee shipped first. Here
+// the CALLER ships first, so ordering proves nothing and the edge is safe for a
+// different reason entirely — the reference sits inside an addEventListener
+// callback and is resolved off the global scope when the user CLICKS, long after
+// every script has evaluated. "Should be fine" is not a proof, so the whole
+// application is evaluated here in its real classic-script order and then
+// DRIVEN, and the resolved function's own text is compared against the file it
+// must have come from.
+//
+// The BASE side is the POST-PR3 application: the same scripts minus this module,
+// with the monolith replaced by the post-PR3 monolith that still carries the
+// four declarations inline.
+// ═════════════════════════════════════════════════════════════════════════════
+let XLDD_DIFFS = 0;
+if (BASE_PR3_MONO) {
+  const permissive4 = () => {
+    const p = new Proxy(function () {}, {
+      get(t, k) { if (k === Symbol.toPrimitive || k === 'toString' || k === Symbol.toStringTag) return () => ''; return p; },
+      set() { return true; }, apply() { return p; }, construct() { return p; }, has() { return true; },
+    });
+    return p;
+  };
+  function makeAppCtx4() {
+    const permissive = permissive4();
+    const ctx = {
+      console: { log() {}, warn() {}, error() {} },
+      Math, JSON, Number, String, Array, Object, Boolean, isNaN, parseFloat, parseInt,
+      RegExp, Error, Promise, Set, Map,
+      document: permissive, window: permissive, localStorage: permissive,
+      sessionStorage: permissive, navigator: permissive, location: permissive,
+      setTimeout() { return 0; }, setInterval() { return 0; }, clearTimeout() {}, clearInterval() {},
+      fetch() { return Promise.resolve(permissive); }, WebSocket: function () { return permissive; },
+      requestAnimationFrame() { return 0; }, alert() {},
+    };
+    class FixedDate extends Date {
+      constructor(...a) { if (a.length === 0) super(FIXED_NOW); else super(...a); }
+      static now() { return FIXED_NOW; }
+    }
+    ctx.Date = FixedDate;
+    vm.createContext(ctx);
+    return ctx;
+  }
+  const HEAD4 = ORDERED.filter((s) => s.isAppJs && s.code != null)
+    .map((s) => ({ label: String(s.src || '(monolith)'), code: s.code }));
+  const BASE4 = HEAD4
+    .filter((p) => p.label !== G.LIVE_DEEP_DIVE_SRC_ATTR)
+    .map((p) => (p.label === '(monolith)' ? { label: p.label, code: BASE_PR3_MONO } : p));
+  eq(HEAD4.length - BASE4.length, 1,
+    '9G.1 BASE loads exactly one script fewer — the live-deep-dive module did not exist after PR 3');
+
+  function evalApp4(parts) {
+    const ctx = makeAppCtx4();
+    const failures = [];
+    for (const p of parts) {
+      try { vm.runInContext(p.code, ctx, { filename: p.label, timeout: 30000 }); }
+      catch (e) { failures.push(p.label + ': ' + String(e && e.message)); }
+    }
+    return { ctx, failures };
+  }
+  const HEAD_APP4 = evalApp4(HEAD4);
+  const BASE_APP4 = evalApp4(BASE4);
+  deepEq(HEAD_APP4.failures, [], '9G.2 every script in HEAD load order evaluated without error');
+  deepEq(BASE_APP4.failures, [], '9G.3 …and every script in BASE load order too');
+
+  // WHERE each binding came from, after the FULL load. This is what actually
+  // proves the relocation: on HEAD each global must be the TEXT OF THE FILE it
+  // came from, byte for byte.
+  {
+    const lddText = (nm, occ) => { const d = LDD_DECLS.filter((x) => x.name === nm)[occ || 0]; return LDD_SRC.slice(d.start, d.end + 1); };
+    const rulesText = (nm) => { const d = MODULE_DECLS.filter((x) => x.name === nm)[0]; return MODULE_SRC.slice(d.start, d.end + 1); };
+    const panelText = (nm) => { const d = PANEL_DECLS.filter((x) => x.name === nm)[0]; return PANEL_SRC.slice(d.start, d.end + 1); };
+    const monoCode4 = ORDERED[MONO_SLOT].code;
+    for (const nm of G.LIVE_DEEP_DIVE_NAMES) {
+      eq(typeof HEAD_APP4.ctx[nm], 'function', '9G.4 HEAD resolves ' + nm + ' as a global function');
+      ok(LDD_SRC.indexOf(String(HEAD_APP4.ctx[nm])) >= 0,
+        '9G.5 …and the resolved function text comes from js/ui/eic-live-deep-dive.js');
+      ok(monoCode4.indexOf(String(HEAD_APP4.ctx[nm])) < 0,
+        '9G.6 …and is NOT found in the inline monolith — nothing was left behind');
+      eq(String(HEAD_APP4.ctx[nm]), String(BASE_APP4.ctx[nm]),
+        '9G.7 …byte-identical to the function BASE bound from the monolith');
+    }
+    // The duplicate: the LATER declaration is the surviving binding.
+    eq(String(HEAD_APP4.ctx.eicFetchLegs), lddText('eicFetchLegs', 1),
+      '9G.8 the surviving eicFetchLegs binding is the SECOND declaration — hoisting means the later one wins');
+    eq(lddText('eicFetchLegs', 0), lddText('eicFetchLegs', 1),
+      '9G.9 …and because the copies are byte-identical, the winner is indistinguishable from the loser');
+    // The other three owners still resolve out of their own modules.
+    eq(String(HEAD_APP4.ctx.eicScreenTicker), rulesText('eicScreenTicker'), '9G.10 eicScreenTicker still comes from js/services/eic-screening-rules.js');
+    eq(String(HEAD_APP4.ctx.eicBuildLiveContext), rulesText('eicBuildLiveContext'), '9G.11 …and so does eicBuildLiveContext');
+    eq(String(HEAD_APP4.ctx.runEICPanel), panelText('runEICPanel'), '9G.12 runEICPanel still comes from js/ui/eic-panel.js');
+    eq(String(HEAD_APP4.ctx.eicAnalyzeTicker), TA_SRC.slice(TA_DECLS[0].start, TA_DECLS[0].end + 1),
+      '9G.13 eicAnalyzeTicker still comes from js/ui/eic-ticker-analysis-panel.js');
+    // ALL ELEVEN sites now resolve out of a module. Nothing EIC remains inline.
+    const monoDecls = scanTopLevelDeclarations(monoCode4).filter(G.isEicFamilyDecl);
+    eq(monoDecls.length, 0, '9G.14 the loaded monolith declares ZERO EIC sites — the family is entirely modular');
+  }
+
+  // ── DRIVE THE FORWARD EDGE ────────────────────────────────────────────────
+  // Collaborators are installed AFTER full evaluation, so the lookups the
+  // application performs are the real ones. eicRunDXLink is NOT replaced before
+  // it is captured: the real binding is read first, then wrapped, so the wrapper
+  // proves the real one was reachable at click time.
+  function drive4(app, opts) {
+    const T = [];
+    const rec = (...a) => T.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' | '));
+    const c = app.ctx;
+    const realDx = c.eicRunDXLink;
+    rec('eicRunDXLink.captured', 'typeof=' + typeof realDx, 'chars=' + String(realDx).length);
+    c.eicRunDXLink = function (t, e) { rec('eicRunDXLink CALLED', String(t), String(e), 'realWasFunction=' + (typeof realDx === 'function')); };
+    const realScreen = c.eicScreenTicker;
+    c.eicScreenTicker = function (d) { const r = realScreen.apply(this, arguments); rec('eicScreenTicker', d.ticker, r ? r.screenScore : null); return r; };
+    c.setAS = (...a) => rec('setAS', ...a);
+    c.showToast = (...a) => rec('showToast', ...a);
+    c.appendSysMsg = (...a) => rec('appendSysMsg', ...a);
+    c.appendAgentMsg = (...a) => rec('appendAgentMsg', ...a);
+    c.logEv = (...a) => rec('logEv', ...a);
+    c.callAgent = function (a, ctxStr) { rec('callAgent', a, 'ctxChars=' + String(ctxStr).length); return Promise.resolve('APPROVATO ok'); };
+    const el = (id) => {
+      let last = '';
+      return {
+        getAttribute(a) { return id + ':' + a; },
+        set innerHTML(v) { last = String(v); rec('innerHTML', id, last.length); }, get innerHTML() { return last; },
+        querySelector(sel) {
+          const hit = last.indexOf('eic-dxlink-btn') >= 0;
+          rec('querySelector', sel, hit ? 'found' : 'null');
+          return hit ? el('dxbtn') : null;
+        },
+        addEventListener(ev, fn) { rec('addEventListener', id, ev); try { fn.call(this); } catch (e) { rec('handler.threw', String(e && e.name)); } },
+      };
+    };
+    c.document = { getElementById: (id) => { rec('getElementById', id); return el(id); },
+      querySelectorAll: (s) => { rec('querySelectorAll', s); return [el('c0')]; } };
+    const appS = vm.runInContext('S', c);
+    Object.assign(appS, { scanData: [], ttConnected: false, lastScan: null,
+      marketContextRisk: null, marketContextSummary: null }, opts.S);
+    return c.eicAnalyzeTicker(opts.ticker)
+      .then(() => { rec('eicAnalyzeTicker resolved'); return T; })
+      .catch((e) => { rec('eicAnalyzeTicker rejected', String(e && e.message)); return T; });
+  }
+
+  const isoZ4 = (d) => new Date(FIXED_NOW + d * 86400000).toISOString();
+  const scanRow4 = (o) => Object.assign({ ticker: 'AAA', name: 'Alpha', price: 190, ivRank: 70, iv: 0.35,
+    iv30: 0.3, volume: 3000000, liq: 1, bid: 189.98, ask: 190.02, rsi: 60, beta: 1.1,
+    score: 70, signal: 'LONG', squeeze: 'OFF', ma200dist: '+5%', nextEarnings: isoZ4(7) }, o);
+  const XLDD_FIX = [
+    ['ttConnected → the DXLink click path runs', { S: { scanData: [scanRow4({})], ttConnected: true }, ticker: 'AAA' }],
+    ['not connected → no DXLink button', { S: { scanData: [scanRow4({})] }, ticker: 'AAA' }],
+    ['ticker absent → guard clause', { S: { scanData: [] }, ticker: 'ZZZ' }],
+  ];
+
+  PARITY_TAIL = PARITY_TAIL.then(() => {
+    let chain = Promise.resolve();
+    const seen = [];
+    for (const [label, opts] of XLDD_FIX) {
+      chain = chain.then(() => Promise.all([drive4(evalApp4(BASE4), opts), drive4(evalApp4(HEAD4), opts)])
+        .then(([a, b]) => {
+          const sa = a.join('\n'), sb = b.join('\n');
+          if (sa !== sb) { XLDD_DIFFS++; ok(false, '9G.x cross-module transcript differs for [' + label + ']'); }
+          seen.push(sa);
+        }));
+    }
+    return chain.then(() => {
+      eq(XLDD_DIFFS, 0,
+        '9G.15 invoking eicAnalyzeTicker through the FULLY LOADED application gives identical transcripts on BASE and HEAD');
+      const all = seen.join('\n');
+      // THE FORWARD EDGE, proved three ways.
+      ok(all.indexOf('eicRunDXLink CALLED | dxbtn:data-ticker') >= 0 && all.indexOf('realWasFunction=true') >= 0,
+        '9G.16 FORWARD EDGE: eicRunDXLink — declared in a module that loads AFTER its caller — was already bound and resolved at CLICK TIME');
+      ok(all.indexOf('addEventListener | dxbtn | click') >= 0,
+        '9G.17 …the edge is traversed through a real addEventListener("click", …) registration, not a direct call');
+      ok(all.indexOf('handler.threw') < 0,
+        '9G.18 …and the click callback did NOT throw — the binding existed when the event fired');
+      ok(all.indexOf('eicScreenTicker | AAA') >= 0,
+        '9G.19 the BACKWARD edge into PR 1s module still resolves at call time');
+      ok(all.indexOf('showToast | Ticker ZZZ non trovato') >= 0, '9G.20 the guard-clause path ran identically on both sides');
+      note('PR4 cross-module — ' + XLDD_FIX.length + ' fixtures through ' + HEAD4.length
+        + ' ordered scripts · differences ' + XLDD_DIFFS);
+    });
+  });
+
+  // The captured binding is the SHIPPED text, checked outside the transcript so
+  // a wrapper cannot be what satisfies the claim.
+  {
+    const captured = String(HEAD_APP4.ctx.eicRunDXLink);
+    eq(captured, LDD_SRC.slice(LDD_DECLS[3].start, LDD_DECLS[3].end + 1),
+      '9G.21 the eicRunDXLink the click handler would resolve IS the text of js/ui/eic-live-deep-dive.js, byte for byte');
+    eq(sha256(captured), G.EXPECTED_LIVE_DEEP_DIVE.spanSha.eicRunDXLink,
+      '9G.22 …and hashes to the SHA-256 recorded from the base blob');
+  }
+} else {
+  ok(true, '9G.15 PR 4 cross-module proof skipped: the post-PR3 base blob is unavailable in this checkout');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 section('10. THE REST OF THE APPLICATION IS UNTOUCHED');
 // ═════════════════════════════════════════════════════════════════════════════
 if (BASE_MONO) {
@@ -1966,8 +2881,8 @@ if (BASE_MONO) {
   }
   eq(missing, 0, '10.1 no declaration disappeared from the application');
   eq(changed, 0, '10.2 no declaration body changed by a single byte');
-  eq(baseDecls.length - INLINE_DECLS.length, 7,
-    '10.3 the inline monolith lost exactly seven declaration sites — four for PR 1, two for PR 2, one for PR 3');
+  eq(baseDecls.length - INLINE_DECLS.length, 11,
+    '10.3 the inline monolith lost exactly ELEVEN declaration sites — four for PR 1, two for PR 2, one for PR 3, four for PR 4: the whole family');
 } else {
   ok(true, '10.1 whole-file comparison skipped: base blob unavailable');
 }
@@ -1978,15 +2893,61 @@ ok(parseErr === null, '10.4 the reconstructed application parses' + (parseErr ? 
 // ═════════════════════════════════════════════════════════════════════════════
 section('11. THE UNDO CHAIN');
 //
-// Three links now, newest first: PR 3, then PR 2, then PR 1. Each PR's recorded
-// offsets are positions in the monolith AS IT WAS WHEN THAT PR WAS CUT, so the
-// order is not a convention — undoing an older PR first would reinsert text
-// ABOVE a newer PR's offset and land its region inside another function's body,
-// producing a plausible-looking document that is silently wrong. Each link is
-// proved by hash on its own, the whole chain is proved end to end, and BOTH
-// wrong orders are proved to fail rather than pass by luck.
+// FOUR links now, newest first: PR 4, then PR 3, then PR 2, then PR 1. Each PR's
+// recorded offsets are positions in the monolith AS IT WAS WHEN THAT PR WAS CUT,
+// so the order is not a convention — undoing an older PR first would reinsert
+// text ABOVE a newer PR's offset and land its region inside another function's
+// body, producing a plausible-looking document that is silently wrong. Each link
+// is proved by hash on its own, the whole chain is proved end to end, and every
+// wrong order is proved to fail rather than pass by luck.
+//
+// The one valid cumulative order is:
+//
+//     undo PR4 → post-PR3 → undo PR3 → post-PR2 → undo PR2 → post-PR1
+//              → undo PR1 → post-PESS
 // ═════════════════════════════════════════════════════════════════════════════
 {
+  // ── link -1: undo PR 4, landing on the post-PR3 application ───────────────
+  const r4 = EIC_UNDO4.regionTexts();
+  eq(r4.length, 4, '11.00a exactly four regions are derived from the shipped live-deep-dive module');
+  deepEq(EIC_UNDO4.REGION_OFFSETS.map((r) => r.name), G.EXPECTED_LIVE_DEEP_DIVE.order,
+    '11.00b …with the recorded names, in the recorded physical order');
+  deepEq(r4.map((r) => r.length), EIC_UNDO4.REGION_OFFSETS.map((r) => r.chars), '11.00c …and the recorded lengths');
+  eq(r4.reduce((a, r) => a + r.length, 0), EIC_UNDO4.REGION_TOTAL_CHARS, '11.00d the regions total 24,176 chars');
+  eq(EIC_UNDO4.REGION_TOTAL_CHARS - G.EXPECTED_LIVE_DEEP_DIVE.chars, 450,
+    '11.00e …450 more than the 23,726 declaration chars — three attached comment blocks and four separators');
+  // The attachment rule resolves the four sites DIFFERENTLY, and each outcome is
+  // pinned so a future edit cannot quietly reclassify one.
+  ok(/^\/\/ ── eicFetchLegs:/.test(r4[0]), '11.00f site 1 carries its attached comment block');
+  ok(/^\/\/ ── eicFetchLegs:/.test(r4[1]), '11.00g …and so does site 2');
+  ok(r4[2].indexOf('async function eicDXLinkDeepDive(ticker, expiration){') === 0,
+    '11.00h site 3 begins AT the declaration — the DXLINK banner above it is separated by a blank line and STAYS inline');
+  ok(/^\/\/ ── eicRunDXLink:/.test(r4[3]), '11.00i site 4 carries its one attached comment line');
+  // The two eicFetchLegs regions are byte-identical to each other, and BOTH are
+  // reinserted. Dropping one still yields valid JS, so only the hash notices.
+  eq(r4[0], r4[1], '11.00j the two eicFetchLegs regions are byte-identical to one another');
+  eq(sha256(r4[0]), sha256(r4[1]), '11.00k …by SHA-256 as well as by string comparison');
+  // The banner and the S.eicShowAll comment PR 3 left behind must still be in
+  // index.html: neither belongs to any PR 4 region.
+  eq((HTML.match(/\/\/ S\.eicShowAll: toggle to show all candidates including hard-rejected/g) || []).length, 1,
+    '11.00l the S.eicShowAll comment PR 3 left inline is STILL inline — PR 4 did not take it either');
+  ok(HTML.indexOf('// DXLINK ON-DEMAND — real-time option data for EIC deep dive') >= 0,
+    '11.00m the DXLINK banner comment stayed in index.html');
+  ok(LDD_SRC.indexOf('// DXLINK ON-DEMAND — real-time option data for EIC deep dive') < 0,
+    '11.00n …and did NOT travel into the module');
+  eq(HTML.split(EIC_UNDO4.TAG + '\n').length - 1, 1, '11.00o the PR 4 tag appears exactly once and is removed exactly once');
+  const undone4 = EIC_UNDO4.postPr3Html(HTML);
+  eq(undone4.verified, true, '11.00p undoing EIC PR 4 reproduces the post-PR3 document byte-exactly (' + undone4.reason + ')');
+  eq(undone4.html ? undone4.html.length : -1, EIC_UNDO4.POST_PR3_INDEX_CHARS, '11.00q …at the recorded character count');
+  eq(undone4.html ? sha256(undone4.html) : null, EIC_UNDO4.POST_PR3_INDEX_SHA256, '11.00r …and the recorded SHA-256');
+  deepEq(EIC_UNDO4.declarationTexts().map((t) => sha256(t)), EIC_UNDO4.DECLARATION_SHA256,
+    '11.00s each shipped declaration still hashes to the SHA recorded from the base blob');
+  deepEq(EIC_UNDO4.declarationTexts().map((t) => t.length), EIC_UNDO4.DECLARATION_CHARS_EACH,
+    '11.00t …at the recorded per-site lengths [144, 144, 12815, 10623]');
+
+  // Everything below runs from that verified intermediate, not from HEAD.
+  const POST_PR3 = undone4.verified ? undone4.html : HTML;
+
   // ── link 0: undo PR 3, landing on the post-PR2 application ────────────────
   const r3 = EIC_UNDO3.regionTexts();
   eq(r3.length, 1, '11.0a exactly one region is derived from the shipped ticker-analysis module');
@@ -2006,12 +2967,12 @@ section('11. THE UNDO CHAIN');
   ok(r3[0].indexOf('async function eicAnalyzeTicker(ticker){') === 0, '11.0g …it begins at the declaration itself');
   ok(TA_SRC.indexOf('// S.eicShowAll: toggle to show all candidates including hard-rejected') < 0,
     '11.0h the S.eicShowAll comment did NOT travel into the ticker-analysis module');
-  eq((HTML.match(/\/\/ S\.eicShowAll: toggle to show all candidates including hard-rejected/g) || []).length, 1,
-    '11.0i …it is still in index.html, exactly where it always was');
+  eq((POST_PR3.match(/\/\/ S\.eicShowAll: toggle to show all candidates including hard-rejected/g) || []).length, 1,
+    '11.0i …it was still in index.html at post-PR3, exactly where it always was');
   eq((PANEL_SRC.match(/\/\/ S\.eicShowAll: toggle to show all candidates including hard-rejected/g) || []).length, 1,
     '11.0j …and the OTHER copy is the one PR 2 legitimately took into the panel');
-  eq(HTML.split(EIC_UNDO3.TAG + '\n').length - 1, 1, '11.0k the PR 3 tag appears exactly once and is removed exactly once');
-  const undone3 = EIC_UNDO3.postPr2Html(HTML);
+  eq(POST_PR3.split(EIC_UNDO3.TAG + '\n').length - 1, 1, '11.0k the PR 3 tag appears exactly once and is removed exactly once');
+  const undone3 = EIC_UNDO3.postPr2Html(POST_PR3);
   eq(undone3.verified, true, '11.0l undoing EIC PR 3 reproduces the post-PR2 document byte-exactly (' + undone3.reason + ')');
   eq(undone3.html ? undone3.html.length : -1, EIC_UNDO3.POST_PR2_INDEX_CHARS, '11.0m …at the recorded character count');
   eq(undone3.html ? sha256(undone3.html) : null, EIC_UNDO3.POST_PR2_INDEX_SHA256, '11.0n …and the recorded SHA-256');
@@ -2048,10 +3009,17 @@ section('11. THE UNDO CHAIN');
   eq(undone.html ? sha256(undone.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256, '11.15 …and the recorded SHA-256');
 
   // ── the chain as one call ─────────────────────────────────────────────────
-  const chain = EIC_UNDO3.postPessHtml(HTML);
-  eq(chain.verified, true, '11.16 the full chain HEAD → post-PR2 → post-PR1 → post-PESS verifies end to end (' + chain.reason + ')');
+  const chain = EIC_UNDO4.postPessHtml(HTML);
+  eq(chain.verified, true, '11.16 the full chain HEAD → post-PR3 → post-PR2 → post-PR1 → post-PESS verifies end to end (' + chain.reason + ')');
   eq(chain.html ? sha256(chain.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256,
-    '11.17 …and lands on exactly the same document as the two links run by hand');
+    '11.17 …and lands on exactly the same document as the four links run by hand');
+  // COMPLETE EIC RECONSTRUCTION: the pre-EIC document, byte for byte. §4 pins
+  // that BASE_INDEX_SHA256 is the blob at BASE_REF, so this is a reconstruction
+  // of a real historical document rather than agreement with a literal.
+  eq(chain.html ? chain.html.length : -1, EIC_UNDO.POST_PESS_INDEX_CHARS,
+    '11.17b …at the pre-EIC character count');
+  eq(EIC_UNDO.POST_PESS_INDEX_SHA256, BASE_INDEX_SHA256,
+    '11.17c …and that document IS the §4 base the whole family was cut from');
 
   // ── ORDER IS LOAD-BEARING ─────────────────────────────────────────────────
   // Undoing PR 1 first, against a document PR 2 has already been cut from,
@@ -2061,10 +3029,20 @@ section('11. THE UNDO CHAIN');
     '11.18 undoing PR 1 FIRST fails loudly — the chain order is a real constraint, not a convention');
   const wrongOrder2 = EIC_UNDO2.postPr1Html(HTML);
   ok(!wrongOrder2.verified,
-    '11.18b undoing PR 2 before PR 3 fails too — PR 2 reinserts 15,343 chars ABOVE PR 3s offset, so PR 3s region would land inside another body');
+    '11.18b undoing PR 2 before PR 4 fails too — PR 2 reinserts 15,343 chars ABOVE PR 4s offsets, so its regions would land inside other bodies');
   const wrongOrder3 = EIC_UNDO2.postPessHtml(HTML);
   ok(!wrongOrder3.verified,
     '11.18c …and so does the PR2-rooted whole-chain call, which no longer owns the newest link');
+  // The newest wrong order, and the one this PR introduces: PR 3 before PR 4.
+  const wrongOrder4 = EIC_UNDO3.postPr2Html(HTML);
+  ok(!wrongOrder4.verified,
+    '11.18d undoing PR 3 BEFORE PR 4 fails — PR 4 removed 24,176 chars BELOW PR 3s offset, so PR 3s region would land ~24 k characters late');
+  const wrongOrder5 = EIC_UNDO3.postPessHtml(HTML);
+  ok(!wrongOrder5.verified,
+    '11.18e …and the PR3-rooted whole-chain call fails for the same reason: it no longer owns the newest link');
+  // Every wrong order fails; only the one valid cumulative order verifies.
+  eq([wrongOrder, wrongOrder2, wrongOrder3, wrongOrder4, wrongOrder5].filter((r) => r.verified).length, 0,
+    '11.18f all FIVE wrong orders fail; exactly one order reconstructs the family');
 
   // ── NEGATIVE CONTROL — the hash check must be load-bearing ────────────────
   const fake2 = EIC_UNDO2.regionTexts().slice();
@@ -2081,6 +3059,46 @@ section('11. THE UNDO CHAIN');
   })();
   ok(sha256(rebuilt) !== EIC_UNDO2.POST_PR1_INDEX_SHA256,
     '11.20 …so the reconstruction NO LONGER matches the post-PR1 hash — the check is load-bearing, not decorative');
+
+  // ── NEGATIVE CONTROL for PR 4 — an EQUAL-LENGTH one-byte mutation ─────────
+  // Deliberately length-preserving: if the reconstruction only ever noticed a
+  // size change, this mutation would slip through. The regions still total
+  // 24,176 chars and every length check still passes; only the HASH catches it.
+  {
+    const fake4 = EIC_UNDO4.regionTexts().slice();
+    const before = fake4[2];
+    fake4[2] = fake4[2].replace("acceptDataFormat:'FULL'", "acceptDataFormat:'full'");
+    ok(fake4[2] !== before, '11.21 negative control: exactly one byte of the live-deep-dive module was changed in memory');
+    eq(fake4[2].length, before.length, '11.22 …and the mutation is EQUAL-LENGTH, so no length check can catch it');
+    eq(fake4.reduce((a, r) => a + r.length, 0), EIC_UNDO4.REGION_TOTAL_CHARS,
+      '11.23 …the regions still total the recorded 24,176 chars');
+    const rebuilt4 = (function () {
+      let out = HTML.replace(EIC_UNDO4.TAG + '\n', '');
+      const inl = L.parseScriptTags(out).filter((t) => (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000);
+      const monoAt = out.indexOf(inl[0].inline);
+      const spans = EIC_UNDO4.REGION_OFFSETS.map((r, i) => ({ off: r.monoOffset, text: fake4[i] }));
+      for (const sp of spans.slice().sort((a, b) => a.off - b.off)) out = out.slice(0, monoAt + sp.off) + sp.text + out.slice(monoAt + sp.off);
+      return out;
+    })();
+    eq(rebuilt4.length, EIC_UNDO4.POST_PR3_INDEX_CHARS,
+      '11.24 …the rebuilt document is exactly the right LENGTH — the length check is satisfied by a wrong document');
+    ok(sha256(rebuilt4) !== EIC_UNDO4.POST_PR3_INDEX_SHA256,
+      '11.25 …but the SHA-256 does NOT match, so the hash is what carries the proof');
+  }
+
+  // ── the regions are DERIVED from the shipped module, never hardcoded ──────
+  // If the helper carried its own copy of the bodies, editing the shipped module
+  // would leave reconstruction green while the application changed. Mutating the
+  // module text in memory must therefore break the derivation.
+  {
+    const helperSrc = fs.readFileSync(path.join(ROOT, 'tests', 'lib', 'eic-pr4-undo.js'), 'utf8');
+    for (const needle of ["ttCall('/eic/legs/'+ticker)", 'acceptDataFormat', 'dxlinkConfidence', 'fdColor']) {
+      ok(helperSrc.indexOf(needle) < 0,
+        '11.26 the undo helper does NOT hardcode the declaration body (' + needle + ' is absent from it)');
+    }
+    ok(helperSrc.indexOf('regionTexts') >= 0 && helperSrc.indexOf(EIC_UNDO4.MODULE_REL) >= 0,
+      '11.27 …it derives every region from ' + EIC_UNDO4.MODULE_REL + ' on disk instead');
+  }
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2315,6 +3333,292 @@ section('11C. THE TICKER ANALYSIS PANEL — EIC PR 3');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+section('11D. THE LIVE DEEP DIVE — EIC PR 4, and the family is closed');
+//
+// FOUR declaration sites, THREE unique names, moved byte-for-byte. §8's purity
+// guard is not applied and NO purity claim is made anywhere: this module
+// performs transport (ttCall, a DXLink WebSocket) AND rendering, and the two are
+// interleaved rather than separable. §14's surface guard is applied instead, and
+// it is derived from a SOURCE AUDIT of the real bodies re-measured for this PR
+// rather than carried over from the plan — it pins the effects the audit
+// measured ABSENT and the transport/DOM ownership it measured PRESENT, at the
+// measured multiplicity, so deleting the WebSocket or one endpoint fails even
+// though the byte-identity proof only ever compares the functions to what was
+// cut.
+// ═════════════════════════════════════════════════════════════════════════════
+{
+  ok(fs.existsSync(LDD_PATH), '11D.1 js/ui/eic-live-deep-dive.js exists');
+  eq(LDD_DECLS.length, 4, '11D.2 the module declares exactly FOUR sites');
+  deepEq(LDD_DECLS.map((d) => d.name), G.EXPECTED_LIVE_DEEP_DIVE.order,
+    '11D.3 …in the original physical order: eicFetchLegs, eicFetchLegs, eicDXLinkDeepDive, eicRunDXLink');
+  eq(new Set(LDD_DECLS.map((d) => d.name)).size, 3, '11D.4 …across THREE unique names');
+  deepEq(LDD_DECLS.map((d) => d.chars), [144, 144, 12815, 10623], '11D.5 …at the recorded per-site lengths');
+  eq(LDD_DECLS.reduce((a, d) => a + d.chars, 0), 23726, '11D.6 …totalling 23,726 declaration chars');
+  for (const d of LDD_DECLS) {
+    eq(d.form, 'function', '11D.7 ' + d.name + ' is declared as a function, not a const/arrow');
+    eq(d.isAsync, true, '11D.8 ' + d.name + ' is async, exactly as it was inline');
+    eq(sha256(LDD_SRC.slice(d.start, d.end + 1)), G.EXPECTED_LIVE_DEEP_DIVE.spanSha[d.name],
+      '11D.9 ' + d.name + ' matches its recorded span SHA-256');
+  }
+  expectClean(G.guardModuleShape(LDD_SRC, G.EXPECTED_LIVE_DEEP_DIVE), '11D.10 the module satisfies the shape guard');
+  expectClean(G.guardLiveDeepDiveSurface(LDD_SRC), '11D.11 …and the live-deep-dive surface guard');
+  expectClean(G.guardLoad(SCRIPT_MODEL, G.LIVE_DEEP_DIVE_SRC_ATTR), '11D.12 …and the load guard for its own tag');
+  // The inventory guard, asserted CLEAN on the real repository in its own right.
+  // §12's control-clean phase also evaluates it, but a positive proof that only
+  // exists inside the mutation harness is a positive proof nobody reads — and if
+  // the mutant list were ever trimmed, it would vanish with it.
+  expectClean(G.guardEicModuleInventory(SCRIPT_MODEL, DISK_JS_FILES),
+    '11D.12b …and the EIC module inventory over BOTH the loaded script tags and the files on disk');
+  // The canonical normalizer, proved on the spellings that used to bypass it.
+  {
+    const canon = 'js/ui/eic-live-deep-dive.js';
+    for (const form of ['js/ui/eic-live-deep-dive.js', '/js/ui/eic-live-deep-dive.js',
+      './js/ui/eic-live-deep-dive.js', './js/ui/eic-live-deep-dive.js?v=1',
+      './js/ui/eic-live-deep-dive.js#top', '  ./js/ui/eic-live-deep-dive.js  ',
+      './js/ui/../ui/eic-live-deep-dive.js']) {
+      eq(G.canonicalLocalSrc(form), canon, '11D.12c canonical form of ' + JSON.stringify(form));
+    }
+    // Genuinely REMOTE srcs are not local scripts and must not be dragged into
+    // the local inventory. Protocol-relative is remote, not root-relative.
+    for (const remote of ['https://cdn.example.com/eic-x.js', 'http://x/eic-x.js',
+      '//cdn.example.com/eic-x.js', 'data:text/javascript,0']) {
+      eq(G.canonicalLocalSrc(remote), null, '11D.12d remote src is not local: ' + JSON.stringify(remote));
+    }
+    eq(G.canonicalLocalSrc(''), null, '11D.12e an empty src is not a local script');
+    eq(G.canonicalLocalSrc(null), null, '11D.12f a missing src is not a local script');
+    ok(G.isEicModulePath('js/ui/eic-extra.js') && !G.isEicModulePath('js/ui/pess-panel.js'),
+      '11D.12g the eic-*.js path test matches the family and nothing else');
+    // The four literal src attributes in index.html canonicalize to the four
+    // declared files — so the tag guard and the inventory guard are talking
+    // about the same modules even though they compare different spellings.
+    deepEq(G.EIC_MODULE_SRC_ATTRS.map((a) => G.canonicalLocalSrc(a)), G.EIC_MODULE_FILES,
+      '11D.12h the literal src attributes canonicalize onto the declared file list');
+    for (const a of G.EIC_MODULE_SRC_ATTRS) {
+      ok(HTML.indexOf('<script src="' + a + '"></script>') >= 0,
+        '11D.12i index.html loads it with exactly that literal attribute: ' + a);
+    }
+  }
+  ok(!/module\.exports|export\s|require\s*\(|^\s*['"]use strict['"]/m.test(LDD_SRC),
+    '11D.13 classic script — no module system, no wrapper, no strict-mode directive introduced');
+
+  // ── the duplicate pair, preserved rather than tidied ──────────────────────
+  {
+    const pair = LDD_DECLS.filter((d) => d.name === 'eicFetchLegs');
+    eq(pair.length, 2, '11D.14 BOTH eicFetchLegs sites moved');
+    const a = LDD_SRC.slice(pair[0].start, pair[0].end + 1);
+    const b = LDD_SRC.slice(pair[1].start, pair[1].end + 1);
+    eq(a, b, '11D.15 …and the two copies are byte-identical to one another');
+    eq(sha256(a), sha256(b), '11D.16 …by SHA-256 as well');
+    ok(pair[0].start < pair[1].start, '11D.17 …in their original relative order');
+    // Both are HOISTED async function declarations, so the later one wins — at
+    // hoist time, not at its physical position. Because they are identical, the
+    // winner is indistinguishable from the loser, which is exactly why deleting
+    // one would have been behaviour-neutral AND wrong: it is an EDIT.
+    eq(LDD_DECLS.indexOf(pair[0]), 0, '11D.18 the first copy is the module’s first declaration');
+    eq(LDD_DECLS.indexOf(pair[1]), 1, '11D.19 …and the second is the second — nothing was reordered between them');
+  }
+
+  // ── BYTE-FOR-BYTE against the real post-PR3 base blob ─────────────────────
+  if (!SHALLOW || BASE_PR3_MONO) {
+    ok(BASE_PR3_MONO !== null, '11D.20 the post-PR3 base monolith is reachable for the byte comparison');
+  }
+  if (BASE_PR3_MONO) {
+    const baseDecls = scanTopLevelDeclarations(BASE_PR3_MONO)
+      .filter((x) => G.LIVE_DEEP_DIVE_NAMES.indexOf(x.name) >= 0);
+    eq(baseDecls.length, 4, '11D.21 the base monolith declared all four sites');
+    deepEq(baseDecls.map((x) => x.name), G.EXPECTED_LIVE_DEEP_DIVE.order, '11D.22 …in the same physical order');
+    let direct = 0;
+    for (let i = 0; i < baseDecls.length; i++) {
+      const baseText = BASE_PR3_MONO.slice(baseDecls[i].start, baseDecls[i].end + 1);
+      const modText = LDD_SRC.slice(LDD_DECLS[i].start, LDD_DECLS[i].end + 1);
+      eq(modText, baseText, '11D.23 ' + baseDecls[i].name + '@' + baseDecls[i].start
+        + ' — module span EQUALS the base span, character for character');
+      if (modText === baseText) direct++;
+    }
+    eq(direct, 4, '11D.24 4/4 sites byte-identical to the real base blob at ' + BASE_PR3_REF.slice(0, 10));
+    // The recorded region offsets must be the offsets the REGIONS held, which
+    // are the declaration offsets minus any attached comment block.
+    deepEq(baseDecls.map((x, i) => x.start - (EIC_UNDO4.REGION_OFFSETS[i].chars - EIC_UNDO4.DECLARATION_CHARS_EACH[i] - 2)),
+      EIC_UNDO4.REGION_OFFSETS.map((r) => r.monoOffset),
+      '11D.25 …and each declaration sits exactly where the undo helper records its region beginning, plus its attached comment');
+  }
+
+  // ── GONE from the monolith, present exactly once each application-wide ────
+  for (const n of G.LIVE_DEEP_DIVE_NAMES) {
+    eq(INLINE_DECLS.filter((d) => d.name === n).length, 0, '11D.26 ' + n + ' is no longer declared inline');
+  }
+  eq(scanTopLevelDeclarations(APP_SRC).filter((d) => d.name === 'eicFetchLegs').length, 2,
+    '11D.27 eicFetchLegs is declared exactly TWICE across the whole application — the pair is intact, not duplicated further');
+  for (const n of ['eicDXLinkDeepDive', 'eicRunDXLink']) {
+    eq(scanTopLevelDeclarations(APP_SRC).filter((d) => d.name === n).length, 1,
+      '11D.28 ' + n + ' is declared exactly ONCE across the whole application');
+  }
+
+  // ── the global binding form, evaluated as a classic script ────────────────
+  {
+    const sandbox = { console: { log() {}, warn() {}, error() {} },
+      Math, JSON, Date, Number, String, Array, Object, Boolean, isNaN, parseFloat, parseInt, RegExp, Error, Promise };
+    let evalErr = null;
+    try { vm.createContext(sandbox); vm.runInContext(LDD_SRC, sandbox, { filename: 'ldd-probe.js', timeout: 5000 }); }
+    catch (e) { evalErr = String(e && e.message); }
+    eq(evalErr, null, '11D.29 the module evaluates as a classic script');
+    for (const n of G.LIVE_DEEP_DIVE_NAMES) {
+      eq(typeof sandbox[n], 'function', '11D.30 ' + n + ' is bound as a GLOBAL function declaration');
+      eq(sandbox[n].constructor.name, 'AsyncFunction', '11D.31 ' + n + ' is an AsyncFunction');
+      ok(Object.prototype.hasOwnProperty.call(sandbox, n),
+        '11D.32 ' + n + ' lands on the global object, where the ticker-analysis panel resolves it at click time');
+    }
+    eq(sandbox.eicFetchLegs.length, 1, '11D.33 eicFetchLegs has arity 1 (ticker)');
+    eq(sandbox.eicDXLinkDeepDive.length, 2, '11D.34 eicDXLinkDeepDive has arity 2 (ticker, expiration)');
+    eq(sandbox.eicRunDXLink.length, 2, '11D.35 eicRunDXLink has arity 2 (ticker, expiration)');
+    // The duplicate is hoisted, so the binding exists before the first statement
+    // and the LATER declaration is the one that wins.
+    eq(String(sandbox.eicFetchLegs), LDD_SRC.slice(LDD_DECLS[1].start, LDD_DECLS[1].end + 1),
+      '11D.36 the LATER eicFetchLegs declaration is the surviving binding — and it is byte-identical to the earlier one, so the winner is indistinguishable from the loser');
+  }
+
+  // ── the SOURCE AUDIT, pinned as measured ──────────────────────────────────
+  // Every number below was RE-MEASURED from the shipped bodies for this PR. They
+  // are asserted so a later edit cannot quietly turn this module into something
+  // else while the shape guard still passes. No purity claim is made: the counts
+  // record what IS here, including the transport and the rendering.
+  {
+    const span = LDD_DECLS.map((d) => G.stripComments(LDD_SRC.slice(d.start, d.end + 1))).join('\n');
+    const m = G.maskLiterals(span);
+    const count = (re) => (m.match(new RegExp(re.source, 'g')) || []).length;
+    eq(count(/\bttCall\s*\(/), 4, '11D.37 audit: 4 ttCall transport calls (1 per eicFetchLegs copy, 2 in the deep dive)');
+    eq(count(/\bfetch\s*\(/), 0, '11D.38 audit: 0 direct fetch() — the module goes through ttCall, as it did inline');
+    eq(count(/new\s+WebSocket\s*\(/), 1, '11D.39 audit: 1 DXLink WebSocket');
+    eq(count(/\bsetTimeout\s*\(/), 1, '11D.40 audit: 1 setTimeout (the 9s DXLink budget)');
+    eq(count(/\bclearTimeout\s*\(/), 4, '11D.41 audit: 4 clearTimeout cancellations');
+    eq(count(/\bsetInterval\s*\(/), 0, '11D.42 audit: 0 setInterval');
+    eq(count(/new\s+Promise\s*\(/), 1, '11D.43 audit: 1 explicit Promise (the WebSocket completion)');
+    eq(count(/\bdocument\s*\.\s*getElementById\s*\(/), 2, '11D.44 audit: 2 getElementById lookups');
+    eq(count(/\bquerySelector\s*\(/), 5, '11D.45 audit: 5 querySelector lookups');
+    eq(count(/\bdocument\s*\.\s*createElement\s*\(/), 1, '11D.46 audit: 1 createElement');
+    eq(count(/\.\s*innerHTML\s*=(?!=)/), 3, '11D.47 audit: 3 innerHTML assignments');
+    eq(count(/\.\s*innerHTML\s*\+=/), 2, '11D.48 audit: 2 innerHTML appends');
+    eq(count(/\.\s*textContent\s*=(?!=)/), 2, '11D.49 audit: 2 textContent writes');
+    eq(count(/\baddEventListener\s*\(/), 0, '11D.50 audit: 0 addEventListener — this module registers no listener of its own');
+    eq(count(/\bS\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/), 0, '11D.51 audit: 0 DIRECT S.* writes');
+    eq(count(/\b(window|globalThis)\b/), 0, '11D.52 audit: 0 window/globalThis references');
+    eq(count(/\b(local|session)Storage\b/), 0, '11D.53 audit: 0 storage access');
+    eq(count(/\bawait\b/), 7, '11D.54 audit: 7 await points across the four spans (1 per eicFetchLegs copy, 3 in the deep dive, 2 in the runner)');
+    eq(count(/\bcatch\s*\(/), 9, '11D.55 audit: 9 catch clauses (1 per eicFetchLegs copy, 6 in the deep dive, 1 in the runner)');
+    eq(count(/\bfinally\b/), 0, '11D.56 audit: 0 finally blocks');
+    eq(count(/\bthrow\b/), 4, '11D.57 audit: 4 explicit throws, all inside the deep dive’s own try');
+    eq(count(/\bon[a-z]+\s*=\s*["']/), 0, '11D.58 audit: 0 inline on*= handler strings in generated markup');
+    eq(Array.from(new Set((m.match(/\bS\s*\.\s*[A-Za-z_$][\w$]*/g) || [])
+      .map((x) => x.replace(/\s+/g, '')))).sort().join(','),
+      'S.marketContextRisk,S.scanData',
+      '11D.59 audit: exactly two distinct S.* fields are READ');
+    // The honest nuance: no direct S write, but the scan ROW is mutated.
+    eq(count(/\bd\s*\.\s*eic[A-Za-z]*\s*=(?!=)/), 4,
+      '11D.60 audit: 4 mutations of the scan ROW reached through S.scanData — shared state IS written, just not via S.x=');
+    // It is NOT pure, and the audit says so in the affirmative rather than by
+    // omitting a purity claim.
+    ok(count(/\bttCall\s*\(/) > 0 && count(/new\s+WebSocket\s*\(/) > 0,
+      '11D.61 the module performs TRANSPORT — no purity guard is applied, because asserting purity here would assert something false');
+    ok(count(/\.\s*innerHTML\s*=(?!=)/) + count(/\.\s*innerHTML\s*\+=/) > 0,
+      '11D.62 …and it performs RENDERING; transport and rendering are interleaved and were NOT split, because this is a relocation');
+  }
+
+  // ── the CALL GRAPH, pinned ────────────────────────────────────────────────
+  {
+    // BODIES only. Slicing from each declaration's opening brace keeps the
+    // signature out of the graph: `function eicDXLinkDeepDive(` would otherwise
+    // be counted as a call to itself, and the in-module edge this section exists
+    // to pin would read 2 whether or not the real call survived.
+    const span = LDD_DECLS.map((d) => {
+      const body = LDD_SRC.slice(d.start, d.end + 1);
+      return G.stripComments(body.slice(body.indexOf('{')));
+    }).join('\n');
+    const m = G.maskLiterals(span);
+    const calls = {};
+    const re = /(^|[^.\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+    const LOCAL = new Set(['function', 'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof',
+      'new', 'else', 'do', 'try', 'await', 'findStreamerSymbol', 'find', 'filter', 'reduce', 'every',
+      'forEach', 'flatMap', 'Math', 'Date', 'JSON', 'Number', 'String', 'Array', 'Object', 'Promise', 'Error']);
+    let mm;
+    while ((mm = re.exec(m)) !== null) { if (!LOCAL.has(mm[2])) calls[mm[2]] = (calls[mm[2]] || 0) + 1; }
+    eq(calls.ttCall, 4, '11D.63 call graph: ttCall × 4 — the transport, unchanged');
+    eq(calls.eicDXLinkDeepDive, 1, '11D.64 call graph: eicDXLinkDeepDive × 1 — an IN-MODULE call from eicRunDXLink');
+    eq((m.match(/\bawait\s+eicDXLinkDeepDive\s*\(/g) || []).length, 1, '11D.64b …and it is awaited');
+    ok(calls.eicFetchLegs === undefined, '11D.64c call graph: eicFetchLegs × 0 — both copies are DEAD CODE, called from nowhere');
+    ok(calls.eicRunDXLink === undefined, '11D.64d call graph: eicRunDXLink × 0 from inside this module — its only caller is the ticker-analysis panel, at click time');
+    eq(calls.eicScreenTicker, 2, '11D.65 call graph: eicScreenTicker × 2 — resolved ACROSS the boundary PR 1 created');
+    eq(calls.eicBuildLiveContext, 1, '11D.66 call graph: eicBuildLiveContext × 1 — also PR 1’s module');
+    eq(calls.callAgent, 1, '11D.67 call graph: callAgent × 1, awaited');
+    eq(calls.setAS, 5, '11D.68 call graph: setAS × 5');
+    eq(calls.showToast, 3, '11D.69 call graph: showToast × 3');
+    eq(calls.logEv, 5, '11D.70 call graph: logEv × 5');
+    eq(calls.appendSysMsg, 1, '11D.71 call graph: appendSysMsg × 1');
+    eq(calls.appendAgentMsg, 1, '11D.72 call graph: appendAgentMsg × 1');
+    eq(calls.computeSetupScore, 1, '11D.73 call graph: computeSetupScore × 1');
+    eq(calls.computeFinalDecision, 1, '11D.74 call graph: computeFinalDecision × 1');
+    // The BACKWARD edges are satisfied by load ORDER: PR 1's module loads first.
+    ok(ORDERED.findIndex((s) => s.src === G.MODULE_SRC_ATTR) < LDD_SLOT,
+      '11D.75 js/services/eic-screening-rules.js loads BEFORE this module, so eicScreenTicker/eicBuildLiveContext are bound when called');
+    // No name from another owner may have come along.
+    for (const n of G.PR1_NAMES.concat(G.PANEL_NAMES, G.TICKER_ANALYSIS_NAMES)) {
+      eq(LDD_DECLS.filter((d) => d.name === n).length, 0,
+        '11D.76 ' + n + ' did NOT come along — it belongs to another owner');
+    }
+  }
+
+  // ── INCIDENTAL DEFECTS: recorded, pinned, and deliberately NOT repaired ───
+  {
+    const runText = LDD_SRC.slice(LDD_DECLS[3].start, LDD_DECLS[3].end + 1);
+    const diveText = LDD_SRC.slice(LDD_DECLS[2].start, LDD_DECLS[2].end + 1);
+    const runCode = G.stripComments(runText), diveCode = G.stripComments(diveText);
+
+    // 1 — fdColor: a genuine ReferenceError on eicRunDXLink's SUCCESS path.
+    ok(runCode.indexOf('fdColor') >= 0, '11D.77 defect: eicRunDXLink still references fdColor');
+    ok(!/\b(var|let|const)\s+fdColor\b/.test(G.maskLiterals(runCode)),
+      '11D.78 …and still does NOT declare it — `var fdColor` is function-scoped to eicAnalyzeTicker, so this reads an UNDECLARED global');
+    ok(TA_SRC.indexOf('var fdColor=') >= 0,
+      '11D.79 …the only declaration of that name lives in js/ui/eic-ticker-analysis-panel.js, in a different function');
+    // The read sits inside eicRunDXLink's own try, so the ReferenceError is
+    // caught by its catch and surfaces through setAS/logEv. §9F proves that
+    // behaviour is byte-identical on BASE and HEAD rather than merely asserting
+    // it — a relocation must preserve a defect exactly, including its symptom.
+    ok(runCode.indexOf("setAS('earnings-ic','err',e.message)") >= 0,
+      '11D.80 …and eicRunDXLink’s catch still reports it through setAS(…,"err",…), exactly as inline');
+
+    // 2 — the dead `if(d)` guard followed by an unconditional dereference.
+    ok(diveCode.indexOf('if(d) var tsNone=new Date().toISOString();') >= 0,
+      '11D.81 defect: the dead `if(d) var tsNone = …` guard survives');
+    ok(diveCode.indexOf('d.eicLegsLive={') >= 0,
+      '11D.82 …immediately followed by an UNCONDITIONAL d.eicLegsLive={…} — the guard protects nothing');
+    ok(diveCode.indexOf('return d?d.eicLegsLive:null;') >= 0,
+      '11D.83 …and then `d` is re-checked on the return, after it has already been dereferenced');
+
+    // 3 — the guarded write followed by an unguarded read on the success path.
+    ok(diveCode.indexOf('if(d) d.eicLegsLive = {') >= 0, '11D.84 defect: the success path guards the write with if(d)…');
+    ok(diveCode.indexOf('return d.eicLegsLive;') >= 0, '11D.85 …and then returns d.eicLegsLive UNGUARDED');
+
+    // 4 — the redundant second eicScreenTicker(d).
+    ok(runCode.indexOf('var sc = eicScreenTicker(d);') >= 0, '11D.86 defect: eicScreenTicker(d) is called once as `sc`…');
+    ok(runCode.indexOf('computeSetupScore(d, baseLegs, eicScreenTicker(d))') >= 0,
+      '11D.87 …and again inside the computeSetupScore fallback, for an identical result');
+
+    // 5 — both eicFetchLegs copies are dead code (0 call sites) — see 7E.14-15.
+    ok(LDD_DECLS.filter((d) => d.name === 'eicFetchLegs').length === 2,
+      '11D.88 defect: both eicFetchLegs copies are retained even though neither is ever called');
+
+    // The eicEnrichLegs defect belongs to PR 2 and is NOT touched here.
+    // Measured over CODE, not raw source: this module's architecture header
+    // NAMES the defect while explaining that it belongs elsewhere, and a comment
+    // must never satisfy — or fail — a rule about code.
+    ok(G.stripComments(LDD_SRC).indexOf('eicEnrichLegs') < 0,
+      '11D.89 the inherited eicEnrichLegs defect is NOT in this module’s code — it is PR 2’s');
+    ok(LDD_SRC.indexOf('eicEnrichLegs') >= 0,
+      '11D.89b …though the header names it, to record that it was considered and deliberately left alone');
+    ok(PANEL_SRC.indexOf('eicEnrichLegs') >= 0, '11D.90 …it is still in js/ui/eic-panel.js, still unrepaired');
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 section('12. MUTATION PROOF — genuine mutations, run through the real guards');
 //
 // Every mutant below MUTATES A MODEL and then calls the SAME guard the real
@@ -2394,26 +3698,46 @@ mutant(S_, 'rename a relocated declaration', G.guardModuleShape,
   () => MODULE_SRC.replace('function eicScreenTicker(d){', 'function eicScreenTickerV2(d){'), () => MODULE_SRC);
 mutant(S_, 'reintroduce a shipped declaration inline', G.guardInlineResidue,
   () => INLINE + '\n' + declText(MODULE_SRC, 'eicScreenTicker', 0) + '\n', () => INLINE);
-mutant(S_, 'extract a pending declaration early (eicDXLinkDeepDive leaves the monolith)', G.guardInlineResidue,
-  () => cutDeclaration(INLINE, 'eicDXLinkDeepDive', 0), () => INLINE);
-mutant(S_, 'ship only ONE of the two inline eicFetchLegs sites', G.guardInlineResidue,
-  () => cutDeclaration(INLINE, 'eicFetchLegs', 1), () => INLINE);
+mutant(S_, 'a PR 4 declaration is put BACK into the monolith', G.guardInlineResidue,
+  () => INLINE + '\n' + declText(LDD_SRC, 'eicDXLinkDeepDive', 0) + '\n', () => INLINE);
+mutant(S_, 'the module loses eicDXLinkDeepDive entirely', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => cutDeclaration(LDD_SRC, 'eicDXLinkDeepDive', 0), () => LDD_SRC);
 mutant(S_, 'collapse the 11-site manifest into a 9-name manifest', G.guardManifest, () => {
   const seen = new Set();
   return MANIFEST.filter((m) => { if (seen.has(m[0])) return false; seen.add(m[0]); return true; });
 }, () => MANIFEST);
 mutant(S_, 'split the duplicate pair across two owners', G.guardManifest,
   () => MANIFEST.map((m) => (m[0] === 'eicLiqFromLegs' && m[4] === 1921950 ? [m[0], PANEL, m[2], m[3], m[4]] : m)), () => MANIFEST);
-mutant(S_, 'mark a shipped site as pending', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], LIVE_DEEP_DIVE, m[2], m[3], m[4]] : m)), () => MANIFEST);
-mutant(S_, 'mark a pending site as shipped', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'eicDXLinkDeepDive' ? [m[0], SCREENING_RULES, m[2], m[3], m[4]] : m)), () => MANIFEST);
-mutant(S_, 'mark a PANEL site as pending — PR 2 shipped it', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'runEICPanel' ? [m[0], LIVE_DEEP_DIVE, m[2], m[3], m[4]] : m)), () => MANIFEST);
-mutant(S_, 'mark the TICKER_ANALYSIS site as pending — PR 3 shipped it', G.guardManifest,
+// The family is CLOSED, so "shipped vs pending" no longer separates the owners.
+// A site credited to an owner that does not exist still breaks the arithmetic…
+mutant(S_, 'credit a site to an owner that does not exist', G.guardManifest,
+  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], 'PR5', m[2], m[3], m[4]] : m)), () => MANIFEST);
+mutant(S_, 'move a whole owner out of the shipped set', G.guardManifest,
+  () => MANIFEST.map((m) => (m[1] === TICKER_ANALYSIS ? [m[0], 'PENDING', m[2], m[3], m[4]] : m)), () => MANIFEST);
+// …but a WRONG OWNER among the four shipped ones keeps every total correct, and
+// is caught only by cross-checking against what the modules actually declare.
+const OWN_ = 'owner';
+mutant(OWN_, 'wrong owner: eicRunDXLink is credited to PANEL', (m) => G.guardOwnership(m, DECLS_BY_MODULE),
+  () => MANIFEST.map((m) => (m[0] === 'eicRunDXLink' ? [m[0], PANEL, m[2], m[3], m[4]] : m)), () => MANIFEST);
+mutant(OWN_, 'wrong owner: eicAnalyzeTicker is credited to LIVE_DEEP_DIVE', (m) => G.guardOwnership(m, DECLS_BY_MODULE),
   () => MANIFEST.map((m) => (m[0] === 'eicAnalyzeTicker' ? [m[0], LIVE_DEEP_DIVE, m[2], m[3], m[4]] : m)), () => MANIFEST);
-mutant(S_, 'mark a PR 4 site as shipped EARLY — LIVE_DEEP_DIVE has not shipped', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'eicRunDXLink' ? [m[0], TICKER_ANALYSIS, m[2], m[3], m[4]] : m)), () => MANIFEST);
+mutant(OWN_, 'wrong owner: eicDXLinkDeepDive is credited to SCREENING_RULES', (m) => G.guardOwnership(m, DECLS_BY_MODULE),
+  () => MANIFEST.map((m) => (m[0] === 'eicDXLinkDeepDive' ? [m[0], SCREENING_RULES, m[2], m[3], m[4]] : m)), () => MANIFEST);
+mutant(OWN_, 'the eicFetchLegs pair is split across two owners', (m) => G.guardOwnership(m, DECLS_BY_MODULE), () => {
+  let first = true;
+  return MANIFEST.map((m) => { if (m[0] === 'eicFetchLegs' && first) { first = false; return [m[0], PANEL, m[2], m[3], m[4]]; } return m; });
+}, () => MANIFEST);
+mutant(OWN_, 'a name is declared by TWO modules at once', (m) => G.guardOwnership(MANIFEST, m),
+  () => Object.assign({}, DECLS_BY_MODULE, { './js/ui/eic-panel.js': PANEL_DECLS.map((d) => d.name).concat(['eicRunDXLink']) }),
+  () => DECLS_BY_MODULE);
+mutant(OWN_, 'a shipped module declares something outside the eleven-site plan', (m) => G.guardOwnership(MANIFEST, m),
+  () => Object.assign({}, DECLS_BY_MODULE, { './js/ui/eic-live-deep-dive.js': LDD_DECLS.map((d) => d.name).concat(['eicSomethingNew']) }),
+  () => DECLS_BY_MODULE);
+mutant(OWN_, 'one of the two eicFetchLegs declarations vanishes from its owner', (m) => G.guardOwnership(MANIFEST, m), () => {
+  const names = LDD_DECLS.map((d) => d.name);
+  names.splice(names.indexOf('eicFetchLegs'), 1);
+  return Object.assign({}, DECLS_BY_MODULE, { './js/ui/eic-live-deep-dive.js': names });
+}, () => DECLS_BY_MODULE);
 mutant(S_, 'make the owner/char arithmetic inconsistent', G.guardManifest,
   () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], m[1], m[2] + 1, m[3], m[4]] : m)), () => MANIFEST);
 
@@ -2783,22 +4107,319 @@ if (TA_TRANSCRIPT_GUARD) {
 }
 
 // ── RATCHET (EIC PR 3) ───────────────────────────────────────────────────────
-mutant(R_, 'ratchet stalls: 11 → 7 → 5 → 5', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 5], () => RATCHET);
-mutant(R_, 'ratchet overshoots: 11 → 7 → 5 → 3', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 3], () => RATCHET);
-mutant(R_, 'the ratchet is REOPENED to 6', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4, 6], () => RATCHET);
-mutant(R_, 'the floor is relaxed to the pre-PR3 residue', (m) => G.guardRatchet(RATCHET, m),
-  () => 5, () => inlineEic.length);
-// The duplicate pair — PR 4 must move BOTH, so both must still be inline now.
-mutant(R_, 'only ONE of the two inline eicFetchLegs sites survives', G.guardInlineResidue,
-  () => cutDeclaration(INLINE, 'eicFetchLegs', 1), () => INLINE);
-mutant(R_, 'the duplicate eicFetchLegs pair is collapsed to nothing', G.guardInlineResidue,
-  () => cutDeclaration(cutDeclaration(INLINE, 'eicFetchLegs', 1), 'eicFetchLegs', 0), () => INLINE);
-mutant(R_, 'the two eicFetchLegs sites are allowed to diverge', G.guardInlineResidue,
-  () => replaceNth(INLINE, "var resp=await ttCall('/eic/legs/'+ticker);",
-    "var resp=await ttCall('/eic/legs/v2/'+ticker);", 1), () => INLINE);
+mutant(R_, 'ratchet stalls: 11 → 7 → 5 → 4 → 4', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [11, 7, 5, 4, 4], () => RATCHET);
+mutant(R_, 'ratchet overshoots below zero: 11 → 7 → 5 → 4 → -1', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [11, 7, 5, 4, -1], () => RATCHET);
+mutant(R_, 'the ratchet stops one short of zero: 11 → 7 → 5 → 4', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [11, 7, 5, 4], () => RATCHET);
+mutant(R_, 'the ratchet is REOPENED to 3 AFTER reaching zero', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [11, 7, 5, 4, 0, 3], () => RATCHET);
+mutant(R_, 'a positive allowance is appended two steps after zero', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [11, 7, 5, 4, 0, 6, 2], () => RATCHET);
+mutant(R_, 'the floor is relaxed to the pre-PR4 residue', (m) => G.guardRatchet(RATCHET, m),
+  () => 4, () => inlineEic.length);
+// One EIC declaration left inline, in every shape that matters.
+mutant(R_, 'ONE EIC declaration is left inline (eicRunDXLink)', G.guardInlineResidue,
+  () => INLINE + '\n' + declText(LDD_SRC, 'eicRunDXLink', 0) + '\n', () => INLINE);
+mutant(R_, 'EIC inline residue is REOPENED after zero (one eicFetchLegs copy returns)', G.guardInlineResidue,
+  () => INLINE + '\n' + declText(LDD_SRC, 'eicFetchLegs', 0) + '\n', () => INLINE);
+mutant(R_, 'a shipped PR 1 declaration is reintroduced inline', G.guardInlineResidue,
+  () => INLINE + '\n' + declText(MODULE_SRC, 'eicBuildLiveContext', 0) + '\n', () => INLINE);
+// ── the terminal-zero classifier, under a NEW name ─────────────────────────
+// An independent review found the old inline filter could not see these two
+// shapes, so "no EIC declaration can be added back under a new name" was a claim
+// the code did not enforce. Both must now register as terminal inline residue.
+// The guard's verdict is narrowed to the residue-count/pattern violations, so a
+// kill cannot be scored by some unrelated rule tripping.
+for (const [id, src] of [
+  ['a NEW EIC declaration is added inline as runEICSomething()', 'function runEICSomething(){}'],
+  ['a NEW EIC declaration is added inline as _eicBootstrap()', 'function _eicBootstrap(){}'],
+  ['a NEW EIC declaration is added inline as EICHelper()', 'function EICHelper(){}'],
+]) {
+  mutant(R_, id,
+    (m) => {
+      const r = G.guardInlineResidue(m);
+      return { violations: r.violations.filter((v) => /RESIDUE_COUNT|RESIDUE_CHARS|RESIDUE_ORDER/.test(v)), threw: r.threw };
+    },
+    () => INLINE + '\n' + src + '\n', () => INLINE);
+}
+// …and the CLASSIFIER itself. If it stopped recognising a family shape, the
+// residue guard would go quiet on exactly the reintroduction it exists to catch,
+// and every assertion above would keep passing.
+//
+// The model is the classifier's VERDICT VECTOR over a fixed control set, not the
+// function object: a function does not survive JSON.stringify, so modelling it
+// directly would make the mutation compare undefined to undefined and register
+// as inert rather than as a kill.
+const FAMILY_CONTROLS = ['eicFoo', 'EICFoo', '_eicFoo', 'runEICFoo', 'runEICSomething',
+  '_eicBootstrap', 'runEICPanel', 'eicRunDXLink'];
+const classify = (fn) => FAMILY_CONTROLS.map((n) => !!fn(n));
+const familyClassifierGuard = (vec) => ({
+  violations: FAMILY_CONTROLS
+    .filter((n, i) => !vec[i])
+    .map((n) => 'PREDICATE_BLIND: ' + n + ' is not classified as an EIC family name'),
+  threw: null,
+});
+mutant(R_, 'the family classifier reverts to the old /^eic/i + runEICPanel rule', familyClassifierGuard,
+  () => classify((n) => /^eic/i.test(n) || n === 'runEICPanel'), () => classify(G.isEicFamilyName));
+mutant(R_, 'the family classifier drops the leading-underscore case', familyClassifierGuard,
+  () => classify((n) => G.isEicFamilyName(n) && !/^[_$]/.test(n)), () => classify(G.isEicFamilyName));
+mutant(R_, 'the family classifier only anchors at the start of the name', familyClassifierGuard,
+  () => classify((n) => /^[_$]*eic/i.test(n)), () => classify(G.isEicFamilyName));
+// The duplicate pair — PR 4 moved BOTH, so the pair rule now lives on the MODULE.
+mutant(R_, 'only ONE of the two eicFetchLegs sites was moved', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => cutDeclaration(LDD_SRC, 'eicFetchLegs', 1), () => LDD_SRC);
+mutant(R_, 'the duplicate eicFetchLegs pair is collapsed to one', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => cutDeclaration(LDD_SRC, 'eicFetchLegs', 0), () => LDD_SRC);
+mutant(R_, 'the duplicate eicFetchLegs pair is dropped entirely', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => cutDeclaration(cutDeclaration(LDD_SRC, 'eicFetchLegs', 1), 'eicFetchLegs', 0), () => LDD_SRC);
+mutant(R_, 'the two eicFetchLegs copies are allowed to diverge', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => replaceNth(LDD_SRC, "var resp=await ttCall('/eic/legs/'+ticker);",
+    "var resp=await ttCall('/eic/legs/v2/'+ticker);", 1), () => LDD_SRC);
+
+// ── LIVE DEEP DIVE (EIC PR 4) ────────────────────────────────────────────────
+const LD_ = 'livedeep';
+mutant(LD_, 'remove eicRunDXLink from the module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => cutDeclaration(LDD_SRC, 'eicRunDXLink', 0), () => LDD_SRC);
+mutant(LD_, 'rename a relocated declaration', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('function eicRunDXLink(ticker, expiration){', 'function eicRunDXLinkV2(ticker, expiration){'), () => LDD_SRC);
+mutant(LD_, 'reorder the declarations — the runner is put before the deep dive', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE), () => {
+  const dive = declText(LDD_SRC, 'eicDXLinkDeepDive', 0), run = declText(LDD_SRC, 'eicRunDXLink', 0);
+  return LDD_SRC.replace(dive, '__D__').replace(run, dive).replace('__D__', run);
+}, () => LDD_SRC);
+mutant(LD_, 'change an async form to synchronous', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('async function eicDXLinkDeepDive(', 'function eicDXLinkDeepDive('), () => LDD_SRC);
+mutant(LD_, 'change eicFetchLegs to synchronous', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('async function eicFetchLegs(', 'function eicFetchLegs('), () => LDD_SRC);
+mutant(LD_, 'change a SIGNATURE — eicRunDXLink loses its expiration parameter', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('async function eicRunDXLink(ticker, expiration){', 'async function eicRunDXLink(ticker){'), () => LDD_SRC);
+mutant(LD_, 'change ONE BYTE of a body', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace("acceptDataFormat:'FULL'", "acceptDataFormat:'full'"), () => LDD_SRC);
+mutant(LD_, 'reformat a body (whitespace only)', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('  try{\n    var resp=await', '  try {\n    var resp = await'), () => LDD_SRC);
+mutant(LD_, 'rename a local variable', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('var liveData = {};', 'var liveFeed = {};'), () => LDD_SRC);
+mutant(LD_, 'a STRAY EXECUTABLE STATEMENT is left outside the declarations', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC + '\nwindow.eicLiveDeepDiveReady = true;\n', () => LDD_SRC);
+mutant(LD_, 'a stray closing brace is left between declarations', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace('\nasync function eicRunDXLink(', '\n}\nasync function eicRunDXLink('), () => LDD_SRC);
+mutant(LD_, 'the module is wrapped in an IIFE', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => '(function(){\n' + LDD_SRC + '\n})();\n', () => LDD_SRC);
+mutant(LD_, 'the module is converted to an ES module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC + '\nexport { eicRunDXLink };\n', () => LDD_SRC);
+mutant(LD_, 'the module gains a CommonJS export', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC + '\nmodule.exports = { eicRunDXLink };\n', () => LDD_SRC);
+mutant(LD_, 'a strict-mode directive is prepended', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => "'use strict';\n" + LDD_SRC, () => LDD_SRC);
+mutant(LD_, 'a fifth declaration arrives in the module', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC + '\nasync function eicExtra(x){ return x; }\n', () => LDD_SRC);
+
+// ── LIVE-DEEP-DIVE SURFACE (EIC PR 4) ────────────────────────────────────────
+// §11D's audit is only worth something if changing what it measures FAILS.
+const LS_ = 'ldsurface';
+mutant(LS_, 'the transport is replaced — ttCall becomes fetch', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("await ttCall('/quote-token')", "await fetch('/quote-token')"), () => LDD_SRC);
+mutant(LS_, 'an ENDPOINT is changed (both copies)', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.split("ttCall('/eic/legs/'+ticker)").join("ttCall('/eic/legs/v2/'+ticker)"), () => LDD_SRC);
+// Changing only ONE copy is a different defect — divergence — and belongs to the
+// shape guard's duplicate rule, which is where it is proved.
+mutant(LS_, 'only ONE endpoint copy is changed — the pair diverges', (m) => G.guardModuleShape(m, G.EXPECTED_LIVE_DEEP_DIVE),
+  () => LDD_SRC.replace("ttCall('/eic/legs/'+ticker)", "ttCall('/eic/legs/v2/'+ticker)"), () => LDD_SRC);
+mutant(LS_, 'the quote-token endpoint is changed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("ttCall('/quote-token')", "ttCall('/quote-token-v2')"), () => LDD_SRC);
+mutant(LS_, 'the DXLink fallback URL is changed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('wss://tasty-openapi-ws.dxfeed.com/realtime', 'wss://example.invalid/realtime'), () => LDD_SRC);
+mutant(LS_, 'the WebSocket is removed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('ws = new WebSocket(wsUrl);', 'ws = null;'), () => LDD_SRC);
+mutant(LS_, 'the TIMEOUT is removed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('var timeoutId = setTimeout(function(){', 'var timeoutId = (function(){'), () => LDD_SRC);
+mutant(LS_, 'the rendering is removed — innerHTML assignments deleted', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.split(".innerHTML='<span").join(".dataset.x='<span"), () => LDD_SRC);
+mutant(LS_, 'the render host id is renamed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.split("getElementById('eicResults')").join("getElementById('eicOutput')"), () => LDD_SRC);
+mutant(LS_, 'the status selector is renamed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.split("querySelector('.dxlink-status')").join("querySelector('.dx-status')"), () => LDD_SRC);
+mutant(LS_, 'the agent channel is changed', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("callAgent('earnings-ic', ctx)", "callAgent('earnings-ic-v2', ctx)"), () => LDD_SRC);
+mutant(LS_, 'a DIRECT S.* write is introduced', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('  setAS(\'earnings-ic\',\'busy\',\'DXLink deep dive per \'+ticker+\'...\');',
+    '  S.eicBusy = true;\n  setAS(\'earnings-ic\',\'busy\',\'DXLink deep dive per \'+ticker+\'...\');'), () => LDD_SRC);
+mutant(LS_, 'a window write is introduced', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC + '\nasync function eicNoop(){ window.eicLive = 1; }\n', () => LDD_SRC);
+mutant(LS_, 'a listener is acquired', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("var res = document.getElementById('eicResults');\n  if(res) res.innerHTML +=",
+    "var res = document.getElementById('eicResults');\n  if(res) res.addEventListener('click', function(){});\n  if(res) res.innerHTML +="), () => LDD_SRC);
+mutant(LS_, 'the sibling call into PR 1s module is dropped', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('var liveCtx  = eicBuildLiveContext(liveData, baseLegs);', 'var liveCtx  = null;'), () => LDD_SRC);
+mutant(LS_, 'the in-module await edge is broken', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('await eicDXLinkDeepDive(ticker, expiration||null)', 'null'), () => LDD_SRC);
+// ── THE DEFECTS: repairing one must FAIL ─────────────────────────────────────
+mutant(LS_, 'DEFECT REPAIRED: fdColor is declared', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('    var dxWarnHtml = \'\';', '    var fdColor = \'var(--gr)\';\n    var dxWarnHtml = \'\';'), () => LDD_SRC);
+mutant(LS_, 'DEFECT REMOVED: the fdColor reference is deleted', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace("' | <span style=\"color:'+fdColor+';font-weight:700\">'", "' | <span style=\"font-weight:700\">'"), () => LDD_SRC);
+mutant(LS_, 'DEFECT REPAIRED: the dead if(d) tsNone guard is tidied', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('if(d) var tsNone=new Date().toISOString();', 'var tsNone=new Date().toISOString();'), () => LDD_SRC);
+mutant(LS_, 'DEFECT REPAIRED: the unguarded return is guarded', G.guardLiveDeepDiveSurface,
+  () => LDD_SRC.replace('    return d.eicLegsLive;', '    return d?d.eicLegsLive:null;'), () => LDD_SRC);
+
+// ── LIVE-DEEP-DIVE OBSERVERS (EIC PR 4) ──────────────────────────────────────
+// §7E's "0 load-time observers" is only worth something if one would actually be
+// found. Each mutant injects a real evaluation-time read into a downstream
+// source and requires the guard to name it.
+const LO_ = 'ldobserver';
+for (const [id, snippet] of [
+  ['a top-level call appears downstream', '\neicRunDXLink("AAA");\n'],
+  ['a top-level reference appears downstream', '\nvar boot = eicDXLinkDeepDive;\n'],
+  ['a top-level typeof probe appears downstream', '\nvar t = typeof eicFetchLegs;\n'],
+  ['a read hidden in a top-level IF block', '\nif (window.ready) { eicRunDXLink("AAA"); }\n'],
+  ['a read hidden in a top-level typeof-guard IF', '\nif (typeof eicRunDXLink === "function") { eicRunDXLink("A"); }\n'],
+  ['a read hidden in a top-level FOR block', '\nfor (var i=0;i<1;i++) { eicDXLinkDeepDive("A"); }\n'],
+  ['a read hidden in a top-level WHILE block', '\nwhile (window.go) { eicFetchLegs("A"); }\n'],
+  ['a read hidden in a top-level SWITCH block', '\nswitch (window.k) { case 1: eicRunDXLink("A"); }\n'],
+  ['a read hidden in a top-level IIFE', '\n(function(){ eicRunDXLink("A"); })();\n'],
+]) {
+  mutant(LO_, id, (m) => G.guardNoLoadTimeObservers(m, LDD_NAMES),
+    () => LDD_OBSERVER_SOURCES.map((s, i) => (i === 0 ? { label: s.label, code: s.code + snippet } : s)),
+    () => LDD_OBSERVER_SOURCES);
+}
+// The negative direction — a genuinely deferred read must NOT be reported — is
+// a CONTROL, not a mutant: a "mutant" whose guard fires on the unmutated model
+// can never satisfy the control-clean requirement, and dressing one up as a kill
+// is exactly the fake this file's header calls out. It is asserted directly.
+{
+  const deferred = LDD_OBSERVER_SOURCES.map((s, i) => (i === 0
+    ? { label: s.label, code: s.code + '\nfunction laterLdd(){ eicRunDXLink("A"); }\n' } : s));
+  expectClean(G.guardNoLoadTimeObservers(deferred, LDD_NAMES),
+    '12.control a genuinely DEFERRED read injected downstream is NOT reported as a load-time observer');
+}
+
+// ── EIC MODULE INVENTORY (EIC PR 4) ──────────────────────────────────────────
+const LI_ = 'inventory';
+mutant(LI_, 'the script tag is MISSING', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES),
+  () => SCRIPT_MODEL.filter((s) => s.src !== G.LIVE_DEEP_DIVE_SRC_ATTR), () => SCRIPT_MODEL);
+mutant(LI_, 'the script tag is DUPLICATED', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  return SCRIPT_MODEL.slice(0, i).concat([SCRIPT_MODEL[i], SCRIPT_MODEL[i]], SCRIPT_MODEL.slice(i + 1));
+}, () => SCRIPT_MODEL);
+mutant(LI_, 'the script tag is MOVED AFTER the monolith', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  const rest = SCRIPT_MODEL.slice(0, i).concat(SCRIPT_MODEL.slice(i + 1));
+  return rest.concat([SCRIPT_MODEL[i]]);
+}, () => SCRIPT_MODEL);
+mutant(LI_, 'the four EIC modules stop being CONTIGUOUS', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  const rest = SCRIPT_MODEL.slice(0, i).concat(SCRIPT_MODEL.slice(i + 1));
+  const mono = rest.findIndex((s) => s.isInlineMonolith);
+  return rest.slice(0, mono - 1).concat([SCRIPT_MODEL[i]], rest.slice(mono - 1));
+}, () => SCRIPT_MODEL);
+mutant(LI_, 'the EIC modules are loaded OUT OF ORDER', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const a = SCRIPT_MODEL.findIndex((s) => s.src === G.TICKER_ANALYSIS_SRC_ATTR);
+  const b = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  const out = SCRIPT_MODEL.slice();
+  const t = out[a]; out[a] = out[b]; out[b] = t;
+  return out;
+}, () => SCRIPT_MODEL);
+mutant(LI_, 'a FIFTH eic-* module joins — the wildcard/prefix hole', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  return SCRIPT_MODEL.slice(0, i + 1)
+    .concat([{ src: './js/ui/eic-extra-panel.js', attrs: ' src="./js/ui/eic-extra-panel.js"', type: null, inline: '', isInlineMonolith: false }])
+    .concat(SCRIPT_MODEL.slice(i + 1));
+}, () => SCRIPT_MODEL);
+mutant(LI_, 'a fifth eic-* module joins under js/services/ instead', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  return SCRIPT_MODEL.slice(0, i + 1)
+    .concat([{ src: './js/services/eic-something.js', attrs: ' src="./js/services/eic-something.js"', type: null, inline: '', isInlineMonolith: false }])
+    .concat(SCRIPT_MODEL.slice(i + 1));
+}, () => SCRIPT_MODEL);
+// ── the PATH-SPELLING mutants ───────────────────────────────────────────────
+// An independent review found that the first version of this guard filtered
+// candidates with /^\.\//, so a fifth module written any other way walked
+// straight past the stray check. Each spelling below is now its own mutant, and
+// each must be rejected SPECIFICALLY as INVENTORY_UNDECLARED_EIC_MODULE — not
+// merely as "some violation", which a count or contiguity rule could satisfy by
+// accident.
+for (const [id, src] of [
+  ['a fifth eic-* module joins BARE-RELATIVE (js/ui/eic-extra.js)', 'js/ui/eic-extra.js'],
+  ['a fifth eic-* module joins ROOT-RELATIVE (/js/ui/eic-extra.js)', '/js/ui/eic-extra.js'],
+  ['a fifth eic-* module joins with a QUERY STRING (?v=1)', './js/ui/eic-extra.js?v=1'],
+  ['a fifth eic-* module joins with a HASH SUFFIX (#x)', './js/ui/eic-extra.js#x'],
+]) {
+  mutant(LI_, id,
+    (m) => {
+      const r = G.guardEicModuleInventory(m, DISK_JS_FILES);
+      // Only the SPECIFIC violation counts as a kill here.
+      return { violations: r.violations.filter((v) => /INVENTORY_UNDECLARED_EIC_MODULE/.test(v)), threw: r.threw };
+    },
+    () => {
+      const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+      return SCRIPT_MODEL.slice(0, i + 1)
+        .concat([{ src, attrs: ' src="' + src + '"', type: null, inline: '', isInlineMonolith: false }])
+        .concat(SCRIPT_MODEL.slice(i + 1));
+    }, () => SCRIPT_MODEL);
+}
+// A remote CDN script that merely LOOKS like an EIC module is NOT part of the
+// local inventory, and must not be dragged into it. Asserted as a control, not
+// a mutant: the guard is supposed to stay clean here.
+{
+  const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  const withRemote = SCRIPT_MODEL.slice(0, i + 1)
+    .concat([{ src: 'https://cdn.example.com/eic-vendor.js', attrs: ' src="https://cdn.example.com/eic-vendor.js"', type: null, inline: '', isInlineMonolith: false }])
+    .concat(SCRIPT_MODEL.slice(i + 1));
+  expectClean(G.guardEicModuleInventory(withRemote, DISK_JS_FILES),
+    '12.control a REMOTE eic-looking CDN script is not part of the local inventory and is not reported');
+}
+// ── the DISK mutants ────────────────────────────────────────────────────────
+// Modelled as guard INPUT so a fifth file can be injected without writing one to
+// the filesystem. A guard that could only be exercised by creating real files
+// could not be exercised safely, and would end up never exercised at all.
+mutant(LI_, 'a fifth eic-*.js file EXISTS on disk but is never loaded',
+  (m) => {
+    const r = G.guardEicModuleInventory(SCRIPT_MODEL, m);
+    return { violations: r.violations.filter((v) => /INVENTORY_UNDECLARED_EIC_MODULE/.test(v)), threw: r.threw };
+  },
+  () => DISK_JS_FILES.concat(['js/ui/eic-orphan.js']), () => DISK_JS_FILES);
+mutant(LI_, 'a fifth eic-*.js file exists on disk under js/adapters/',
+  (m) => {
+    const r = G.guardEicModuleInventory(SCRIPT_MODEL, m);
+    return { violations: r.violations.filter((v) => /INVENTORY_UNDECLARED_EIC_MODULE/.test(v)), threw: r.threw };
+  },
+  () => DISK_JS_FILES.concat(['js/adapters/eic-bridge.js']), () => DISK_JS_FILES);
+mutant(LI_, 'a declared module DISAPPEARS from disk', (m) => G.guardEicModuleInventory(SCRIPT_MODEL, m),
+  () => DISK_JS_FILES.filter((f) => G.canonicalLocalSrc(f) !== 'js/ui/eic-live-deep-dive.js'), () => DISK_JS_FILES);
+// The tag's own attributes, through the load guard.
+mutant(LI_, 'the tag gains defer', (m) => G.guardLoad(m, G.LIVE_DEEP_DIVE_SRC_ATTR),
+  () => SCRIPT_MODEL.map((s) => (s.src === G.LIVE_DEEP_DIVE_SRC_ATTR ? Object.assign({}, s, { attrs: s.attrs + ' defer' }) : s)), () => SCRIPT_MODEL);
+mutant(LI_, 'the tag gains async', (m) => G.guardLoad(m, G.LIVE_DEEP_DIVE_SRC_ATTR),
+  () => SCRIPT_MODEL.map((s) => (s.src === G.LIVE_DEEP_DIVE_SRC_ATTR ? Object.assign({}, s, { attrs: s.attrs + ' async' }) : s)), () => SCRIPT_MODEL);
+mutant(LI_, 'the tag gains type="module"', (m) => G.guardLoad(m, G.LIVE_DEEP_DIVE_SRC_ATTR),
+  () => SCRIPT_MODEL.map((s) => (s.src === G.LIVE_DEEP_DIVE_SRC_ATTR ? Object.assign({}, s, { type: 'module' }) : s)), () => SCRIPT_MODEL);
+mutant(LI_, 'the tag gains an inline body as well as a src', (m) => G.guardLoad(m, G.LIVE_DEEP_DIVE_SRC_ATTR),
+  () => SCRIPT_MODEL.map((s) => (s.src === G.LIVE_DEEP_DIVE_SRC_ATTR ? Object.assign({}, s, { inline: 'eicRunDXLink();' }) : s)), () => SCRIPT_MODEL);
+
+// ── LIVE-DEEP-DIVE PARITY (EIC PR 4) ─────────────────────────────────────────
+// Behavioural mutants, run through the REAL transcript guard from §9F. They are
+// asynchronous because everything worth mutating here happens after an await.
+const LP_ = 'ldparity';
+const LDD_CONCAT = () => LDD_DECLS.map((d) => LDD_SRC.slice(d.start, d.end + 1)).join('\n\n');
+for (const [id, from, to] of [
+  ['the DXLink timeout budget is shortened', '}, 9000); // 9s timeout', '}, 4000); // 9s timeout'],
+  ['the credential is not sent', "ws.send(JSON.stringify({type:'AUTH',channel:0,token:token}));", "ws.send(JSON.stringify({type:'AUTH',channel:0}));"],
+  ['the subscription drops the Greeks event', "{type:'Greeks', symbol:sym},", ''],
+  ['the confidence thresholds are changed', "var dxConf = gotRealDelta === 4 ? 'high' : gotRealDelta > 0 ? 'partial' : 'none';",
+    "var dxConf = gotRealDelta >= 2 ? 'high' : gotRealDelta > 0 ? 'partial' : 'none';"],
+  ['a malformed-data fallback is removed', "var msg; try{ msg=JSON.parse(ev.data); }catch(e){ return; }", "var msg = JSON.parse(ev.data);"],
+  ['the missing-DOM guard is removed', "if(res) res.innerHTML += '<div style=\"font-size:8px", "res.innerHTML += '<div style=\"font-size:8px"],
+  ['an error message is reworded', "throw new Error('Quote token non disponibile')", "throw new Error('Quote token unavailable')"],
+  ['a log verdict is reworded', "logEv('earnings-ic','DXLink deepdive failed: '+e.message,'warn');", "logEv('earnings-ic','DXLink deepdive failed: '+e.message,'err');"],
+  ['the returned payload loses a field', 'liveLegCount:              gotRealDelta+\'/4\',', ''],
+  ['the not-found toast is reworded', "showToast('Ticker non trovato','warn')", "showToast('Ticker not found','warn')"],
+  ['a rounding precision is changed', 'liveData[sym2].delta      = +ev2.delta.toFixed(4);', 'liveData[sym2].delta      = +ev2.delta.toFixed(2);'],
+  ['the eicFetchLegs catch swallows differently', '  }catch(e){\n    return null;\n  }\n}', '  }catch(e){\n    return undefined;\n  }\n}'],
+]) {
+  mutantAsync(LP_, id, (m) => LDD_TRANSCRIPT_GUARD(m), () => LDD_CONCAT().split(from).join(to), LDD_CONCAT);
+}
 
 // ── run them ─────────────────────────────────────────────────────────────────
 // A kill requires three independent facts, and the loop below refuses to record
@@ -2885,7 +4506,12 @@ PARITY_TAIL = PARITY_TAIL.then(function () {
     eq(inert, [], '12.3 inert mutants (a mutation that changes nothing is not a mutant)');
     eq(killed, MUTANTS.length, '12.4 every genuine mutant was killed by a real guard violation');
     ok(MUTANTS.length >= 55, '12.5 the suite runs ' + MUTANTS.length + ' genuine mutants');
-    eq(Object.keys(catTotals).length, 9, '12.6 nine mutation categories: ' + Object.keys(catTotals).sort().join(', '));
+    eq(Object.keys(catTotals).length, 15, '12.6 fifteen mutation categories: ' + Object.keys(catTotals).sort().join(', '));
+    for (const c of ['livedeep', 'ldsurface', 'ldobserver', 'ldparity', 'inventory', 'owner']) {
+      ok(catTotals[c] && catTotals[c].total > 0, '12.8 the PR 4 category "' + c + '" ran ' + (catTotals[c] ? catTotals[c].total : 0) + ' mutants');
+    }
+    ok(MUTANTS.filter((x) => x.category === 'ldparity' && x.isAsync).length >= 10,
+      '12.9 the live-deep-dive parity mutants are ASYNCHRONOUS — everything worth mutating here happens after an await');
     eq(MUTANTS.filter((x) => x.isAsync).length > 0, true,
       '12.7 the async pass really ran ' + MUTANTS.filter((x) => x.isAsync).length + ' promise-guarded mutants');
   });
@@ -2898,9 +4524,9 @@ PARITY_TAIL.then(function () {
   console.log('  SCREENING_RULES  4 sites / 3 names / 14,368 chars   SHIPPED');
   console.log('  PANEL            2 sites / 15,268 chars   SHIPPED');
   console.log('  TICKER_ANALYSIS  1 site  / 13,990 chars   SHIPPED');
-  console.log('  LIVE_DEEP_DIVE   4 sites / 23,726 chars                pending');
+  console.log('  LIVE_DEEP_DIVE   4 sites / 3 names / 23,726 chars   SHIPPED');
   console.log('                   ─────────────────────────');
-  console.log('                   11 sites / 9 names / 67,352 chars');
+  console.log('                   11 sites / 9 names / 67,352 chars   COMPLETE');
   console.log('');
   console.log('  SHIPPED          ' + G.SHIPPED_SITES + ' / ' + G.SHIPPED_CHARS.toLocaleString('en-US'));
   console.log('  INLINE           ' + G.PENDING_SITES + ' / ' + G.PENDING_CHARS.toLocaleString('en-US')
@@ -2915,12 +4541,18 @@ PARITY_TAIL.then(function () {
     + TA_DOWNSTREAM.length + ' local scripts + the monolith) · '
     + TA_OBSERVER_CONTROLS.length + ' scanner controls · load-time observers found: '
     + TA_NAMES.reduce((a, n) => a + (TA_OBS[n] ? TA_OBS[n].load : 0), 0));
+  console.log('  livedeep obs     ' + LDD_OBSERVER_SOURCES.length + ' downstream sources scanned ('
+    + LDD_DOWNSTREAM.length + ' local scripts + the monolith) · '
+    + LDD_OBSERVER_CONTROLS.length + ' scanner controls · load-time observers found: '
+    + LDD_NAMES.reduce((a, n) => a + (LDD_OBS[n] ? LDD_OBS[n].load : 0), 0));
   console.log('  parity           eicScreenTicker ' + fxScreen + ' · eicLiqFromLegs ' + fxLiq
     + ' · eicBuildLiveContext ' + fxCtx + ' = ' + (fxScreen + fxLiq + fxCtx) + ' fixtures · differences ' + diffs);
   console.log('  panel parity     runEICPanel ' + pxPanel + ' · eicAnalyzeAll ' + pxAnalyze
     + ' = ' + (pxPanel + pxAnalyze) + ' fixtures · differences ' + pxDiffs);
   console.log('  ticker parity    eicAnalyzeTicker ' + txTicker + ' fixtures · differences ' + txDiffs);
-  console.log('  cross-module     PR2 ' + XMOD_DIFFS + ' diffs · PR3 ' + XTA_DIFFS + ' diffs');
+  console.log('  livedeep parity  ' + LDD_FIX_COUNT + ' fixtures across all 4 moved sites · differences ' + LDD_DIFFS);
+  console.log('  cross-module     PR2 ' + XMOD_DIFFS + ' diffs · PR3 ' + XTA_DIFFS + ' diffs · PR4 ' + XLDD_DIFFS + ' diffs');
+  console.log('  undo chain       PR4 → post-PR3 → PR3 → post-PR2 → PR2 → post-PR1 → PR1 → post-PESS');
   console.log('  mutants          ' + killed + '/' + MUTANTS.length + ' killed, ' + survivors.length + ' survivors, '
     + harnessErrors.length + ' harness errors');
   for (const c of Object.keys(catTotals).sort()) {
@@ -2928,6 +4560,9 @@ PARITY_TAIL.then(function () {
   }
   console.log('');
   console.log('  assertions: ' + passed);
+  console.log('');
+  console.log('  EIC PRs 1-4 COMPLETE · inline residue 0 sites / 0 chars · ratchet '
+    + RATCHET.join(' → ') + ' (zero is TERMINAL)');
   if (failures.length) {
     console.log('');
     console.log('  FAILURES (' + failures.length + '):');

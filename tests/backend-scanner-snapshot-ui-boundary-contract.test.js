@@ -3316,11 +3316,14 @@ section('29. script order');
   // The EIC family's extraction, opened after PESS closed. Same rule as above:
   // an explicit LIST, never an `eic-*` pattern, so an undeclared future EIC
   // script still fails here. PR 1 of 4 shipped the screening-rules module, PR 2
-  // the panel, PR 3 the ticker-analysis panel.
+  // the panel, PR 3 the ticker-analysis panel, PR 4 the live deep dive. The
+  // family is now COMPLETE at four modules: a fifth eic-* script must fail here,
+  // and it does, because this is a list of exact filenames rather than a prefix.
   const EIC_EXTRACTION_SCRIPTS = [
     './js/services/eic-screening-rules.js',
     './js/ui/eic-panel.js',
     './js/ui/eic-ticker-analysis-panel.js',
+    './js/ui/eic-live-deep-dive.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)

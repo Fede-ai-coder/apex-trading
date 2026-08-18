@@ -473,6 +473,33 @@ const EXPECTED_TICKER_ANALYSIS = {
   },
 };
 
+// EIC PR 4 — the live deep dive, and the LAST module of the family. FOUR sites,
+// THREE names: eicFetchLegs is declared twice, byte-for-byte identically, and
+// both copies moved together.
+//
+// `duplicate: 'eicFetchLegs'` re-arms the pair rule that PR 1 used for
+// eicLiqFromLegs and that PRs 2-3 switched off with `null`. It is the only
+// check that would notice one copy being dropped, the pair being collapsed into
+// one, or the two being allowed to diverge — none of which would change
+// behaviour, and all of which would stop this being a relocation.
+//
+// Every site is async, and each is pinned by name: making any of them
+// synchronous must fail. `sites: 4` with `names: 3` is deliberate and is the
+// reason this contract counts SITES rather than names throughout.
+const EXPECTED_LIVE_DEEP_DIVE = {
+  duplicate: 'eicFetchLegs',
+  order: ['eicFetchLegs', 'eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink'],
+  sites: 4,
+  names: 3,
+  chars: 23726,
+  asyncByName: { eicFetchLegs: true, eicDXLinkDeepDive: true, eicRunDXLink: true },
+  spanSha: {
+    eicFetchLegs: 'f131e1a6f59ffcebb6f96520845f01ccb8d09d5b468eb3083c810a5e18e59eba',
+    eicDXLinkDeepDive: 'dc7418d41241dee28e698ec634345144c0f19fdcc5f78a23f8df92f287e660df',
+    eicRunDXLink: '8a0cde00821be3a9ec42c9c0234c1d8d608ae1665c9e9a4a13a0ed178fae19f0',
+  },
+};
+
 function guardModuleShape(moduleSrc, spec) {
   const S = spec || EXPECTED_MODULE;
   const violations = [];
@@ -677,28 +704,76 @@ function guardLoad(scripts, srcAttr) {
   return { violations, threw };
 }
 
-// Everything shipped so far — PR 1's three names and PR 2's two. Any of these
-// reappearing inline is a REINTRODUCED violation.
+// Everything shipped — ALL NINE names, across all four modules. Any of these
+// reappearing inline is a REINTRODUCED violation. After PR 4 the family is
+// closed, so this list is complete and nothing may be added to it.
 const SHIPPED_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext',
-  'runEICPanel', 'eicAnalyzeAll', 'eicAnalyzeTicker'];
+  'runEICPanel', 'eicAnalyzeAll', 'eicAnalyzeTicker',
+  'eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink'];
 const PR1_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
 const PANEL_NAMES = ['runEICPanel', 'eicAnalyzeAll'];
 const TICKER_ANALYSIS_NAMES = ['eicAnalyzeTicker'];
-// What is still inline after PR 3, in physical order. The two eicFetchLegs sites
-// stay BOTH inline and byte-identical — splitting the pair across owners is the
-// one arrangement where the copies stop being interchangeable.
-const PENDING_ORDER = ['eicFetchLegs', 'eicFetchLegs',
-  'eicDXLinkDeepDive', 'eicRunDXLink'];
-const PENDING_SITES = 4;
-const PENDING_CHARS = 23726;
+const LIVE_DEEP_DIVE_NAMES = ['eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink'];
+// What is still inline after PR 4: NOTHING. The family is closed and the
+// residue is TERMINAL — see guardRatchet, which refuses to let a positive
+// allowance be appended after a zero.
+const PENDING_ORDER = [];
+const PENDING_SITES = 0;
+const PENDING_CHARS = 0;
+
+/**
+ * Does this declaration name belong to the EIC family?
+ *
+ * WHY THIS EXISTS AS A NAMED PREDICATE
+ *   Residue discovery used to be written inline, five times, as
+ *   `/^eic/i.test(name) || name === 'runEICPanel'`. That expression does not
+ *   support the claim it was carrying — "no new EIC-looking declaration can be
+ *   added under a new name". It anchors at the START of the identifier and then
+ *   patches in ONE special case by hand, so anything that wears the family name
+ *   anywhere else slips through:
+ *
+ *       _eicBootstrap      leading underscore — fails ^eic
+ *       runEICSomething    EIC in the middle  — fails ^eic, and is not the one
+ *                          hardcoded exception
+ *
+ *   Both are ordinary shapes. `runEICPanel` — a REAL member of this family —
+ *   is itself an instance of the second shape, which is why it needed the
+ *   hand-written special case in the first place. One more member in that style
+ *   and the special case would have needed extending by hand again, silently.
+ *
+ * HOW IT DECIDES
+ *   The identifier is split into camelCase / ALL-CAPS segments and a name is
+ *   EIC-owned when ANY segment is exactly the token `eic`, case-insensitively.
+ *   Leading `_` and `$` are stripped first. Segment matching — rather than a
+ *   substring test — is what keeps `deiceThing` and `receiptTotal` out: they
+ *   contain the letters but never as a segment of their own.
+ *
+ * WHAT IT IS NOT
+ *   It is not a replacement for the exact shipped-name checks. Those stay, as an
+ *   INDEPENDENT layer: this predicate answers "does this look like it belongs to
+ *   the family", and SHIPPED_NAMES answers "is this one of the nine we moved".
+ *   A regression that defeats one still has to defeat the other.
+ */
+function splitIdentifierSegments(name) {
+  const bare = String(name == null ? '' : name).replace(/^[_$]+/, '');
+  return bare.match(/[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+/g) || [];
+}
+function isEicFamilyName(name) {
+  return splitIdentifierSegments(name).some((seg) => seg.toLowerCase() === 'eic');
+}
+/** The same question over a scanTopLevelDeclarations() result. */
+function isEicFamilyDecl(d) {
+  return d != null && isEicFamilyName(d.name);
+}
 
 /** Residue contract over the inline monolith source. */
 function guardInlineResidue(inlineSrc) {
   const violations = [];
   let threw = null;
   try {
-    const decls = scanTopLevelDeclarations(inlineSrc)
-      .filter((d) => /^eic/i.test(d.name) || d.name === 'runEICPanel');
+    // ONE shared predicate, not an inline regex — see isEicFamilyName for why
+    // `/^eic/i || name === 'runEICPanel'` did not support the claim it carried.
+    const decls = scanTopLevelDeclarations(inlineSrc).filter(isEicFamilyDecl);
     if (decls.length !== PENDING_SITES) {
       violations.push('RESIDUE_COUNT: expected ' + PENDING_SITES + ' inline EIC sites, found ' + decls.length);
     }
@@ -713,9 +788,15 @@ function guardInlineResidue(inlineSrc) {
     for (const n of SHIPPED_NAMES) {
       if (names.indexOf(n) >= 0) violations.push('REINTRODUCED: ' + n + ' is declared inline again after being shipped');
     }
+    // The eicFetchLegs pair rule USED to live here, requiring both copies to
+    // remain inline. PR 4 moved both, so the rule moved with them: it is now
+    // EXPECTED_LIVE_DEEP_DIVE.duplicate, enforced by guardModuleShape against
+    // the shipped module. It was relocated rather than deleted — a dropped
+    // duplicate is still the defect nobody would otherwise notice.
     const fetchLegs = names.filter((n) => n === 'eicFetchLegs').length;
-    if (fetchLegs !== 2) {
-      violations.push('FETCHLEGS_DUPLICATE: expected eicFetchLegs to remain declared TWICE inline, found ' + fetchLegs);
+    if (fetchLegs !== 0) {
+      violations.push('FETCHLEGS_INLINE: eicFetchLegs is declared inline ' + fetchLegs
+        + ' time(s); both copies belong to js/ui/eic-live-deep-dive.js after PR 4');
     }
   } catch (e) { threw = String(e && e.message); violations.push('RESIDUE_GUARD_FAILED: ' + threw); }
   return { violations, threw };
@@ -880,9 +961,446 @@ function guardTickerAnalysisSurface(moduleSrc) {
 
 const TICKER_ANALYSIS_SRC_ATTR = './js/ui/eic-ticker-analysis-panel.js';
 
-const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL', 'TICKER_ANALYSIS'];
+const LIVE_DEEP_DIVE_SRC_ATTR = './js/ui/eic-live-deep-dive.js';
+
+/**
+ * The live deep dive's surface contract — EIC PR 4.
+ *
+ * PR 1's module is PURE and `guardModulePurity` pins that. This one is NOT, and
+ * no purity claim is made anywhere: it performs TRANSPORT (ttCall, a DXLink
+ * WebSocket) AND RENDERING (getElementById, innerHTML, textContent), and the two
+ * are interleaved rather than separable. Splitting them would be a redesign, and
+ * this is a relocation.
+ *
+ * What is pinned instead is the narrower set of properties the relocation
+ * actually preserves, in BOTH directions, re-measured from the source rather
+ * than carried over from a plan:
+ *
+ *   • the effects measured ABSENT stay absent — no fetch(), no direct `S.x =`
+ *     write, no window/globalThis write, no addEventListener, no localStorage,
+ *     no inline `on*=` handler string;
+ *   • the transport and DOM ownership measured PRESENT stays present, at its
+ *     measured MULTIPLICITY — deleting the WebSocket, one of the endpoints, or
+ *     the rendering fails here even though byte-identity would still pass.
+ *
+ * Counts, not just presence: `ttCall` appears 4 times (once per eicFetchLegs
+ * copy, twice in eicDXLinkDeepDive) and collapsing the duplicate pair would take
+ * it to 3 while every presence-only probe stayed satisfied.
+ *
+ * Everything is measured over the DECLARATION SPANS with comments stripped,
+ * never over the whole file: this module's architecture header quotes its own
+ * endpoints and selectors while explaining them, so checking raw source would
+ * let a COMMENT satisfy a rule about code. (That exact hole let a mutant survive
+ * in PR 3 and is why `stripComments` exists.)
+ */
+function guardLiveDeepDiveSurface(moduleSrc) {
+  const violations = [];
+  let threw = null;
+  try {
+    const decls = scanTopLevelDeclarations(moduleSrc);
+    for (const n of LIVE_DEEP_DIVE_NAMES) {
+      const d = decls.filter((x) => x.name === n);
+      const want = n === 'eicFetchLegs' ? 2 : 1;
+      if (d.length !== want) {
+        violations.push('LDD_BINDING: ' + n + ' must be declared exactly ' + want + ' time(s), found ' + d.length);
+        continue;
+      }
+      for (const one of d) {
+        if (one.form !== 'function') {
+          violations.push('LDD_NOT_GLOBAL: ' + n + ' is a ' + one.form
+            + '; only a top-level function declaration lands on the global object, where'
+            + " js/ui/eic-ticker-analysis-panel.js's click handler resolves eicRunDXLink");
+        }
+        if (!one.isAsync) {
+          violations.push('LDD_NOT_ASYNC: ' + n + ' is synchronous; every relocated site is async and'
+            + ' its callers rely on the returned promise');
+        }
+      }
+    }
+    if (decls.length !== 4) {
+      violations.push('LDD_EXTRA_DECLARATION: this module owns FOUR declarations, found ' + decls.length
+        + ' (' + decls.map((x) => x.name).join(', ') + ') — the family is closed and nothing may join it');
+    }
+
+    const whole = maskLiterals(moduleSrc);
+    const spanCode = decls.map((d) => stripComments(moduleSrc.slice(d.start, d.end + 1))).join('\n');
+    const spanMasked = maskLiterals(spanCode);
+    // A GLOBAL clone of the probe: String.match without /g returns only the FIRST
+    // match, so every multiplicity below would have read 1 and the counts would
+    // have silently degraded into presence checks — the exact weakening this
+    // guard exists to prevent.
+    const count = (re) => (spanMasked.match(new RegExp(re.source, re.flags.indexOf("g") >= 0 ? re.flags : re.flags + "g")) || []).length;
+
+    // ── effects the audit measured ABSENT ────────────────────────────────────
+    for (const [label, re] of [['fetch()', /\bfetch\s*\(/], ['addEventListener', /\baddEventListener\s*\(/],
+      ['setInterval', /\bsetInterval\s*\(/], ['localStorage', /\blocalStorage\b/],
+      ['document.cookie', /\bdocument\s*\.\s*cookie\b/]]) {
+      if (re.test(spanMasked)) violations.push('LDD_ACQUIRED_EFFECT: the module performs ' + label + '; it had none inline');
+    }
+    if (/\bS\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/.test(whole)) {
+      violations.push('LDD_STATE_WRITE: the module assigns to S.*; the relocated bodies perform no direct S write');
+    }
+    if (/\b(window|globalThis)\s*\.\s*[A-Za-z_$][\w$]*\s*=(?!=)/.test(whole)) {
+      violations.push('LDD_WINDOW_WRITE: the module assigns to window/globalThis; it had no such write');
+    }
+    if (/\bon[a-z]+\s*=\s*["']/.test(stripComments(moduleSrc))) {
+      violations.push('LDD_INLINE_HANDLER: the module emits an inline on*= handler string; it emitted none');
+    }
+
+    // ── transport and rendering the audit measured PRESENT, WITH counts ──────
+    const required = [
+      ['TTCALL', /\bttCall\s*\(/, 4, 'the ttCall transport calls'],
+      ['WEBSOCKET', /new\s+WebSocket\s*\(/, 1, 'the DXLink WebSocket'],
+      ['TIMEOUT', /\bsetTimeout\s*\(/, 1, 'the DXLink timeout budget'],
+      ['CLEARTIMEOUT', /\bclearTimeout\s*\(/, 4, 'the timeout cancellations'],
+      ['PROMISE', /new\s+Promise\s*\(/, 1, 'the WebSocket completion promise'],
+      ['DOM_HOST', /\bdocument\s*\.\s*getElementById\s*\(/, 2, "the document.getElementById('eicResults') lookups"],
+      ['DOM_STATUS', /\bquerySelector\s*\(/, 5, 'the .dxlink-status lookups'],
+      ['DOM_CREATE', /\bdocument\s*\.\s*createElement\s*\(/, 1, 'the status-element creation'],
+      ['DOM_RENDER', /\.\s*innerHTML\s*=(?!=)/, 3, 'the innerHTML assignments'],
+      ['DOM_APPEND', /\.\s*innerHTML\s*\+=/, 2, 'the innerHTML appends'],
+      ['DOM_TEXT', /\.\s*textContent\s*=(?!=)/, 2, 'the textContent writes'],
+      ['AGENT', /\bcallAgent\s*\(/, 1, 'the awaited callAgent call'],
+      ['STATE_READ', /\bS\s*\.\s*scanData\b/, 2, 'the S.scanData reads'],
+      ['MACRO_READ', /\bS\s*\.\s*marketContextRisk\b/, 2, 'the S.marketContextRisk reads'],
+      ['ROW_LIVE', /\bd\s*\.\s*eicLegsLive\s*=(?!=)/, 2, 'the scan-row mutation d.eicLegsLive='],
+      ['ROW_DECISION', /\bd\s*\.\s*eicFinalDecision\s*=(?!=)/, 1, 'the scan-row mutation d.eicFinalDecision='],
+      ['SIBLING_SCREEN', /\beicScreenTicker\s*\(/, 2, "the eicScreenTicker calls into PR 1's module"],
+      ['SIBLING_CONTEXT', /\beicBuildLiveContext\s*\(/, 1, "the eicBuildLiveContext call into PR 1's module"],
+      // The CALL, not the declaration: a bare /\beicDXLinkDeepDive\s*\(/ also matches
+      // the declaration header, so it would read 2 and a deleted call would still
+      // leave it at 1 rather than failing. Anchoring on the await pins the edge.
+      ['SELF_DEEPDIVE', /\bawait\s+eicDXLinkDeepDive\s*\(/, 1, 'the awaited in-module call from eicRunDXLink into eicDXLinkDeepDive'],
+    ];
+    for (const [code, re, n, what] of required) {
+      const got = count(re);
+      if (got !== n) {
+        violations.push('LDD_SURFACE_' + code + ': expected ' + n + ' × ' + what + ', found ' + got
+          + ' — this PR relocates, it does not redesign');
+      }
+    }
+    // The exact endpoints and DOM identifiers, read from the UNMASKED span: a
+    // rename would keep every structural probe above satisfied while pointing
+    // the module at an endpoint or an element that does not exist.
+    for (const [code, lit] of [
+      ['ENDPOINT_LEGS', "ttCall('/eic/legs/'+ticker)"],
+      ['ENDPOINT_TOKEN', "ttCall('/quote-token')"],
+      ['ENDPOINT_CHAIN', "'/eic/chain-symbols/'+ticker"],
+      ['DOM_ID', "getElementById('eicResults')"],
+      ['DOM_STATUS_SELECTOR', "querySelector('.dxlink-status')"],
+      ['DXLINK_FALLBACK_URL', 'wss://tasty-openapi-ws.dxfeed.com/realtime'],
+      ['AGENT_CHANNEL', "callAgent('earnings-ic', ctx)"],
+    ]) {
+      if (spanCode.indexOf(lit) < 0) {
+        violations.push('LDD_LITERAL_' + code + ': the module no longer contains ' + JSON.stringify(lit));
+      }
+    }
+
+    // ── the incidental defects, PINNED UNREPAIRED ───────────────────────────
+    // A relocation that quietly fixed what it moved would stop being a move.
+    // Each of these is a real defect, measured in the base and required to
+    // survive the relocation untouched until it is fixed ON PURPOSE.
+    const run = decls.filter((d) => d.name === 'eicRunDXLink');
+    if (run.length === 1) {
+      const code = stripComments(moduleSrc.slice(run[0].start, run[0].end + 1));
+      if (/\b(var|let|const)\s+fdColor\b/.test(maskLiterals(code))) {
+        violations.push('LDD_DEFECT_REPAIRED_FDCOLOR: eicRunDXLink now declares fdColor. In the base it reads'
+          + ' an UNDECLARED global (var fdColor is function-scoped to eicAnalyzeTicker), which is a genuine'
+          + ' ReferenceError on the success path. Relocations do not repair defects.');
+      }
+      if (code.indexOf('fdColor') < 0) {
+        violations.push('LDD_DEFECT_REMOVED_FDCOLOR: the fdColor reference is gone from eicRunDXLink');
+      }
+    }
+    const dive = decls.filter((d) => d.name === 'eicDXLinkDeepDive');
+    if (dive.length === 1) {
+      const code = stripComments(moduleSrc.slice(dive[0].start, dive[0].end + 1));
+      if (code.indexOf('if(d) var tsNone=new Date().toISOString();') < 0) {
+        violations.push('LDD_DEFECT_REPAIRED_TSNONE: the dead `if(d) var tsNone = …` guard — followed by an'
+          + ' UNCONDITIONAL d.eicLegsLive={…} on the next statement — was repaired or removed');
+      }
+      if (code.indexOf('return d.eicLegsLive;') < 0) {
+        violations.push('LDD_DEFECT_REPAIRED_RETURN: the unconditional `return d.eicLegsLive;` after a guarded'
+          + ' `if(d) d.eicLegsLive = {…}` was repaired');
+      }
+    }
+  } catch (e) { threw = String(e && e.message); violations.push('LDD_GUARD_FAILED: ' + threw); }
+  return { violations, threw };
+}
+
+// The EIC family's modules, BY EXACT FILENAME and in load order. A LIST, never
+// an `eic-*` glob and never a prefix exemption: a fifth eic-* module must FAIL
+// here rather than be waved through by a pattern. The family is closed at four.
+//
+// These are the CANONICAL forms (see canonicalLocalSrc): root-relative, no
+// leading `./`, no query, no hash. Every src encountered — in a script tag or on
+// disk — is normalized to this shape before it is compared.
+const EIC_MODULE_FILES = [
+  'js/services/eic-screening-rules.js',
+  'js/ui/eic-panel.js',
+  'js/ui/eic-ticker-analysis-panel.js',
+  'js/ui/eic-live-deep-dive.js',
+];
+// The same four, in the exact spelling index.html uses. Kept separate and
+// derived-checked below so the tag guard keeps comparing literal attribute text
+// while the inventory compares canonical paths.
+const EIC_MODULE_SRC_ATTRS = EIC_MODULE_FILES.map((f) => './' + f);
+
+/**
+ * Normalize a script `src` to a canonical local path, or return null when it is
+ * not a local script at all.
+ *
+ * WHY THIS EXISTS
+ *   The first version of the inventory guard filtered candidates with
+ *   `/^\.\//.test(src)` and then compared them to `'./js/ui/…'` strings. That
+ *   made the "no fifth eic-* module by ANY path" claim FALSE: four ordinary
+ *   spellings of the same file walked straight past the stray-module check —
+ *
+ *       js/ui/eic-extra.js          bare-relative — filtered out before the check
+ *       /js/ui/eic-extra.js         root-relative — filtered out before the check
+ *       ./js/ui/eic-extra.js?v=1    cache-buster  — reached the check, matched nothing
+ *       ./js/ui/eic-extra.js#x      fragment      — reached the check, matched nothing
+ *
+ *   A guard that only recognises one spelling of a path is a guard that can be
+ *   sidestepped by typing the path differently, which is exactly the amnesty the
+ *   exact-filename rule exists to deny. Normalizing FIRST, then comparing, is
+ *   what makes "by any path" true rather than merely stated.
+ *
+ * WHAT IT DOES
+ *   • trims surrounding whitespace;
+ *   • rejects genuine REMOTE srcs — absolute URLs (`https://…`), protocol-
+ *     relative (`//cdn…`) and anything with a scheme — returning null, because a
+ *     CDN script is not part of the local inventory and must not be forced into
+ *     it. Note the ordering: `//cdn/x.js` is protocol-relative and remote, so it
+ *     is tested BEFORE the root-relative rule that would otherwise claim it;
+ *   • strips the query string and the hash fragment, which address the same file;
+ *   • collapses `./` prefixes and a single leading `/` so root-relative,
+ *     bare-relative and `./` forms land on ONE spelling;
+ *   • resolves `a/../b` and `a/./b` segments, so a path cannot be disguised by
+ *     walking through a directory.
+ */
+function canonicalLocalSrc(src) {
+  if (src == null) return null;
+  let s = String(src).trim();
+  if (s === '') return null;
+  // Remote: any scheme, or protocol-relative. Checked before the leading-slash
+  // rule so `//cdn.example.com/x.js` is remote rather than root-relative.
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return null;
+  if (s.slice(0, 2) === '//') return null;
+  // Query and hash address the same file.
+  const cut = s.search(/[?#]/);
+  if (cut >= 0) s = s.slice(0, cut);
+  s = s.trim();
+  if (s === '') return null;
+  // One spelling: no leading '/', no leading './'.
+  while (s.slice(0, 1) === '/') s = s.slice(1);
+  while (s.slice(0, 2) === './') s = s.slice(2);
+  // Resolve '.' and '..' segments.
+  const out = [];
+  for (const part of s.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') { out.pop(); continue; }
+    out.push(part);
+  }
+  s = out.join('/');
+  return s === '' ? null : s;
+}
+
+/** True when a canonical path names an eic-*.js module, in any directory. */
+function isEicModulePath(canonical) {
+  return canonical != null && /(^|\/)eic-[^/]*\.js$/.test(canonical);
+}
+
+/**
+ * Inventory contract: EXACTLY the four declared EIC modules exist and are
+ * loaded, by exact filename, contiguously, in order, and all before the inline
+ * monolith — and no fifth eic-*.js module exists in EITHER place.
+ *
+ * The wildcard check is the point. It is not enough that the four are present —
+ * a FIFTH eic-* script must be rejected, and rejected BECAUSE it is undeclared
+ * rather than because it happened to trip some other rule. Every candidate is
+ * canonicalized first, so the rejection cannot be dodged by spelling the path
+ * differently.
+ *
+ * TWO INVENTORIES, NOT ONE
+ *   Script tags say what the application LOADS. `diskFiles` says what EXISTS.
+ *   A fifth eic-*.js module sitting unreferenced in js/ui/ is still a fifth
+ *   module of this family — it would be picked up by any later glob, bundler or
+ *   audit, and the family is supposed to be closed at four. Checking only the
+ *   tags would let it sit there indefinitely.
+ *
+ *   `diskFiles` is passed IN rather than read here so the mutation proof can
+ *   inject a fifth file without writing one to the filesystem. A guard that
+ *   could only be tested by creating real files could not be tested safely at
+ *   all, and would end up untested.
+ */
+function guardEicModuleInventory(scripts, diskFiles) {
+  const violations = [];
+  let threw = null;
+  try {
+    const monolith = scripts.findIndex((s) => s.isInlineMonolith);
+    if (monolith < 0) { violations.push('INVENTORY_NO_MONOLITH: no inline application monolith found'); return { violations, threw }; }
+
+    // ── canonical view of every LOCAL script tag ─────────────────────────────
+    const canon = scripts.map((s) => canonicalLocalSrc(s.src));
+    const localCanon = canon.filter((c) => c != null);
+
+    for (const f of EIC_MODULE_FILES) {
+      const n = localCanon.filter((x) => x === f).length;
+      if (n !== 1) violations.push('INVENTORY_COUNT: ' + f + ' is loaded ' + n + ' time(s), expected exactly 1');
+    }
+    // No fifth eic-* module, by ANY path spelling. This is the anti-wildcard check.
+    const seenStray = {};
+    scripts.forEach((s, i) => {
+      const c = canon[i];
+      if (!isEicModulePath(c) || EIC_MODULE_FILES.indexOf(c) >= 0) return;
+      if (seenStray[c]) return;
+      seenStray[c] = true;
+      violations.push('INVENTORY_UNDECLARED_EIC_MODULE: ' + JSON.stringify(String(s.src)) + ' (canonically '
+        + c + ') is an eic-* script that is not one of the four declared modules — the family is closed at'
+        + ' four and no prefix exemption, and no alternate path spelling, admits a fifth');
+    });
+
+    // ── the same rule over what EXISTS ON DISK ───────────────────────────────
+    if (diskFiles != null) {
+      const diskCanon = [];
+      for (const f of diskFiles) {
+        const c = canonicalLocalSrc(f);
+        if (isEicModulePath(c)) diskCanon.push(c);
+      }
+      for (const c of Array.from(new Set(diskCanon))) {
+        if (EIC_MODULE_FILES.indexOf(c) < 0) {
+          violations.push('INVENTORY_UNDECLARED_EIC_MODULE: ' + c + ' exists on disk but is not one of the four'
+            + ' declared modules — an unreferenced fifth module still reopens a family that is closed at four');
+        }
+      }
+      for (const f of EIC_MODULE_FILES) {
+        if (diskCanon.indexOf(f) < 0) {
+          violations.push('INVENTORY_MISSING_FILE: ' + f + ' is declared but does not exist on disk');
+        }
+      }
+      const dupes = diskCanon.filter((c, i) => diskCanon.indexOf(c) !== i);
+      for (const c of Array.from(new Set(dupes))) {
+        violations.push('INVENTORY_DISK_DUPLICATE: ' + c + ' appears more than once in the disk inventory');
+      }
+    }
+
+    // ── order, contiguity, and position relative to the monolith ─────────────
+    const idx = EIC_MODULE_FILES.map((f) => canon.indexOf(f));
+    if (idx.every((i) => i >= 0)) {
+      for (let i = 1; i < idx.length; i++) {
+        if (idx[i] <= idx[i - 1]) {
+          violations.push('INVENTORY_ORDER: ' + EIC_MODULE_FILES[i] + ' loads at slot ' + idx[i]
+            + ', before ' + EIC_MODULE_FILES[i - 1] + ' at slot ' + idx[i - 1]);
+        } else if (idx[i] !== idx[i - 1] + 1) {
+          violations.push('INVENTORY_NOT_CONTIGUOUS: ' + EIC_MODULE_FILES[i] + ' is not immediately after '
+            + EIC_MODULE_FILES[i - 1] + ' (slots ' + idx[i - 1] + ' → ' + idx[i] + ')');
+        }
+      }
+      for (let i = 0; i < idx.length; i++) {
+        if (idx[i] >= monolith) {
+          violations.push('INVENTORY_AFTER_MONOLITH: ' + EIC_MODULE_FILES[i] + ' loads at slot ' + idx[i]
+            + ', the monolith at ' + monolith);
+        }
+      }
+    }
+  } catch (e) { threw = String(e && e.message); violations.push('INVENTORY_GUARD_FAILED: ' + threw); }
+  return { violations, threw };
+}
+// All FOUR owners have shipped. A LIST, never a prefix test, so a fifth owner
+// could not join by pattern; the family is closed at four.
+const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL', 'TICKER_ANALYSIS', 'LIVE_DEEP_DIVE'];
 const SHIPPED_OWNER = 'SCREENING_RULES';
-const SHIPPED_SITES = 7, SHIPPED_CHARS = 43626;
+const SHIPPED_SITES = 11, SHIPPED_CHARS = 67352;
+
+// Which module OWNS each planner owner. A map, not a convention: the ownership
+// guard below cross-checks the manifest against what the modules on disk
+// actually declare, so a manifest row can no longer claim an owner that does not
+// declare the name.
+const OWNER_MODULE = {
+  SCREENING_RULES: './js/services/eic-screening-rules.js',
+  PANEL: './js/ui/eic-panel.js',
+  TICKER_ANALYSIS: './js/ui/eic-ticker-analysis-panel.js',
+  LIVE_DEEP_DIVE: './js/ui/eic-live-deep-dive.js',
+};
+
+/**
+ * Ownership contract: every one of the eleven family sites has EXACTLY ONE
+ * declared owner, and that owner is the module that really declares it.
+ *
+ * While the family was still being extracted, `guardManifest`'s shipped/pending
+ * arithmetic did most of this work: crediting a site to the wrong owner moved it
+ * between the shipped and pending buckets and the totals stopped adding up. Once
+ * PR 4 closed the family, ALL FOUR owners are shipped, so that arithmetic no
+ * longer distinguishes them — crediting eicRunDXLink to PANEL would keep every
+ * total correct. This guard closes that gap by checking ownership against the
+ * source instead of against the totals.
+ *
+ * `declsByModule` maps a module path to the list of names it declares, in
+ * physical order, WITH duplicates. Multiplicity matters: a name declared twice
+ * in the manifest must be declared twice by its owner.
+ */
+function guardOwnership(manifest, declsByModule) {
+  const violations = [];
+  let threw = null;
+  try {
+    const owners = Object.keys(OWNER_MODULE);
+    // 1. every manifest owner is a known owner
+    for (const row of manifest) {
+      if (owners.indexOf(row[1]) < 0) {
+        violations.push('OWNERSHIP_UNKNOWN_OWNER: ' + row[0] + ' is credited to "' + row[1] + '", which is not one of ' + owners.join('/'));
+      }
+    }
+    // 2. each name is declared by EXACTLY ONE module
+    const declaringModules = {};
+    for (const mod of Object.keys(declsByModule)) {
+      for (const n of declsByModule[mod]) {
+        (declaringModules[n] = declaringModules[n] || new Set()).add(mod);
+      }
+    }
+    for (const n of Object.keys(declaringModules)) {
+      if (declaringModules[n].size !== 1) {
+        violations.push('OWNERSHIP_SPLIT_MODULE: ' + n + ' is declared by ' + declaringModules[n].size
+          + ' different modules (' + Array.from(declaringModules[n]).join(', ') + ')');
+      }
+    }
+    // 3. the manifest's owner is the module that actually declares the name,
+    //    at the same multiplicity
+    for (const n of Array.from(new Set(manifest.map((m) => m[0])))) {
+      const rows = manifest.filter((m) => m[0] === n);
+      const claimed = Array.from(new Set(rows.map((m) => m[1])));
+      if (claimed.length !== 1) {
+        violations.push('OWNERSHIP_MULTIPLE_OWNERS: ' + n + ' is credited to ' + claimed.length
+          + ' owners (' + claimed.join(', ') + '); every site of a name shares one owner');
+        continue;
+      }
+      const mod = OWNER_MODULE[claimed[0]];
+      if (!mod) continue;                       // already reported at step 1
+      const declared = (declsByModule[mod] || []).filter((x) => x === n).length;
+      if (declared === 0) {
+        violations.push('OWNERSHIP_WRONG_OWNER: ' + n + ' is credited to ' + claimed[0]
+          + ' (' + mod + '), but that module does not declare it');
+      } else if (declared !== rows.length) {
+        violations.push('OWNERSHIP_MULTIPLICITY: ' + n + ' has ' + rows.length + ' manifest site(s) but '
+          + mod + ' declares it ' + declared + ' time(s)');
+      }
+    }
+    // 4. every declaration shipped in a module appears in the manifest
+    for (const mod of Object.keys(declsByModule)) {
+      for (const n of declsByModule[mod]) {
+        if (!manifest.some((m) => m[0] === n)) {
+          violations.push('OWNERSHIP_UNPLANNED: ' + mod + ' declares ' + n + ', which is not in the eleven-site manifest');
+        }
+      }
+    }
+    // 5. the four owners together account for every manifest site
+    const total = Object.keys(declsByModule).reduce((a, mod) => a + declsByModule[mod].length, 0);
+    if (total !== manifest.length) {
+      violations.push('OWNERSHIP_CONSERVATION: the modules declare ' + total + ' sites, the manifest lists ' + manifest.length);
+    }
+  } catch (e) { threw = String(e && e.message); violations.push('OWNERSHIP_GUARD_FAILED: ' + threw); }
+  return { violations, threw };
+}
 
 /** Plan contract over the manifest model: [name, owner, chars, form, baseOffset]. */
 function guardManifest(manifest) {
@@ -922,7 +1440,25 @@ function guardManifest(manifest) {
   return { violations, threw };
 }
 
-/** Ratchet contract: shrink-only, and the floor must equal the real residue. */
+/**
+ * Ratchet contract: shrink-only, floor equals the real residue, and — once the
+ * family reaches ZERO — that zero is TERMINAL.
+ *
+ * The shrink-only rule alone is not enough after PR 4. `[11,7,5,4,0,3]` shrinks
+ * at every step except one, and a reviewer scanning for "did it grow?" would
+ * have to notice that the growth is at the very end. Worse, `[11,7,5,4,0]`
+ * followed later by a re-opened allowance would mean the family had been closed
+ * and then quietly re-opened — precisely the failure a terminal zero exists to
+ * prevent. So zero is checked three ways:
+ *
+ *   • it must be the LAST value;
+ *   • it must be the MINIMUM (nothing negative may sneak under it);
+ *   • no value after the first zero may exist at all.
+ *
+ * And the floor check still binds: the allowance must equal the number of EIC
+ * declarations actually inline, so a zero that is merely asserted rather than
+ * achieved fails against the real monolith.
+ */
 function guardRatchet(ratchet, inlineSiteCount) {
   const violations = [];
   let threw = null;
@@ -934,6 +1470,20 @@ function guardRatchet(ratchet, inlineSiteCount) {
     }
     const floor = ratchet[ratchet.length - 1];
     if (floor !== inlineSiteCount) violations.push('RATCHET_FLOOR: allowance is ' + floor + ' but ' + inlineSiteCount + ' EIC sites are inline');
+    // ── the terminal zero ────────────────────────────────────────────────────
+    const firstZero = ratchet.indexOf(0);
+    if (firstZero >= 0) {
+      if (firstZero !== ratchet.length - 1) {
+        violations.push('RATCHET_REOPENED: the family reached 0 at step ' + firstZero + ' but the ratchet continues to ['
+          + ratchet.slice(firstZero + 1).join(', ') + ']; zero is TERMINAL and no later allowance may be appended');
+      }
+      if (Math.min.apply(null, ratchet) !== 0) {
+        violations.push('RATCHET_BELOW_ZERO: the minimum step is ' + Math.min.apply(null, ratchet) + ', not 0');
+      }
+    }
+    if (floor === 0 && inlineSiteCount !== 0) {
+      violations.push('RATCHET_ZERO_UNEARNED: the allowance is 0 but ' + inlineSiteCount + ' EIC declarations are still inline');
+    }
   } catch (e) { threw = String(e && e.message); violations.push('RATCHET_GUARD_FAILED: ' + threw); }
   return { violations, threw };
 }
@@ -964,18 +1514,26 @@ module.exports = {
   guardModulePurity,
   guardLoad,
   guardInlineResidue,
+  isEicFamilyName,
+  isEicFamilyDecl,
+  splitIdentifierSegments,
   guardManifest,
+  guardOwnership,
   guardRatchet,
+  guardLiveDeepDiveSurface,
+  guardEicModuleInventory,
   guardNoLoadTimeObservers,
   guardPanelSurface,
   guardTickerAnalysisSurface,
   EXPECTED_MODULE,
   EXPECTED_PANEL,
   EXPECTED_TICKER_ANALYSIS,
+  EXPECTED_LIVE_DEEP_DIVE,
   SHIPPED_NAMES,
   PR1_NAMES,
   PANEL_NAMES,
   TICKER_ANALYSIS_NAMES,
+  LIVE_DEEP_DIVE_NAMES,
   PENDING_ORDER,
   PENDING_SITES,
   PENDING_CHARS,
@@ -989,4 +1547,10 @@ module.exports = {
   MODULE_SRC_ATTR,
   PANEL_SRC_ATTR,
   TICKER_ANALYSIS_SRC_ATTR,
+  LIVE_DEEP_DIVE_SRC_ATTR,
+  EIC_MODULE_FILES,
+  EIC_MODULE_SRC_ATTRS,
+  canonicalLocalSrc,
+  isEicModulePath,
+  OWNER_MODULE,
 };

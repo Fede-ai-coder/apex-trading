@@ -195,11 +195,14 @@ const PESS_EXTRACTION_SCRIPTS = [
 // The EIC family's extraction, which began after PESS closed. Same rule as the
 // PESS list above: a LIST, never an `eic-*` pattern, so an unplanned EIC script
 // cannot appear without review. PR 1 of 4 shipped the screening-rules module,
-// PR 2 the panel, PR 3 the ticker-analysis panel; PR 4 will extend this list.
+// PR 2 the panel, PR 3 the ticker-analysis panel, PR 4 the live deep dive. The
+// family is COMPLETE at four modules; a fifth would have to be added here by
+// exact filename, which is the point of a list.
 const EIC_EXTRACTION_SCRIPTS = [
   './js/services/eic-screening-rules.js',
   './js/ui/eic-panel.js',
   './js/ui/eic-ticker-analysis-panel.js',
+  './js/ui/eic-live-deep-dive.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2650,8 +2653,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 36,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules and the 3 shipped EIC extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 37,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules and the 4 shipped EIC extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3356,10 +3359,13 @@ ok(SHIPPED_MODULES.every(function (m) { return m.declBytes > 0 && m.declBytes <=
 // the audit by a whole family. The post-PESS audit that chose EIC in fact
 // REPORTS against this 35,609 B ceiling, so letting an EIC module into the
 // baseline would let the ceiling be raised by the very work it is meant to
-// constrain. EIC PR 3's js/ui/eic-ticker-analysis-panel.js is excluded BY EXACT
-// NAME through the list above — never by an `eic-*` prefix — so the exclusion
-// stays a reviewed decision per module rather than a standing amnesty, and
-// AUDIT_TIME_MODULES keeps both its count and its meaning.
+// constrain. EIC PR 3's js/ui/eic-ticker-analysis-panel.js and PR 4's
+// js/ui/eic-live-deep-dive.js are excluded BY EXACT NAME through the list above
+// — never by an `eic-*` prefix — so the exclusion stays a reviewed decision per
+// module rather than a standing amnesty, and AUDIT_TIME_MODULES keeps both its
+// count and its meaning. The ceiling itself is UNCHANGED at 35,609 B: PR 4's
+// module owns 23,726 declaration bytes, comfortably under it and well under the
+// 28,128 B of js/ui/sfs-panel.js, so nothing about this PR moves the baseline.
 const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
   return m.name !== ADAPTER_SRC && m.name !== SERVICE_SRC && m.name !== PANEL_SRC
     && m.name !== './js/services/sfs-config-state.js'
