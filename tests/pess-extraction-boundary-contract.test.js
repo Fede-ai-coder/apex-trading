@@ -445,10 +445,11 @@ const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // js/services/eic-screening-rules.js immediately after the PESS region, then 35
 // when EIC PR 2 added js/ui/eic-panel.js beside it, then 36 when EIC PR 3 added
 // js/ui/eic-ticker-analysis-panel.js, then 37 when EIC PR 4 added
-// js/ui/eic-live-deep-dive.js and closed that family. Those modules postdate
+// js/ui/eic-live-deep-dive.js, then 38 when the owner-corrective extraction added
+// js/services/eic-decision-rules.js and actually closed that family. Those modules postdate
 // this boundary and are explicitly permitted; the count is bumped rather than
 // made elastic, so an UNDECLARED new script still fails here.
-const LOCAL_SCRIPT_COUNT = 37;
+const LOCAL_SCRIPT_COUNT = 38;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1354,7 +1355,7 @@ eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — 
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
 eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/backend-directional-snapshot-panel.js',
   '9.11 the DSB panel is STILL the last local script before the monolith — this PR did not displace it');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 37 local application scripts (32 + this module + the 4 shipped EIC modules)');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 38 local application scripts (32 + this module + the 5 shipped EIC modules)');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3174,11 +3175,10 @@ section('13. RECONSTRUCTION');
 // offset and land its region inside another function's body. Each link is
 // verified by hash, so a wrong order fails loudly instead of landing on garbage.
 //
-// This entry point must always be the newest EIC helper. Rooting it at PR 3
-// after PR 4 shipped does not "mostly work" — it fails immediately, because
-// PR 3's region would be reinserted into a monolith PR 4 has already shortened
-// by 24,176 characters below that offset.
-const EIC_UNDO = require('./lib/eic-pr4-undo.js');
+// This entry point must always be the newest EIC helper. The owner-corrective
+// extraction is the fifth and newest link; every older offset becomes valid
+// only after its successor has restored the exact intermediate document.
+const EIC_UNDO = require('./lib/eic-pr5-undo.js');
 const EIC_PR3 = require('./lib/eic-pr3-undo.js');
 const EIC_PR2 = require('./lib/eic-pr2-undo.js');
 const EIC_PR1 = require('./lib/eic-pr1-undo.js');

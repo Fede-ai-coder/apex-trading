@@ -11,7 +11,8 @@ process.on('unhandledRejection', (e) => {
 //
 // WHAT THIS IS
 //   The boundary contract for the EIC (Earnings Iron Condor agent) family,
-//   opened with PR 1 of 4 and carrying the WHOLE eleven-site plan from day one.
+//   opened with PR 1 and corrected after PR #380's owner-first audit found two
+//   generically named declarations omitted by the original prefix-led plan.
 //
 //   EIC had, like PESS before it, ZERO existing test coverage: before this file
 //   not one suite in the repository referenced any EIC declaration. So this
@@ -23,15 +24,17 @@ process.on('unhandledRejection', (e) => {
 //   PANEL             js/ui/eic-panel.js                        2 / 15,268   SHIPPED
 //   TICKER_ANALYSIS   js/ui/eic-ticker-analysis-panel.js        1 / 13,990   SHIPPED
 //   LIVE_DEEP_DIVE    js/ui/eic-live-deep-dive.js               4 / 23,726   SHIPPED
+//   DECISION_RULES    js/services/eic-decision-rules.js         2 / 10,112   SHIPPED
 //                                                              ──────────────
-//                                                             11 / 67,352   COMPLETE
+//                                                             13 / 77,464   COMPLETE
 //
-//   THE FAMILY IS CLOSED. Inline EIC residue is 0 sites / 0 chars, the ratchet
-//   reads 11 → 7 → 5 → 4 → 0, and that ZERO IS TERMINAL: guardRatchet refuses a
+//   THE FAMILY IS NOW CLOSED. Inline EIC residue is 0 sites / 0 chars, the
+//   owner-corrected ratchet reads 13 → 9 → 7 → 6 → 2 → 0, and that ZERO IS
+//   TERMINAL: guardRatchet refuses a
 //   later positive allowance, and guardInlineResidue refuses any EIC declaration
-//   reappearing in the monolith. There is no PR 5.
+//   reappearing in the monolith.
 //
-//   Note the SITE counts. Eleven sites, nine unique names: both `eicLiqFromLegs`
+//   Note the SITE counts. Thirteen sites, eleven unique names: both `eicLiqFromLegs`
 //   and `eicFetchLegs` are declared TWICE. This contract counts sites
 //   throughout, because a contract that counted names would not notice a
 //   duplicate silently disappearing.
@@ -96,6 +99,7 @@ const EIC_UNDO = require('./lib/eic-pr1-undo.js');
 const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 const EIC_UNDO3 = require('./lib/eic-pr3-undo.js');
 const EIC_UNDO4 = require('./lib/eic-pr4-undo.js');
+const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const MODULE_REL = 'js/services/eic-screening-rules.js';
@@ -129,6 +133,8 @@ const TA_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-ticker-analysis-p
 const TA_SRC = fs.readFileSync(TA_PATH, 'utf8');
 const LDD_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-live-deep-dive.js');
 const LDD_SRC = fs.readFileSync(LDD_PATH, 'utf8');
+const DECISION_PATH = path.resolve(__dirname, '..', 'js', 'services', 'eic-decision-rules.js');
+const DECISION_SRC = fs.readFileSync(DECISION_PATH, 'utf8');
 // PR 4's byte-identity and undo proofs remain historical even after the later
 // fdColor functional repair. The helper removes only that exact approved block;
 // runtime and surface proofs below continue to exercise the current source.
@@ -151,6 +157,7 @@ const PANEL_DECLS = scanTopLevelDeclarations(PANEL_SRC);
 const TA_DECLS = scanTopLevelDeclarations(TA_SRC);
 const LDD_DECLS = scanTopLevelDeclarations(LDD_SRC);
 const LDD_EXTRACTION_DECLS = scanTopLevelDeclarations(LDD_EXTRACTION_SRC);
+const DECISION_DECLS = scanTopLevelDeclarations(DECISION_SRC);
 // Assigned by §9F once the BASE transcripts exist, for the same reason
 // TA_TRANSCRIPT_GUARD is: §12 mutates the real bodies through it, so a parity
 // regression is proved rather than asserted.
@@ -171,6 +178,7 @@ const BASE_INDEX_SHA256 = '945685db0a90052ad6236bc9aaf7a43a1b9ba5a2a77eb11222f64
 const BASE_MONOLITH_CHARS = 2089628;
 
 const SCREENING_RULES = G.SHIPPED_OWNER;
+const DECISION_RULES = 'DECISION_RULES';
 const PANEL = 'PANEL', TICKER_ANALYSIS = 'TICKER_ANALYSIS', LIVE_DEEP_DIVE = 'LIVE_DEEP_DIVE';
 
 // name, owner, chars, form, base offset — ALL ELEVEN SITES, physical order.
@@ -186,8 +194,10 @@ const MANIFEST = [
   ['eicDXLinkDeepDive', LIVE_DEEP_DIVE, 12815, 'async function', 1940887],
   ['eicBuildLiveContext', SCREENING_RULES, 8499, 'function', 1953770],
   ['eicRunDXLink', LIVE_DEEP_DIVE, 10623, 'async function', 1962349],
+  ['computeFinalDecision', DECISION_RULES, 6152, 'function', 1973231],
+  ['computeSetupScore', DECISION_RULES, 3960, 'function', 1979788],
 ];
-const RATCHET = [11, 7, 5, 4, 0];
+const RATCHET = [13, 9, 7, 6, 2, 0];
 // PR 1's three names. Sections 8 and 9 are PR 1's purity and parity proofs and
 // must keep meaning exactly that; the panel gets its own sections, because a
 // panel is not pure and proving it "pure" would be proving something false.
@@ -195,6 +205,7 @@ const MOVED_NAMES = G.PR1_NAMES;
 const PANEL_NAMES = G.PANEL_NAMES;
 const TA_NAMES = G.TICKER_ANALYSIS_NAMES;
 const LDD_NAMES = G.LIVE_DEEP_DIVE_NAMES;
+const DECISION_NAMES = G.DECISION_RULES_NAMES;
 
 function git(args) { return execFileSync('git', args, { cwd: ROOT, maxBuffer: 1 << 30, encoding: 'utf8' }); }
 function baseHtml() {
@@ -268,8 +279,8 @@ function isShallow() {
 const SHALLOW = isShallow();
 
 console.log('════════════════════════════════════════════════════════════════════════════════');
-console.log('  EIC EXTRACTION BOUNDARY CONTRACT — PRs 1-4 of 4, COMPLETE');
-console.log('  (SCREENING_RULES, PANEL, TICKER_ANALYSIS, LIVE_DEEP_DIVE · 0 inline residue)');
+console.log('  EIC EXTRACTION BOUNDARY CONTRACT — OWNER-CORRECTED FAMILY COMPLETE');
+console.log('  (SCREENING_RULES, DECISION_RULES, PANEL, TICKER_ANALYSIS, LIVE_DEEP_DIVE · 0 inline residue)');
 console.log('════════════════════════════════════════════════════════════════════════════════');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -294,36 +305,37 @@ for (const [rel, cnt, chars] of FIXTURES) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-section('2. THE ELEVEN-SITE MANIFEST');
+section('2. THE THIRTEEN-SITE OWNER-AWARE MANIFEST');
 // ═════════════════════════════════════════════════════════════════════════════
 expectClean(G.guardManifest(MANIFEST), '2.1 the manifest satisfies the plan contract');
-eq(MANIFEST.length, G.FAMILY_SITES, '2.2 eleven declaration SITES');
-eq(new Set(MANIFEST.map((m) => m[0])).size, G.FAMILY_NAMES, '2.3 …which are nine unique NAMES');
-eq(MANIFEST.reduce((a, m) => a + m[2], 0), G.FAMILY_CHARS, '2.4 …totalling 67,352 chars');
+eq(MANIFEST.length, G.FAMILY_SITES, '2.2 thirteen declaration SITES');
+eq(new Set(MANIFEST.map((m) => m[0])).size, G.FAMILY_NAMES, '2.3 …which are eleven unique NAMES');
+eq(MANIFEST.reduce((a, m) => a + m[2], 0), G.FAMILY_CHARS, '2.4 …totalling 77,464 chars');
 const dupNames = Array.from(new Set(MANIFEST.map((m) => m[0]))).filter((n) => MANIFEST.filter((m) => m[0] === n).length > 1);
 deepEq(dupNames.sort(), ['eicFetchLegs', 'eicLiqFromLegs'], '2.5 exactly two names are declared twice');
 // ── every site has EXACTLY ONE declared owner, checked against the SOURCE ───
 // While the family was mid-extraction, guardManifest's shipped/pending
 // arithmetic caught a wrong owner because it moved a site between buckets. Now
-// that all four owners have shipped, that arithmetic no longer distinguishes
+// that all five owners have shipped, that arithmetic no longer distinguishes
 // them, so ownership is cross-checked against what the modules really declare.
 const DECLS_BY_MODULE = {
   './js/services/eic-screening-rules.js': MODULE_DECLS.map((d) => d.name),
+  './js/services/eic-decision-rules.js': DECISION_DECLS.map((d) => d.name),
   './js/ui/eic-panel.js': PANEL_DECLS.map((d) => d.name),
   './js/ui/eic-ticker-analysis-panel.js': TA_DECLS.map((d) => d.name),
   './js/ui/eic-live-deep-dive.js': LDD_DECLS.map((d) => d.name),
 };
-expectClean(G.guardOwnership(MANIFEST, DECLS_BY_MODULE), '2.6 all eleven sites have exactly one declared owner, and it is the module that declares them');
-eq(Object.keys(DECLS_BY_MODULE).length, 4, '2.7 exactly four owning modules');
+expectClean(G.guardOwnership(MANIFEST, DECLS_BY_MODULE), '2.6 all thirteen sites have exactly one declared owner, and it is the module that declares them');
+eq(Object.keys(DECLS_BY_MODULE).length, 5, '2.7 exactly five owning modules');
 eq(Object.keys(DECLS_BY_MODULE).reduce((a, k) => a + DECLS_BY_MODULE[k].length, 0), G.FAMILY_SITES,
-  '2.8 …declaring eleven sites between them — application-wide declaration conservation is exact');
+  '2.8 …declaring thirteen sites between them — application-wide declaration conservation is exact');
 deepEq(Object.keys(DECLS_BY_MODULE).map((k) => G.canonicalLocalSrc(k)).sort(), G.EIC_MODULE_FILES.slice().sort(),
-  '2.9 …and they are exactly the four modules the inventory declares by name');
+  '2.9 …and they are exactly the five modules the inventory declares by name');
 
 // ── THE DISK INVENTORY ──────────────────────────────────────────────────────
-// Script tags say what the application LOADS. This says what EXISTS. A fifth
-// eic-*.js module sitting unreferenced in js/ui/ is still a fifth module of a
-// family that is supposed to be closed at four — it would be swept up by any
+// Script tags say what the application LOADS. This says what EXISTS. A sixth
+// eic-*.js module sitting unreferenced in js/ui/ is still a sixth module of a
+// family that is supposed to be closed at five — it would be swept up by any
 // later glob, bundler or audit — so both inventories are checked.
 //
 // The directories are named explicitly, for the same reason the file list is:
@@ -341,7 +353,7 @@ for (const d of EIC_SCAN_DIRS) {
 }
 const DISK_EIC_FILES = DISK_JS_FILES.filter((f) => G.isEicModulePath(G.canonicalLocalSrc(f))).sort();
 deepEq(DISK_EIC_FILES, G.EIC_MODULE_FILES.slice().sort(),
-  '2.10 exactly four eic-*.js files EXIST on disk across js/services, js/ui and js/adapters — no unreferenced fifth');
+  '2.10 exactly five eic-*.js files EXIST on disk across js/services, js/ui and js/adapters — no unreferenced sixth');
 ok(DISK_JS_FILES.length > DISK_EIC_FILES.length,
   '2.11 …found among ' + DISK_JS_FILES.length + ' .js files in those directories, so the scan really looked');
 for (const f of G.EIC_MODULE_FILES) {
@@ -385,8 +397,8 @@ if (BASE_MONO) {
   }
   eq(direct, 4, '4.4 4/4 sites byte-identical to the real base blob');
   const baseEic = scanTopLevelDeclarations(BASE_MONO).filter(G.isEicFamilyDecl);
-  eq(baseEic.length, G.FAMILY_SITES, '4.5 the base monolith declared all eleven EIC sites');
-  eq(baseEic.reduce((a, d) => a + d.chars, 0), G.FAMILY_CHARS, '4.6 …totalling 67,352 chars');
+  eq(baseEic.length, G.FAMILY_SITES, '4.5 the base monolith declared all thirteen owner-aware EIC sites');
+  eq(baseEic.reduce((a, d) => a + d.chars, 0), G.FAMILY_CHARS, '4.6 …totalling 77,464 chars');
   note('4/4 byte-identical, verified against the base blob at ' + BASE_REF.slice(0, 10));
 } else {
   note('base blob unreachable (shallow clone) — sha256 proofs stand alone');
@@ -404,7 +416,7 @@ deepEq(inlineEic.map((d) => d.name), G.PENDING_ORDER, '5.4 …and the residue li
 eq(inlineEic.filter((d) => d.name === 'eicFetchLegs').length, 0,
   '5.5 NEITHER eicFetchLegs copy is left inline — PR 4 moved both');
 expectClean(G.guardRatchet(RATCHET, inlineEic.length), '5.6 the ratchet satisfies the shrink-only contract');
-deepEq(RATCHET, [11, 7, 5, 4, 0], '5.7 the inline allowance ratcheted 11 → 7 → 5 → 4 → 0');
+deepEq(RATCHET, [13, 9, 7, 6, 2, 0], '5.7 the owner-aware inline allowance ratcheted 13 → 9 → 7 → 6 → 2 → 0');
 eq(new Set(inlineEic.map((d) => d.name)).size, 0, '5.8 …across zero unique inline names');
 // ── the ZERO IS TERMINAL, three ways ───────────────────────────────────────
 eq(RATCHET[RATCHET.length - 1], 0, '5.9 zero is the FINAL value of the ratchet');
@@ -412,7 +424,7 @@ eq(Math.min.apply(null, RATCHET), 0, '5.10 …and the MINIMUM — nothing sits b
 eq(RATCHET.indexOf(0), RATCHET.length - 1, '5.11 …and it occurs exactly once, at the end: no allowance was appended after it');
 ok(G.guardRatchet(RATCHET.concat([2]), 2).violations.some((v) => /RATCHET_REOPENED/.test(v)),
   '5.12 appending a positive allowance AFTER the zero is REJECTED by name (RATCHET_REOPENED)');
-ok(G.guardRatchet([11, 7, 5, 4, 0], 1).violations.some((v) => /RATCHET_ZERO_UNEARNED/.test(v)),
+ok(G.guardRatchet([13, 9, 7, 6, 2, 0], 1).violations.some((v) => /RATCHET_ZERO_UNEARNED/.test(v)),
   '5.13 …and a zero that is merely asserted while a declaration is still inline is REJECTED too');
 // Every EIC name, application-wide, is declared in a MODULE and nowhere inline.
 for (const n of G.SHIPPED_NAMES) {
@@ -427,8 +439,9 @@ eq(INLINE_DECLS.filter(G.isEicFamilyDecl).length, 0,
 // which meant 5.15 was asserting something the filter could not deliver.
 {
   const MUST = ['eicFoo', 'EICFoo', '_eicFoo', 'runEICFoo', 'runEICSomething', '_eicBootstrap',
-    'runEICPanel', 'eicRunDXLink', 'eicFetchLegs', 'EIC_THING', '$eicX'];
-  const MUST_NOT = ['deiceThing', 'receiptTotal', 'pessAnalyzeAll', 'computeSetupScore',
+    'runEICPanel', 'eicRunDXLink', 'eicFetchLegs', 'EIC_THING', '$eicX',
+    'computeFinalDecision', 'computeSetupScore'];
+  const MUST_NOT = ['deiceThing', 'receiptTotal', 'pessAnalyzeAll',
     'runPESSPanel', 'specificThing', 'eiffelTower', 'sfsPanel', 'bdspRender'];
   let wrong = 0;
   for (const n of MUST) if (!G.isEicFamilyName(n)) { wrong++; ok(false, '5.16 the family predicate MISSED ' + n); }
@@ -440,8 +453,8 @@ eq(INLINE_DECLS.filter(G.isEicFamilyDecl).length, 0,
   ok(G.isEicFamilyName('_eicBootstrap'), '5.17 a leading underscore does not hide an EIC name (the old ^eic anchor missed it)');
   ok(G.isEicFamilyName('runEICSomething'), '5.18 EIC in the MIDDLE of a name is detected (the old rule hardcoded only runEICPanel)');
   ok(!G.isEicFamilyName('deiceThing'), '5.19 …and it matches SEGMENTS, so a name that merely contains the letters is not swept in');
-  // Every one of the nine shipped names is recognised by the predicate, so the
-  // pattern layer and the exact-name layer agree about the family they describe.
+  // Every one of the eleven shipped names is recognised by the combined
+  // identifier-shape + owner-evidence predicate.
   for (const n of G.SHIPPED_NAMES) {
     ok(G.isEicFamilyName(n), '5.20 the predicate recognises the shipped name ' + n);
   }
@@ -548,8 +561,8 @@ ok(MOD_SLOT >= 0 && MONO_SLOT > MOD_SLOT, '7.8 the module loads before the inlin
 const DOWNSTREAM = ORDERED.slice(MOD_SLOT + 1, MONO_SLOT).filter((s) => s.isAppJs && s.code != null);
 const OBSERVER_SOURCES = DOWNSTREAM.map((s) => ({ label: s.src, code: s.code }))
   .concat([{ label: '(inline monolith)', code: ORDERED[MONO_SLOT].code }]);
-eq(DOWNSTREAM.length, 27, '7.9 twenty-seven local scripts execute between the module and the monolith (PR 4 added one)');
-eq(OBSERVER_SOURCES.length, 28, '7.10 …and all 28 downstream sources are scanned, monolith included');
+eq(DOWNSTREAM.length, 28, '7.9 twenty-eight local scripts execute between the screening module and the monolith');
+eq(OBSERVER_SOURCES.length, 29, '7.10 …and all 29 downstream sources are scanned, monolith included');
 expectClean(G.guardNoLoadTimeObservers(OBSERVER_SOURCES, MOVED_NAMES),
   '7.11 no downstream source READS a relocated binding at evaluation time');
 const REAL_OBS = {};
@@ -2949,8 +2962,8 @@ if (BASE_MONO) {
   }
   eq(missing, 0, '10.1 no declaration disappeared from the application');
   eq(changed, 0, '10.2 no extracted declaration body changed after projecting away the one approved functional repair');
-  eq(baseDecls.length - INLINE_DECLS.length, 11,
-    '10.3 the inline monolith lost exactly ELEVEN declaration sites — four for PR 1, two for PR 2, one for PR 3, four for PR 4: the whole family');
+  eq(baseDecls.length - INLINE_DECLS.length, 13,
+    '10.3 the inline monolith lost exactly THIRTEEN declaration sites — the original eleven plus the two owner-corrective decision rules');
 } else {
   ok(true, '10.1 whole-file comparison skipped: base blob unavailable');
 }
@@ -2961,7 +2974,8 @@ ok(parseErr === null, '10.4 the reconstructed application parses' + (parseErr ? 
 // ═════════════════════════════════════════════════════════════════════════════
 section('11. THE UNDO CHAIN');
 //
-// FOUR links now, newest first: PR 4, then PR 3, then PR 2, then PR 1. Each PR's
+// FIVE links now, newest first: the owner correction, then PR 4, PR 3, PR 2 and
+// PR 1. Each link's
 // recorded offsets are positions in the monolith AS IT WAS WHEN THAT PR WAS CUT,
 // so the order is not a convention — undoing an older PR first would reinsert
 // text ABOVE a newer PR's offset and land its region inside another function's
@@ -2971,10 +2985,31 @@ section('11. THE UNDO CHAIN');
 //
 // The one valid cumulative order is:
 //
-//     undo PR4 → post-PR3 → undo PR3 → post-PR2 → undo PR2 → post-PR1
+//     undo owner correction → post-PR4 → undo PR4 → post-PR3
+//              → undo PR3 → post-PR2 → undo PR2 → post-PR1
 //              → undo PR1 → post-PESS
 // ═════════════════════════════════════════════════════════════════════════════
 {
+  // ── newest link: restore the two owner-classified decision rules ─────────
+  const r5 = EIC_UNDO5.moduleRegions(DECISION_SRC);
+  ok(r5 !== null, '11.-1a both decision-rule regions derive from the shipped module');
+  deepEq(r5 ? r5.map((r) => r.length) : [], EIC_UNDO5.REGION_OFFSETS.map((r) => r.chars),
+    '11.-1b …at the recorded region lengths');
+  eq(r5 ? r5.reduce((a, r) => a + r.length, 0) : -1, EIC_UNDO5.REGION_TOTAL_CHARS,
+    '11.-1c …totalling 10,776 region chars');
+  eq(EIC_UNDO5.REGION_TOTAL_CHARS - G.EXPECTED_DECISION_RULES.chars, 664,
+    '11.-1d …664 more than the declarations: the two attached banners and separators');
+  eq(HTML.split(EIC_UNDO5.TAG + '\n').length - 1, 1,
+    '11.-1e the decision-rules tag appears exactly once');
+  const undone5 = EIC_UNDO5.undoEicPr5(HTML, DECISION_SRC);
+  eq(undone5.verified, true,
+    '11.-1f undoing the owner-corrective extraction reproduces the post-audit document byte-exactly (' + undone5.reason + ')');
+  eq(undone5.html ? undone5.html.length : -1, EIC_UNDO5.POST_PR4_INDEX_CHARS,
+    '11.-1g …at the recorded character count');
+  eq(undone5.html ? sha256(undone5.html) : null, EIC_UNDO5.POST_PR4_INDEX_SHA256,
+    '11.-1h …and the recorded SHA-256');
+  const POST_PR4 = undone5.verified ? undone5.html : HTML;
+
   // ── link -1: undo PR 4, landing on the post-PR3 application ───────────────
   const r4 = EIC_UNDO4.regionTexts();
   eq(r4.length, 4, '11.00a exactly four regions are derived from the shipped live-deep-dive module');
@@ -3003,8 +3038,8 @@ section('11. THE UNDO CHAIN');
     '11.00m the DXLINK banner comment stayed in index.html');
   ok(LDD_SRC.indexOf('// DXLINK ON-DEMAND — real-time option data for EIC deep dive') < 0,
     '11.00n …and did NOT travel into the module');
-  eq(HTML.split(EIC_UNDO4.TAG + '\n').length - 1, 1, '11.00o the PR 4 tag appears exactly once and is removed exactly once');
-  const undone4 = EIC_UNDO4.postPr3Html(HTML);
+  eq(POST_PR4.split(EIC_UNDO4.TAG + '\n').length - 1, 1, '11.00o the PR 4 tag appears exactly once and is removed exactly once');
+  const undone4 = EIC_UNDO4.postPr3Html(POST_PR4);
   eq(undone4.verified, true, '11.00p undoing EIC PR 4 reproduces the post-PR3 document byte-exactly (' + undone4.reason + ')');
   eq(undone4.html ? undone4.html.length : -1, EIC_UNDO4.POST_PR3_INDEX_CHARS, '11.00q …at the recorded character count');
   eq(undone4.html ? sha256(undone4.html) : null, EIC_UNDO4.POST_PR3_INDEX_SHA256, '11.00r …and the recorded SHA-256');
@@ -3077,8 +3112,8 @@ section('11. THE UNDO CHAIN');
   eq(undone.html ? sha256(undone.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256, '11.15 …and the recorded SHA-256');
 
   // ── the chain as one call ─────────────────────────────────────────────────
-  const chain = EIC_UNDO4.postPessHtml(HTML);
-  eq(chain.verified, true, '11.16 the full chain HEAD → post-PR3 → post-PR2 → post-PR1 → post-PESS verifies end to end (' + chain.reason + ')');
+  const chain = EIC_UNDO5.postPessHtml(HTML, DECISION_SRC);
+  eq(chain.verified, true, '11.16 the full five-link chain HEAD → post-PR4 → post-PR3 → post-PR2 → post-PR1 → post-PESS verifies end to end (' + chain.reason + ')');
   eq(chain.html ? sha256(chain.html) : null, EIC_UNDO.POST_PESS_INDEX_SHA256,
     '11.17 …and lands on exactly the same document as the four links run by hand');
   // COMPLETE EIC RECONSTRUCTION: the pre-EIC document, byte for byte. §4 pins
@@ -3108,9 +3143,12 @@ section('11. THE UNDO CHAIN');
   const wrongOrder5 = EIC_UNDO3.postPessHtml(HTML);
   ok(!wrongOrder5.verified,
     '11.18e …and the PR3-rooted whole-chain call fails for the same reason: it no longer owns the newest link');
+  const wrongOrder6 = EIC_UNDO4.postPr3Html(HTML);
+  ok(!wrongOrder6.verified,
+    '11.18f undoing PR 4 before the owner-corrective link fails: PR 4 does not own the newest HEAD');
   // Every wrong order fails; only the one valid cumulative order verifies.
-  eq([wrongOrder, wrongOrder2, wrongOrder3, wrongOrder4, wrongOrder5].filter((r) => r.verified).length, 0,
-    '11.18f all FIVE wrong orders fail; exactly one order reconstructs the family');
+  eq([wrongOrder, wrongOrder2, wrongOrder3, wrongOrder4, wrongOrder5, wrongOrder6].filter((r) => r.verified).length, 0,
+    '11.18g all SIX wrong orders fail; exactly one order reconstructs the family');
 
   // ── NEGATIVE CONTROL — the hash check must be load-bearing ────────────────
   const fake2 = EIC_UNDO2.regionTexts().slice();
@@ -3141,7 +3179,7 @@ section('11. THE UNDO CHAIN');
     eq(fake4.reduce((a, r) => a + r.length, 0), EIC_UNDO4.REGION_TOTAL_CHARS,
       '11.23 …the regions still total the recorded 24,176 chars');
     const rebuilt4 = (function () {
-      let out = HTML.replace(EIC_UNDO4.TAG + '\n', '');
+      let out = POST_PR4.replace(EIC_UNDO4.TAG + '\n', '');
       const inl = L.parseScriptTags(out).filter((t) => (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000);
       const monoAt = out.indexOf(inl[0].inline);
       const spans = EIC_UNDO4.REGION_OFFSETS.map((r, i) => ({ off: r.monoOffset, text: fake4[i] }));
@@ -3694,6 +3732,120 @@ section('11D. THE LIVE DEEP DIVE — EIC PR 4, and the family is closed');
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+section('11E. THE OWNER-CORRECTIVE DECISION RULES — EIC REALLY CLOSES');
+// ═════════════════════════════════════════════════════════════════════════════
+{
+  ok(fs.existsSync(DECISION_PATH), '11E.1 js/services/eic-decision-rules.js exists');
+  expectClean(G.guardModuleShape(DECISION_SRC, G.EXPECTED_DECISION_RULES),
+    '11E.2 the module has the exact two-site extraction shape');
+  expectClean(G.guardModulePurity(DECISION_SRC, DECISION_NAMES),
+    '11E.3 both deterministic decision rules remain evaluation-inert and effect-free');
+  expectClean(G.guardLoad(SCRIPT_MODEL, G.DECISION_RULES_SRC_ATTR),
+    '11E.4 the classic-script tag is singular, synchronous and before the monolith');
+
+  eq(DECISION_DECLS.length, 2, '11E.5 exactly two declaration sites moved');
+  deepEq(DECISION_DECLS.map((d) => d.name), DECISION_NAMES,
+    '11E.6 original physical order: computeFinalDecision → computeSetupScore');
+  deepEq(DECISION_DECLS.map((d) => d.chars), [6152, 3960],
+    '11E.7 per-site declaration lengths are unchanged');
+  eq(DECISION_DECLS.reduce((a, d) => a + d.chars, 0), 10112,
+    '11E.8 declaration total is 10,112 chars');
+  for (const d of DECISION_DECLS) {
+    eq(d.form, 'function', '11E.9 ' + d.name + ' stays a plain function declaration');
+    eq(d.isAsync, false, '11E.10 ' + d.name + ' stays synchronous');
+    eq(sha256(DECISION_SRC.slice(d.start, d.end + 1)), G.EXPECTED_DECISION_RULES.spanSha[d.name],
+      '11E.11 ' + d.name + ' matches the base declaration SHA-256');
+    eq(INLINE_DECLS.filter((x) => x.name === d.name).length, 0,
+      '11E.12 ' + d.name + ' has no inline declaration left');
+  }
+
+  const restored = EIC_UNDO5.undoEicPr5(HTML, DECISION_SRC);
+  ok(restored.verified, '11E.13 the newest undo link restores the exact post-audit base');
+  const baseMono = restored.html ? monolithOf(restored.html) : null;
+  ok(baseMono !== null, '11E.14 the restored document contains the historical monolith');
+  const baseRules = baseMono ? scanTopLevelDeclarations(baseMono)
+    .filter((d) => DECISION_NAMES.indexOf(d.name) >= 0) : [];
+  deepEq(baseRules.map((d) => d.name), DECISION_NAMES,
+    '11E.15 the historical monolith carries the same two sites in the same order');
+  let byteEqual = 0;
+  for (let i = 0; i < baseRules.length; i++) {
+    const a = baseMono.slice(baseRules[i].start, baseRules[i].end + 1);
+    const b = DECISION_SRC.slice(DECISION_DECLS[i].start, DECISION_DECLS[i].end + 1);
+    eq(b, a, '11E.16 ' + DECISION_NAMES[i] + ' is byte-identical to the real extraction base');
+    if (a === b) byteEqual++;
+  }
+  eq(byteEqual, 2, '11E.17 both decision-rule sites are byte-identical relocations');
+
+  const decisionSlot = ORDERED.findIndex((s) => s.src === G.DECISION_RULES_SRC_ATTR);
+  const screeningSlot = ORDERED.findIndex((s) => s.src === G.MODULE_SRC_ATTR);
+  const panelSlot = ORDERED.findIndex((s) => s.src === G.PANEL_SRC_ATTR);
+  const tickerSlot = ORDERED.findIndex((s) => s.src === G.TICKER_ANALYSIS_SRC_ATTR);
+  const liveSlot = ORDERED.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
+  eq(decisionSlot, screeningSlot + 1, '11E.18 decision rules load immediately after screening rules');
+  ok(decisionSlot < panelSlot && decisionSlot < tickerSlot && decisionSlot < liveSlot,
+    '11E.19 …and before every EIC UI consumer');
+
+  const consumers = ORDERED.filter((s) => s.isAppJs && s.code != null && s.src !== G.DECISION_RULES_SRC_ATTR)
+    .filter((s) => {
+      const refs = classifyReferences(s.code, DECISION_NAMES);
+      return refs.loadTime.length + refs.callTime.length > 0;
+    })
+    .map((s) => s.src || '(inline monolith)')
+    .sort();
+  deepEq(consumers, ['./js/ui/eic-live-deep-dive.js', './js/ui/eic-ticker-analysis-panel.js'],
+    '11E.20 every production consumer is an EIC UI module; no foreign caller exists');
+  const downstreamDecision = ORDERED.slice(decisionSlot + 1, MONO_SLOT + 1)
+    .filter((s) => s.isAppJs && s.code != null)
+    .map((s) => ({ label: s.src || '(inline monolith)', code: s.code }));
+  expectClean(G.guardNoLoadTimeObservers(downstreamDecision, DECISION_NAMES),
+    '11E.21 no consumer reads either binding during script evaluation');
+
+  const code = G.stripComments(DECISION_SRC);
+  for (const [label, re] of [
+    ['DOM', /\bdocument\s*\.|\bquerySelector\s*\(/],
+    ['network', /\bfetch\s*\(|\bttCall\s*\(|\bWebSocket\b/],
+    ['timers', /\bset(?:Timeout|Interval)\s*\(/],
+    ['listeners', /\baddEventListener\s*\(/],
+    ['storage', /\b(?:local|session)Storage\b/],
+    ['shared state', /\bS\s*\./],
+    ['global bridge', /\b(?:window|globalThis)\s*\./],
+  ]) eq((code.match(re) || []).length, 0, '11E.22 effect audit: zero ' + label + ' surface');
+
+  const headCtx = {}, baseCtx = {};
+  vm.createContext(headCtx); vm.createContext(baseCtx);
+  vm.runInContext(DECISION_SRC, headCtx, { filename: 'eic-decision-rules.js' });
+  const historicalSource = baseRules.map((d) => baseMono.slice(d.start, d.end + 1)).join('\n\n');
+  vm.runInContext(historicalSource, baseCtx, { filename: 'post-audit-index.html' });
+  for (const n of DECISION_NAMES) {
+    eq(typeof headCtx[n], 'function', '11E.23 ' + n + ' binds globally in the classic script');
+    eq(String(headCtx[n]), String(baseCtx[n]), '11E.24 ' + n + ' function text equals the base binding');
+  }
+
+  const finalFixtures = [
+    { setup: 'STRONG', execution: 'EXECUTABLE', context: 'NONE', dataConf: 'high', theoConf: 'HIGH', hardReject: null, screenScore: 80 },
+    { setup: 'STRONG', execution: 'EXECUTABLE', context: 'CRITICAL', dataConf: 'high', theoConf: 'HIGH', hardReject: null, screenScore: 80 },
+    { setup: 'STRONG', execution: 'EXECUTABLE', context: 'NONE', dataConf: 'partial', theoConf: 'MEDIUM', hardReject: ['delta'], screenScore: 70 },
+    { setup: 'OK', execution: 'EXECUTABLE_WITH_SLIPPAGE', context: 'MODERATE', dataConf: 'high', theoConf: 'MEDIUM', hardReject: null, screenScore: 55 },
+    { setup: 'WEAK', execution: 'POOR_EXECUTION_QUALITY', context: 'NONE', dataConf: 'high', theoConf: 'HIGH', hardReject: null, screenScore: 35 },
+    { setup: null, execution: null, context: null, dataConf: 'none', theoConf: 'LOW', hardReject: null, screenScore: 0 },
+  ];
+  const setupFixtures = [
+    [{ ivRank: 65 }, null, { days: 7, liqLabel: 'good', premiumLabel: 'good', hardReject: null }],
+    [{ ivRank: 45 }, { deltaWarnings: [], termStructureIV: 40, overallIVConfidence: 'MEDIUM' }, { days: 12, liqLabel: 'acceptable', premiumLabel: 'acceptable', hardReject: null }],
+    [{ ivRank: 20 }, { deltaWarnings: ['a', 'b'], aggregate: { hardReject: ['spread'] } }, { days: 3, liqLabel: 'weak', premiumLabel: 'unknown', hardReject: null }],
+    [{ ivRank: null }, null, { days: 20, liqLabel: 'weak', premiumLabel: 'acceptable', hardReject: 'earnings' }],
+  ];
+  let parityDiffs = 0;
+  for (const f of finalFixtures) {
+    if (JSON.stringify(headCtx.computeFinalDecision(f)) !== JSON.stringify(baseCtx.computeFinalDecision(f))) parityDiffs++;
+  }
+  for (const f of setupFixtures) {
+    if (JSON.stringify(headCtx.computeSetupScore.apply(null, f)) !== JSON.stringify(baseCtx.computeSetupScore.apply(null, f))) parityDiffs++;
+  }
+  eq(parityDiffs, 0, '11E.25 ten deterministic parity fixtures: base vs module differences = 0');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 section('12. MUTATION PROOF — genuine mutations, run through the real guards');
 //
 // Every mutant below MUTATES A MODEL and then calls the SAME guard the real
@@ -3777,7 +3929,7 @@ mutant(S_, 'a PR 4 declaration is put BACK into the monolith', G.guardInlineResi
   () => INLINE + '\n' + declText(LDD_SRC, 'eicDXLinkDeepDive', 0) + '\n', () => INLINE);
 mutant(S_, 'the module loses eicDXLinkDeepDive entirely', G.guardLiveDeepDiveShape,
   () => cutDeclaration(LDD_SRC, 'eicDXLinkDeepDive', 0), () => LDD_SRC);
-mutant(S_, 'collapse the 11-site manifest into a 9-name manifest', G.guardManifest, () => {
+mutant(S_, 'collapse the 13-site manifest into an 11-name manifest', G.guardManifest, () => {
   const seen = new Set();
   return MANIFEST.filter((m) => { if (seen.has(m[0])) return false; seen.add(m[0]); return true; });
 }, () => MANIFEST);
@@ -3786,10 +3938,10 @@ mutant(S_, 'split the duplicate pair across two owners', G.guardManifest,
 // The family is CLOSED, so "shipped vs pending" no longer separates the owners.
 // A site credited to an owner that does not exist still breaks the arithmetic…
 mutant(S_, 'credit a site to an owner that does not exist', G.guardManifest,
-  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], 'PR5', m[2], m[3], m[4]] : m)), () => MANIFEST);
+  () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], 'UNKNOWN_OWNER', m[2], m[3], m[4]] : m)), () => MANIFEST);
 mutant(S_, 'move a whole owner out of the shipped set', G.guardManifest,
   () => MANIFEST.map((m) => (m[1] === TICKER_ANALYSIS ? [m[0], 'PENDING', m[2], m[3], m[4]] : m)), () => MANIFEST);
-// …but a WRONG OWNER among the four shipped ones keeps every total correct, and
+// …but a WRONG OWNER among the five shipped ones keeps every total correct, and
 // is caught only by cross-checking against what the modules actually declare.
 const OWN_ = 'owner';
 mutant(OWN_, 'wrong owner: eicRunDXLink is credited to PANEL', (m) => G.guardOwnership(m, DECLS_BY_MODULE),
@@ -3805,7 +3957,7 @@ mutant(OWN_, 'the eicFetchLegs pair is split across two owners', (m) => G.guardO
 mutant(OWN_, 'a name is declared by TWO modules at once', (m) => G.guardOwnership(MANIFEST, m),
   () => Object.assign({}, DECLS_BY_MODULE, { './js/ui/eic-panel.js': PANEL_DECLS.map((d) => d.name).concat(['eicRunDXLink']) }),
   () => DECLS_BY_MODULE);
-mutant(OWN_, 'a shipped module declares something outside the eleven-site plan', (m) => G.guardOwnership(MANIFEST, m),
+mutant(OWN_, 'a shipped module declares something outside the thirteen-site plan', (m) => G.guardOwnership(MANIFEST, m),
   () => Object.assign({}, DECLS_BY_MODULE, { './js/ui/eic-live-deep-dive.js': LDD_DECLS.map((d) => d.name).concat(['eicSomethingNew']) }),
   () => DECLS_BY_MODULE);
 mutant(OWN_, 'one of the two eicFetchLegs declarations vanishes from its owner', (m) => G.guardOwnership(MANIFEST, m), () => {
@@ -3815,6 +3967,34 @@ mutant(OWN_, 'one of the two eicFetchLegs declarations vanishes from its owner',
 }, () => DECLS_BY_MODULE);
 mutant(S_, 'make the owner/char arithmetic inconsistent', G.guardManifest,
   () => MANIFEST.map((m) => (m[0] === 'eicScreenTicker' ? [m[0], m[1], m[2] + 1, m[3], m[4]] : m)), () => MANIFEST);
+
+// ── OWNER-CORRECTIVE DECISION RULES ─────────────────────────────────────────
+const D_ = 'decision';
+const decisionShape = (m) => G.guardModuleShape(m, G.EXPECTED_DECISION_RULES);
+const decisionPurity = (m) => G.guardModulePurity(m, DECISION_NAMES);
+mutant(D_, 'computeFinalDecision is omitted', decisionShape,
+  () => cutDeclaration(DECISION_SRC, 'computeFinalDecision', 0), () => DECISION_SRC);
+mutant(D_, 'computeSetupScore is omitted', decisionShape,
+  () => cutDeclaration(DECISION_SRC, 'computeSetupScore', 0), () => DECISION_SRC);
+mutant(D_, 'one executable decision byte changes', decisionShape,
+  () => DECISION_SRC.replace("decision='APPROVED';", "decision='AVOID';"), () => DECISION_SRC);
+mutant(D_, 'one executable setup-score byte changes', decisionShape,
+  () => DECISION_SRC.replace('ivr>=60?25', 'ivr>=60?24'), () => DECISION_SRC);
+mutant(D_, 'decision rules are reordered', decisionShape, () => {
+  const final = declText(DECISION_SRC, 'computeFinalDecision', 0);
+  const setup = declText(DECISION_SRC, 'computeSetupScore', 0);
+  let s = cutDeclaration(DECISION_SRC, 'computeFinalDecision', 0);
+  s = cutDeclaration(s, 'computeSetupScore', 0);
+  return s + '\n' + setup + '\n\n' + final + '\n';
+}, () => DECISION_SRC);
+mutant(D_, 'computeSetupScore becomes async', decisionShape,
+  () => DECISION_SRC.replace('function computeSetupScore(d, legsData, sc) {',
+    'async function computeSetupScore(d, legsData, sc) {'), () => DECISION_SRC);
+mutant(D_, 'decision rules acquire a DOM read', decisionPurity,
+  () => DECISION_SRC.replace('function computeFinalDecision(components){',
+    'function computeFinalDecision(components){\n  var _x=document.body;'), () => DECISION_SRC);
+mutant(D_, 'an owner-classified rule is reintroduced inline', G.guardInlineResidue,
+  () => INLINE + '\n' + declText(DECISION_SRC, 'computeFinalDecision', 0) + '\n', () => INLINE);
 
 // ── LOAD ─────────────────────────────────────────────────────────────────────
 const L_ = 'load';
@@ -3895,12 +4075,12 @@ mutant(P_, 'module calls another application declaration', G.guardModulePurity,
 
 // ── PLAN / RATCHET ───────────────────────────────────────────────────────────
 const R_ = 'ratchet';
-mutant(R_, 'ratchet grows: 11 → 7 → 8', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 8], () => RATCHET);
+mutant(R_, 'ratchet grows: 13 → 9 → 10', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [13, 9, 10], () => RATCHET);
 mutant(R_, 'inline allowance raised above the real residue', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 9], () => RATCHET);
+  () => [13, 9, 1], () => RATCHET);
 mutant(R_, 'ratchet opens at the wrong family size', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [9, 7], () => RATCHET);
+  () => [11, 9], () => RATCHET);
 mutant(R_, 'ratchet floor disagrees with the measured residue',
   (m) => G.guardRatchet(RATCHET, m), () => 6, () => inlineEic.length);
 
@@ -4181,19 +4361,19 @@ if (TA_TRANSCRIPT_GUARD) {
     () => TA_BODY_FOR_MUTANTS.replace("setupResult.setupScore+'/100 | setupGrade: '", "setupResult.setupScore+'/1000 | setupGrade: '"));
 }
 
-// ── RATCHET (EIC PR 3) ───────────────────────────────────────────────────────
-mutant(R_, 'ratchet stalls: 11 → 7 → 5 → 4 → 4', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4, 4], () => RATCHET);
-mutant(R_, 'ratchet overshoots below zero: 11 → 7 → 5 → 4 → -1', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4, -1], () => RATCHET);
-mutant(R_, 'the ratchet stops one short of zero: 11 → 7 → 5 → 4', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4], () => RATCHET);
+// ── TERMINAL RATCHET (OWNER-CORRECTED EIC FAMILY) ───────────────────────────
+mutant(R_, 'ratchet stalls: 13 → 9 → 7 → 6 → 2 → 2', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [13, 9, 7, 6, 2, 2], () => RATCHET);
+mutant(R_, 'ratchet overshoots below zero: 13 → 9 → 7 → 6 → 2 → -1', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [13, 9, 7, 6, 2, -1], () => RATCHET);
+mutant(R_, 'the ratchet stops one short of zero: 13 → 9 → 7 → 6 → 2', (m) => G.guardRatchet(m, inlineEic.length),
+  () => [13, 9, 7, 6, 2], () => RATCHET);
 mutant(R_, 'the ratchet is REOPENED to 3 AFTER reaching zero', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4, 0, 3], () => RATCHET);
+  () => [13, 9, 7, 6, 2, 0, 3], () => RATCHET);
 mutant(R_, 'a positive allowance is appended two steps after zero', (m) => G.guardRatchet(m, inlineEic.length),
-  () => [11, 7, 5, 4, 0, 6, 2], () => RATCHET);
-mutant(R_, 'the floor is relaxed to the pre-PR4 residue', (m) => G.guardRatchet(RATCHET, m),
-  () => 4, () => inlineEic.length);
+  () => [13, 9, 7, 6, 2, 0, 6, 2], () => RATCHET);
+mutant(R_, 'the floor is relaxed to the pre-corrective residue', (m) => G.guardRatchet(RATCHET, m),
+  () => 2, () => inlineEic.length);
 // One EIC declaration left inline, in every shape that matters.
 mutant(R_, 'ONE EIC declaration is left inline (eicRunDXLink)', G.guardInlineResidue,
   () => INLINE + '\n' + declText(LDD_SRC, 'eicRunDXLink', 0) + '\n', () => INLINE);
@@ -4387,7 +4567,7 @@ mutant(LI_, 'the script tag is MOVED AFTER the monolith', (m) => G.guardEicModul
   const rest = SCRIPT_MODEL.slice(0, i).concat(SCRIPT_MODEL.slice(i + 1));
   return rest.concat([SCRIPT_MODEL[i]]);
 }, () => SCRIPT_MODEL);
-mutant(LI_, 'the four EIC modules stop being CONTIGUOUS', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+mutant(LI_, 'the five EIC modules stop being CONTIGUOUS', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
   const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
   const rest = SCRIPT_MODEL.slice(0, i).concat(SCRIPT_MODEL.slice(i + 1));
   const mono = rest.findIndex((s) => s.isInlineMonolith);
@@ -4400,13 +4580,13 @@ mutant(LI_, 'the EIC modules are loaded OUT OF ORDER', (m) => G.guardEicModuleIn
   const t = out[a]; out[a] = out[b]; out[b] = t;
   return out;
 }, () => SCRIPT_MODEL);
-mutant(LI_, 'a FIFTH eic-* module joins — the wildcard/prefix hole', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+mutant(LI_, 'a SIXTH eic-* module joins — the wildcard/prefix hole', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
   const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
   return SCRIPT_MODEL.slice(0, i + 1)
     .concat([{ src: './js/ui/eic-extra-panel.js', attrs: ' src="./js/ui/eic-extra-panel.js"', type: null, inline: '', isInlineMonolith: false }])
     .concat(SCRIPT_MODEL.slice(i + 1));
 }, () => SCRIPT_MODEL);
-mutant(LI_, 'a fifth eic-* module joins under js/services/ instead', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
+mutant(LI_, 'a sixth eic-* module joins under js/services/ instead', (m) => G.guardEicModuleInventory(m, DISK_JS_FILES), () => {
   const i = SCRIPT_MODEL.findIndex((s) => s.src === G.LIVE_DEEP_DIVE_SRC_ATTR);
   return SCRIPT_MODEL.slice(0, i + 1)
     .concat([{ src: './js/services/eic-something.js', attrs: ' src="./js/services/eic-something.js"', type: null, inline: '', isInlineMonolith: false }])
@@ -4414,16 +4594,16 @@ mutant(LI_, 'a fifth eic-* module joins under js/services/ instead', (m) => G.gu
 }, () => SCRIPT_MODEL);
 // ── the PATH-SPELLING mutants ───────────────────────────────────────────────
 // An independent review found that the first version of this guard filtered
-// candidates with /^\.\//, so a fifth module written any other way walked
+// candidates with /^\.\//, so an extra module written any other way walked
 // straight past the stray check. Each spelling below is now its own mutant, and
 // each must be rejected SPECIFICALLY as INVENTORY_UNDECLARED_EIC_MODULE — not
 // merely as "some violation", which a count or contiguity rule could satisfy by
 // accident.
 for (const [id, src] of [
-  ['a fifth eic-* module joins BARE-RELATIVE (js/ui/eic-extra.js)', 'js/ui/eic-extra.js'],
-  ['a fifth eic-* module joins ROOT-RELATIVE (/js/ui/eic-extra.js)', '/js/ui/eic-extra.js'],
-  ['a fifth eic-* module joins with a QUERY STRING (?v=1)', './js/ui/eic-extra.js?v=1'],
-  ['a fifth eic-* module joins with a HASH SUFFIX (#x)', './js/ui/eic-extra.js#x'],
+  ['a sixth eic-* module joins BARE-RELATIVE (js/ui/eic-extra.js)', 'js/ui/eic-extra.js'],
+  ['a sixth eic-* module joins ROOT-RELATIVE (/js/ui/eic-extra.js)', '/js/ui/eic-extra.js'],
+  ['a sixth eic-* module joins with a QUERY STRING (?v=1)', './js/ui/eic-extra.js?v=1'],
+  ['a sixth eic-* module joins with a HASH SUFFIX (#x)', './js/ui/eic-extra.js#x'],
 ]) {
   mutant(LI_, id,
     (m) => {
@@ -4450,16 +4630,16 @@ for (const [id, src] of [
     '12.control a REMOTE eic-looking CDN script is not part of the local inventory and is not reported');
 }
 // ── the DISK mutants ────────────────────────────────────────────────────────
-// Modelled as guard INPUT so a fifth file can be injected without writing one to
+// Modelled as guard INPUT so a sixth file can be injected without writing one to
 // the filesystem. A guard that could only be exercised by creating real files
 // could not be exercised safely, and would end up never exercised at all.
-mutant(LI_, 'a fifth eic-*.js file EXISTS on disk but is never loaded',
+mutant(LI_, 'a sixth eic-*.js file EXISTS on disk but is never loaded',
   (m) => {
     const r = G.guardEicModuleInventory(SCRIPT_MODEL, m);
     return { violations: r.violations.filter((v) => /INVENTORY_UNDECLARED_EIC_MODULE/.test(v)), threw: r.threw };
   },
   () => DISK_JS_FILES.concat(['js/ui/eic-orphan.js']), () => DISK_JS_FILES);
-mutant(LI_, 'a fifth eic-*.js file exists on disk under js/adapters/',
+mutant(LI_, 'a sixth eic-*.js file exists on disk under js/adapters/',
   (m) => {
     const r = G.guardEicModuleInventory(SCRIPT_MODEL, m);
     return { violations: r.violations.filter((v) => /INVENTORY_UNDECLARED_EIC_MODULE/.test(v)), threw: r.threw };
@@ -4585,8 +4765,8 @@ PARITY_TAIL = PARITY_TAIL.then(function () {
     eq(inert, [], '12.3 inert mutants (a mutation that changes nothing is not a mutant)');
     eq(killed, MUTANTS.length, '12.4 every genuine mutant was killed by a real guard violation');
     ok(MUTANTS.length >= 55, '12.5 the suite runs ' + MUTANTS.length + ' genuine mutants');
-    eq(Object.keys(catTotals).length, 15, '12.6 fifteen mutation categories: ' + Object.keys(catTotals).sort().join(', '));
-    for (const c of ['livedeep', 'ldsurface', 'ldobserver', 'ldparity', 'inventory', 'owner']) {
+    eq(Object.keys(catTotals).length, 16, '12.6 sixteen mutation categories: ' + Object.keys(catTotals).sort().join(', '));
+    for (const c of ['livedeep', 'ldsurface', 'ldobserver', 'ldparity', 'decision', 'inventory', 'owner']) {
       ok(catTotals[c] && catTotals[c].total > 0, '12.8 the PR 4 category "' + c + '" ran ' + (catTotals[c] ? catTotals[c].total : 0) + ' mutants');
     }
     ok(MUTANTS.filter((x) => x.category === 'ldparity' && x.isAsync).length >= 10,
@@ -4601,11 +4781,12 @@ PARITY_TAIL.then(function () {
   console.log('');
   console.log('════════════════════════════════════════════════════════════════════════════════');
   console.log('  SCREENING_RULES  4 sites / 3 names / 14,368 chars   SHIPPED');
+  console.log('  DECISION_RULES   2 sites / 2 names / 10,112 chars   SHIPPED');
   console.log('  PANEL            2 sites / 15,268 chars   SHIPPED');
   console.log('  TICKER_ANALYSIS  1 site  / 13,990 chars   SHIPPED');
   console.log('  LIVE_DEEP_DIVE   4 sites / 3 names / 23,726 chars   SHIPPED');
   console.log('                   ─────────────────────────');
-  console.log('                   11 sites / 9 names / 67,352 chars   COMPLETE');
+  console.log('                   13 sites / 11 names / 77,464 chars   COMPLETE');
   console.log('');
   console.log('  SHIPPED          ' + G.SHIPPED_SITES + ' / ' + G.SHIPPED_CHARS.toLocaleString('en-US'));
   console.log('  INLINE           ' + G.PENDING_SITES + ' / ' + G.PENDING_CHARS.toLocaleString('en-US')
@@ -4631,7 +4812,7 @@ PARITY_TAIL.then(function () {
   console.log('  ticker parity    eicAnalyzeTicker ' + txTicker + ' fixtures · differences ' + txDiffs);
   console.log('  livedeep parity  ' + LDD_FIX_COUNT + ' fixtures across all 4 moved sites · differences ' + LDD_DIFFS);
   console.log('  cross-module     PR2 ' + XMOD_DIFFS + ' diffs · PR3 ' + XTA_DIFFS + ' diffs · PR4 ' + XLDD_DIFFS + ' diffs');
-  console.log('  undo chain       PR4 → post-PR3 → PR3 → post-PR2 → PR2 → post-PR1 → PR1 → post-PESS');
+  console.log('  undo chain       owner correction → PR4 → post-PR3 → PR3 → post-PR2 → PR2 → post-PR1 → PR1 → post-PESS');
   console.log('  mutants          ' + killed + '/' + MUTANTS.length + ' killed, ' + survivors.length + ' survivors, '
     + harnessErrors.length + ' harness errors');
   for (const c of Object.keys(catTotals).sort()) {
@@ -4640,7 +4821,7 @@ PARITY_TAIL.then(function () {
   console.log('');
   console.log('  assertions: ' + passed);
   console.log('');
-  console.log('  EIC PRs 1-4 COMPLETE · inline residue 0 sites / 0 chars · ratchet '
+  console.log('  EIC OWNER-CORRECTED FAMILY COMPLETE · inline residue 0 sites / 0 chars · ratchet '
     + RATCHET.join(' → ') + ' (zero is TERMINAL)');
   if (failures.length) {
     console.log('');
