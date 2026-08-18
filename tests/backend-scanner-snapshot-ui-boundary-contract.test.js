@@ -1093,10 +1093,12 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   // and the BDSP preview fourth-to-last. All slots stay EXACT.
   const DSB_ADAPTER_REL = './js/adapters/backend-directional-snapshot-adapter.js';
   const DSB_SERVICE_REL = './js/services/backend-directional-snapshot-service.js';
-  eq(idx(DSB_PANEL_REL), SCRIPT_ORDER.length - 2, 'the DSB panel is the last external script before the monolith');
-  eq(idx(DSB_SERVICE_REL), SCRIPT_ORDER.length - 3, 'the DSB service is the external script immediately before the DSB panel');
-  eq(idx(DSB_ADAPTER_REL), SCRIPT_ORDER.length - 4, 'the DSB pure adapter is the external script immediately before the DSB service');
-  eq(idx(PREVIEW_REL), SCRIPT_ORDER.length - 5, 'the BDSP preview is the external script immediately before the DSB pure adapter');
+  const PRETRADE_REL = './js/services/pretrade-risk-rules.js';
+  eq(idx(DSB_PANEL_REL), idx(PRETRADE_REL) - 1, 'the DSB panel remains immediately before the later PRETRADE owner');
+  eq(idx(PRETRADE_REL), SCRIPT_ORDER.length - 2, 'PRETRADE is the last external script before the monolith');
+  eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
+  eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
+  eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
   // (5-9) ORDER 1, EXACT: service → panel → adapter → preview → inline monolith.
   ok(idx(PANEL_REL) >= 0, 'the BSS panel module is part of the application load order');
   ok(idx(PANEL_REL) > idx(SERVICE_REL), 'ORDER 1 (5): the panel loads AFTER the BSS service');
@@ -1104,8 +1106,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: service → panel → adapter → preview → DSB pure adapter → DSB service → DSB panel → inline monolith, with nothing in between');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed only by PRETRADE before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -3326,9 +3328,11 @@ section('29. script order');
     './js/ui/eic-ticker-analysis-panel.js',
     './js/ui/eic-live-deep-dive.js',
   ];
+  const PRETRADE_EXTRACTION_SCRIPTS = ['./js/services/pretrade-risk-rules.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
-    .concat(EIC_EXTRACTION_SCRIPTS);
+    .concat(EIC_EXTRACTION_SCRIPTS)
+    .concat(PRETRADE_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });
   const beyond = localSrcs.filter(function (src) { return DECLARED_BEYOND.indexOf(src) < 0; });
   eq(beyond.length, 26, 'index.html loads 26 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module + the SFS scan-service module + the SFS UI panel)');

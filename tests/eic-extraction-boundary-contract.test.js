@@ -100,6 +100,7 @@ const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 const EIC_UNDO3 = require('./lib/eic-pr3-undo.js');
 const EIC_UNDO4 = require('./lib/eic-pr4-undo.js');
 const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
+const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const MODULE_REL = 'js/services/eic-screening-rules.js';
@@ -125,7 +126,9 @@ function expectClean(res, label) {
 // ─────────────────────────────────────────────────────────────────────────────
 // THE MODEL — everything the guards consume, built once from the real repo.
 // ─────────────────────────────────────────────────────────────────────────────
-const HTML = L.loadIndexHtml();
+const LIVE_HTML = L.loadIndexHtml();
+const PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');
+const HTML = PRETRADE_UNDO.isApplied(LIVE_HTML) ? PRETRADE_UNDO.undoPretradePr1(LIVE_HTML, PRETRADE_SRC) : LIVE_HTML;
 const MODULE_SRC = fs.readFileSync(MODULE_PATH, 'utf8');
 const PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-panel.js');
 const PANEL_SRC = fs.readFileSync(PANEL_PATH, 'utf8');
@@ -149,8 +152,8 @@ const SCRIPT_MODEL = SCRIPT_TAGS.map((t) => ({
   isInlineMonolith: (t.src == null || String(t.src).trim() === '') && t.inline.length > 100000,
 }));
 const INLINE = SCRIPT_MODEL.filter((s) => s.isInlineMonolith).map((s) => s.inline).join('\n');
-const APP_SRC = L.loadAppJavaScriptSource();
-const ORDERED = L.loadOrderedScriptSources();
+const APP_SRC = L.loadAppJavaScriptSource({ html: HTML });
+const ORDERED = L.loadOrderedScriptSources({ html: HTML });
 
 const MODULE_DECLS = scanTopLevelDeclarations(MODULE_SRC);
 const PANEL_DECLS = scanTopLevelDeclarations(PANEL_SRC);
