@@ -49,10 +49,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { loadOrderedScriptSources } = require('./lib/load-app-source.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const DOC_PATH = path.join(ROOT, 'docs', 'refactoring', 'post-eic-monolith-extraction-audit.md');
+const BASE_SHA = 'f13e67c7d1503bd5f19c220412eeb7ac6424d1ed';
+const BASE_TREE = 'c6d93bd9bd9e005788a9bb78377acad9ab3bc0fa';
+const RECOVERY_BRANCH = 'backup/dev-clean-post-eic-fdcolor-pre-next-family-audit-2026-08-18';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // §0  ASSERTION HARNESS
@@ -306,13 +310,19 @@ for (const fam of Object.keys(FAMILY_TOTALS)) {
 // §3  THE MONOLITH, MEASURED FROM ZERO  (audit phase 4)
 //
 // Nothing here is derived by subtracting a historical total. The inline script
-// is re-read from index.html through the same loader the rest of the suite uses,
-// and parsed fresh.
+// is re-read from the pinned audited index.html blob through the same loader the
+// rest of the suite uses, and parsed fresh. This remains a historical audit even
+// after the owner-corrective extraction it recommended has shipped.
 // ═════════════════════════════════════════════════════════════════════════════
 
-section('§3  THE CURRENT INLINE MONOLITH, MEASURED FROM ZERO');
+section('§3  THE AUDITED-BASE INLINE MONOLITH, MEASURED FROM ZERO');
 
-const SCRIPTS = loadOrderedScriptSources();
+const AUDITED_HTML = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
+  cwd: ROOT,
+  encoding: 'utf8',
+  maxBuffer: 8 * 1024 * 1024,
+});
+const SCRIPTS = loadOrderedScriptSources({ html: AUDITED_HTML });
 const INLINE = SCRIPTS.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\n');
 const EXTERNAL_SCRIPTS = SCRIPTS.filter((s) => s.kind === 'local');
 
@@ -1237,13 +1247,21 @@ for (const f of Object.values(FAMS)) {
 }
 
 // Helper modules already extracted that sit in this family's namespace.
-const JS_FILES = [];
-(function walk(dir) {
-  for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
-    if (e.isDirectory()) walk(path.join(dir, e.name));
-    else if (e.name.endsWith('.js')) JS_FILES.push(path.join(dir, e.name).split(path.sep).join('/'));
+const JS_FILES = execFileSync('git', ['ls-tree', '-r', '--name-only', BASE_SHA, '--', 'js'], {
+  cwd: ROOT,
+  encoding: 'utf8',
+}).trim().split('\n').filter((p) => p.endsWith('.js'));
+const AUDITED_FILE_CACHE = new Map();
+function readAuditedFile(rel) {
+  if (!AUDITED_FILE_CACHE.has(rel)) {
+    AUDITED_FILE_CACHE.set(rel, execFileSync('git', ['show', BASE_SHA + ':' + rel], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+    }));
   }
-})('js');
+  return AUDITED_FILE_CACHE.get(rel);
+}
 const HELPER_PATTERNS = {
   DSS: /directional/i, RS_VS_SPY: /rs-|relative/i, SWING: /swing/i, SCANNER: /scanner/i,
   MCX: /market-context|vix|mcx/i, CANDLE_PIPE: /candle/i, PORTFOLIO: /portfolio/i,
@@ -1634,7 +1652,7 @@ eq(EIC_DUPS, [], 'EIC — all former duplicate sites are already outside the mon
 
 function callerFiles(name) {
   return JS_FILES.filter((p) => new RegExp('\\b' + name + '\\s*\\(')
-    .test(stripLiterals(fs.readFileSync(path.join(ROOT, p), 'utf8')))).sort();
+    .test(stripLiterals(readAuditedFile(p)))).sort();
 }
 const EIC_CALLERS = {
   computeFinalDecision: callerFiles('computeFinalDecision'),
@@ -2410,10 +2428,6 @@ function buildReport() {
   P('- `index.html`, `js/**`, `config/**`, `contracts/**` and `.github/**` are byte-identical to the base.');
   return L.join('\n') + '\n';
 }
-
-const BASE_SHA = 'f13e67c7d1503bd5f19c220412eeb7ac6424d1ed';
-const BASE_TREE = 'c6d93bd9bd9e005788a9bb78377acad9ab3bc0fa';
-const RECOVERY_BRANCH = 'backup/dev-clean-post-eic-fdcolor-pre-next-family-audit-2026-08-18';
 
 const REPORT = buildReport();
 

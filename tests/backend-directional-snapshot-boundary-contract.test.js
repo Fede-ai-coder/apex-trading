@@ -194,12 +194,13 @@ const PESS_EXTRACTION_SCRIPTS = [
 ];
 // The EIC family's extraction, which began after PESS closed. Same rule as the
 // PESS list above: a LIST, never an `eic-*` pattern, so an unplanned EIC script
-// cannot appear without review. PR 1 of 4 shipped the screening-rules module,
-// PR 2 the panel, PR 3 the ticker-analysis panel, PR 4 the live deep dive. The
-// family is COMPLETE at four modules; a fifth would have to be added here by
-// exact filename, which is the point of a list.
+// cannot appear without review. Four planned extraction PRs shipped screening,
+// panel, ticker analysis and live deep dive; the owner-corrective audit then
+// identified and extracted the two generically named decision rules. The family
+// is COMPLETE at five modules; a sixth would require an exact reviewed entry.
 const EIC_EXTRACTION_SCRIPTS = [
   './js/services/eic-screening-rules.js',
+  './js/services/eic-decision-rules.js',
   './js/ui/eic-panel.js',
   './js/ui/eic-ticker-analysis-panel.js',
   './js/ui/eic-live-deep-dive.js',
@@ -2653,8 +2654,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 37,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules and the 4 shipped EIC extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 38,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules and the 5 shipped EIC extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };

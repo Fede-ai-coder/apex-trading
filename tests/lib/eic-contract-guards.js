@@ -501,6 +501,23 @@ const EXPECTED_LIVE_DEEP_DIVE = {
   },
 };
 
+// EIC owner-corrective closure — deterministic decision rules. The post-EIC
+// audit proved that these two generically named declarations are EIC-owned even
+// though neither contains an `eic` identifier segment. Both are synchronous,
+// pure function declarations and moved together in their original order.
+const EXPECTED_DECISION_RULES = {
+  duplicate: null,
+  order: ['computeFinalDecision', 'computeSetupScore'],
+  sites: 2,
+  names: 2,
+  chars: 10112,
+  asyncByName: { computeFinalDecision: false, computeSetupScore: false },
+  spanSha: {
+    computeFinalDecision: '765b1399b7a494608d634209c33b0b8b61242fd0876c73acc33cf958d35e5981',
+    computeSetupScore: 'df3135332db37817d22af4b4ecaf353b092cd51d94adc381c9d52da76396dc83',
+  },
+};
+
 /**
  * The PR 4 shape is historical: it proves the exact bytes extracted from the
  * monolith. Current production may contain only the explicitly approved
@@ -607,7 +624,7 @@ const FORBIDDEN_STRUCTURAL = [
  * module has no top-level executable statement, and an evaluation inside a
  * context where every forbidden global is a trap.
  */
-function guardModulePurity(moduleSrc) {
+function guardModulePurity(moduleSrc, expectedNames) {
   const violations = [];
   let threw = null;
   const masked = maskLiterals(moduleSrc);
@@ -643,7 +660,8 @@ function guardModulePurity(moduleSrc) {
 
   // Calls to other application declarations. These three rule functions are
   // contracted to call nothing outside themselves and the language builtins.
-  const OWN = new Set(['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext']);
+  const bindings = expectedNames || ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
+  const OWN = new Set(bindings);
   const BUILTINS = new Set(['Math', 'JSON', 'Date', 'Number', 'String', 'Array', 'Object', 'Boolean',
     'isNaN', 'parseFloat', 'parseInt', 'RegExp', 'Error', 'if', 'for', 'while', 'switch', 'catch',
     'function', 'return', 'typeof', 'new', 'else', 'do', 'try']);
@@ -678,7 +696,7 @@ function guardModulePurity(moduleSrc) {
     vm.createContext(sandbox);
     vm.runInContext(moduleSrc, sandbox, { filename: 'eic-purity-probe.js', timeout: 5000 });
     if (trapped.length) violations.push('EVAL_TOUCHED_GLOBAL: ' + Array.from(new Set(trapped)).join(', '));
-    for (const n of ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext']) {
+    for (const n of bindings) {
       if (typeof sandbox[n] !== 'function') violations.push('MISSING_BINDING: ' + n + ' is not bound by the module');
     }
   } catch (e) {
@@ -691,6 +709,7 @@ function guardModulePurity(moduleSrc) {
 }
 
 const MODULE_SRC_ATTR = './js/services/eic-screening-rules.js';
+const DECISION_RULES_SRC_ATTR = './js/services/eic-decision-rules.js';
 
 /**
  * Load contract over a SCRIPT MODEL — an ordered list of
@@ -721,19 +740,20 @@ function guardLoad(scripts, srcAttr) {
   return { violations, threw };
 }
 
-// Everything shipped — ALL NINE names, across all four modules. Any of these
-// reappearing inline is a REINTRODUCED violation. After PR 4 the family is
-// closed, so this list is complete and nothing may be added to it.
+// Everything shipped — all eleven names, across five modules. The last two are
+// owner-classified rather than prefix-classified; omitting them is the exact
+// false terminal-zero regression the post-EIC audit found.
 const SHIPPED_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext',
   'runEICPanel', 'eicAnalyzeAll', 'eicAnalyzeTicker',
-  'eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink'];
+  'eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink',
+  'computeFinalDecision', 'computeSetupScore'];
 const PR1_NAMES = ['eicScreenTicker', 'eicLiqFromLegs', 'eicBuildLiveContext'];
 const PANEL_NAMES = ['runEICPanel', 'eicAnalyzeAll'];
 const TICKER_ANALYSIS_NAMES = ['eicAnalyzeTicker'];
 const LIVE_DEEP_DIVE_NAMES = ['eicFetchLegs', 'eicDXLinkDeepDive', 'eicRunDXLink'];
-// What is still inline after PR 4: NOTHING. The family is closed and the
-// residue is TERMINAL — see guardRatchet, which refuses to let a positive
-// allowance be appended after a zero.
+const DECISION_RULES_NAMES = ['computeFinalDecision', 'computeSetupScore'];
+// What is still inline after the owner-corrective closure: NOTHING. The family
+// is now genuinely terminal under both the name-shape and explicit-owner layers.
 const PENDING_ORDER = [];
 const PENDING_SITES = 0;
 const PENDING_CHARS = 0;
@@ -759,11 +779,10 @@ const PENDING_CHARS = 0;
  *   and the special case would have needed extending by hand again, silently.
  *
  * HOW IT DECIDES
- *   The identifier is split into camelCase / ALL-CAPS segments and a name is
- *   EIC-owned when ANY segment is exactly the token `eic`, case-insensitively.
- *   Leading `_` and `$` are stripped first. Segment matching — rather than a
- *   substring test — is what keeps `deiceThing` and `receiptTotal` out: they
- *   contain the letters but never as a segment of their own.
+ *   The identifier-shape layer splits camelCase / ALL-CAPS segments and matches
+ *   an exact `eic` token. The independent owner layer explicitly includes the
+ *   two generic decision-rule names proved by callers and data flow in PR #380.
+ *   Segment matching keeps `deiceThing` and `receiptTotal` out.
  *
  * WHAT IT IS NOT
  *   It is not a replacement for the exact shipped-name checks. Those stay, as an
@@ -776,7 +795,9 @@ function splitIdentifierSegments(name) {
   return bare.match(/[A-Z]+(?![a-z])|[A-Z][a-z0-9]*|[a-z0-9]+/g) || [];
 }
 function isEicFamilyName(name) {
-  return splitIdentifierSegments(name).some((seg) => seg.toLowerCase() === 'eic');
+  const n = String(name == null ? '' : name);
+  return DECISION_RULES_NAMES.indexOf(n) >= 0
+    || splitIdentifierSegments(n).some((seg) => seg.toLowerCase() === 'eic');
 }
 /** The same question over a scanTopLevelDeclarations() result. */
 function isEicFamilyDecl(d) {
@@ -819,7 +840,7 @@ function guardInlineResidue(inlineSrc) {
   return { violations, threw };
 }
 
-const FAMILY_SITES = 11, FAMILY_NAMES = 9, FAMILY_CHARS = 67352;
+const FAMILY_SITES = 13, FAMILY_NAMES = 11, FAMILY_CHARS = 77464;
 // Owners whose modules have SHIPPED. PR 1 closed SCREENING_RULES, PR 2 closes
 // PANEL. A list, not a prefix test, so PRs 3-4 must each be added deliberately.
 const PANEL_SRC_ATTR = './js/ui/eic-panel.js';
@@ -1158,19 +1179,20 @@ function guardLiveDeepDiveSurface(moduleSrc) {
 }
 
 // The EIC family's modules, BY EXACT FILENAME and in load order. A LIST, never
-// an `eic-*` glob and never a prefix exemption: a fifth eic-* module must FAIL
-// here rather than be waved through by a pattern. The family is closed at four.
+// an `eic-*` glob and never a prefix exemption: a sixth eic-* module must FAIL
+// here rather than be waved through by a pattern. The family is closed at five.
 //
 // These are the CANONICAL forms (see canonicalLocalSrc): root-relative, no
 // leading `./`, no query, no hash. Every src encountered — in a script tag or on
 // disk — is normalized to this shape before it is compared.
 const EIC_MODULE_FILES = [
   'js/services/eic-screening-rules.js',
+  'js/services/eic-decision-rules.js',
   'js/ui/eic-panel.js',
   'js/ui/eic-ticker-analysis-panel.js',
   'js/ui/eic-live-deep-dive.js',
 ];
-// The same four, in the exact spelling index.html uses. Kept separate and
+// The same five, in the exact spelling index.html uses. Kept separate and
 // derived-checked below so the tag guard keeps comparing literal attribute text
 // while the inventory compares canonical paths.
 const EIC_MODULE_SRC_ATTRS = EIC_MODULE_FILES.map((f) => './' + f);
@@ -1182,7 +1204,7 @@ const EIC_MODULE_SRC_ATTRS = EIC_MODULE_FILES.map((f) => './' + f);
  * WHY THIS EXISTS
  *   The first version of the inventory guard filtered candidates with
  *   `/^\.\//.test(src)` and then compared them to `'./js/ui/…'` strings. That
- *   made the "no fifth eic-* module by ANY path" claim FALSE: four ordinary
+ *   made the "no extra eic-* module by ANY path" claim FALSE: four ordinary
  *   spellings of the same file walked straight past the stray-module check —
  *
  *       js/ui/eic-extra.js          bare-relative — filtered out before the check
@@ -1241,21 +1263,21 @@ function isEicModulePath(canonical) {
 }
 
 /**
- * Inventory contract: EXACTLY the four declared EIC modules exist and are
+ * Inventory contract: EXACTLY the five declared EIC modules exist and are
  * loaded, by exact filename, contiguously, in order, and all before the inline
- * monolith — and no fifth eic-*.js module exists in EITHER place.
+ * monolith — and no sixth eic-*.js module exists in EITHER place.
  *
- * The wildcard check is the point. It is not enough that the four are present —
- * a FIFTH eic-* script must be rejected, and rejected BECAUSE it is undeclared
+ * The wildcard check is the point. It is not enough that the five are present —
+ * a SIXTH eic-* script must be rejected, and rejected BECAUSE it is undeclared
  * rather than because it happened to trip some other rule. Every candidate is
  * canonicalized first, so the rejection cannot be dodged by spelling the path
  * differently.
  *
  * TWO INVENTORIES, NOT ONE
  *   Script tags say what the application LOADS. `diskFiles` says what EXISTS.
- *   A fifth eic-*.js module sitting unreferenced in js/ui/ is still a fifth
+ *   A sixth eic-*.js module sitting unreferenced in js/ui/ is still a sixth
  *   module of this family — it would be picked up by any later glob, bundler or
- *   audit, and the family is supposed to be closed at four. Checking only the
+ *   audit, and the family is supposed to be closed at five. Checking only the
  *   tags would let it sit there indefinitely.
  *
  *   `diskFiles` is passed IN rather than read here so the mutation proof can
@@ -1278,7 +1300,7 @@ function guardEicModuleInventory(scripts, diskFiles) {
       const n = localCanon.filter((x) => x === f).length;
       if (n !== 1) violations.push('INVENTORY_COUNT: ' + f + ' is loaded ' + n + ' time(s), expected exactly 1');
     }
-    // No fifth eic-* module, by ANY path spelling. This is the anti-wildcard check.
+    // No sixth eic-* module, by ANY path spelling. This is the anti-wildcard check.
     const seenStray = {};
     scripts.forEach((s, i) => {
       const c = canon[i];
@@ -1286,8 +1308,8 @@ function guardEicModuleInventory(scripts, diskFiles) {
       if (seenStray[c]) return;
       seenStray[c] = true;
       violations.push('INVENTORY_UNDECLARED_EIC_MODULE: ' + JSON.stringify(String(s.src)) + ' (canonically '
-        + c + ') is an eic-* script that is not one of the four declared modules — the family is closed at'
-        + ' four and no prefix exemption, and no alternate path spelling, admits a fifth');
+        + c + ') is an eic-* script that is not one of the five declared modules — the family is closed at'
+        + ' five and no prefix exemption, and no alternate path spelling, admits a sixth');
     });
 
     // ── the same rule over what EXISTS ON DISK ───────────────────────────────
@@ -1299,8 +1321,8 @@ function guardEicModuleInventory(scripts, diskFiles) {
       }
       for (const c of Array.from(new Set(diskCanon))) {
         if (EIC_MODULE_FILES.indexOf(c) < 0) {
-          violations.push('INVENTORY_UNDECLARED_EIC_MODULE: ' + c + ' exists on disk but is not one of the four'
-            + ' declared modules — an unreferenced fifth module still reopens a family that is closed at four');
+          violations.push('INVENTORY_UNDECLARED_EIC_MODULE: ' + c + ' exists on disk but is not one of the five'
+            + ' declared modules — an unreferenced sixth module still reopens a family that is closed at five');
         }
       }
       for (const f of EIC_MODULE_FILES) {
@@ -1336,11 +1358,11 @@ function guardEicModuleInventory(scripts, diskFiles) {
   } catch (e) { threw = String(e && e.message); violations.push('INVENTORY_GUARD_FAILED: ' + threw); }
   return { violations, threw };
 }
-// All FOUR owners have shipped. A LIST, never a prefix test, so a fifth owner
-// could not join by pattern; the family is closed at four.
-const SHIPPED_OWNERS = ['SCREENING_RULES', 'PANEL', 'TICKER_ANALYSIS', 'LIVE_DEEP_DIVE'];
+// All FIVE owners have shipped. A LIST, never a prefix test, so another owner
+// cannot join by naming convention alone.
+const SHIPPED_OWNERS = ['SCREENING_RULES', 'DECISION_RULES', 'PANEL', 'TICKER_ANALYSIS', 'LIVE_DEEP_DIVE'];
 const SHIPPED_OWNER = 'SCREENING_RULES';
-const SHIPPED_SITES = 11, SHIPPED_CHARS = 67352;
+const SHIPPED_SITES = 13, SHIPPED_CHARS = 77464;
 
 // Which module OWNS each planner owner. A map, not a convention: the ownership
 // guard below cross-checks the manifest against what the modules on disk
@@ -1348,13 +1370,14 @@ const SHIPPED_SITES = 11, SHIPPED_CHARS = 67352;
 // declare the name.
 const OWNER_MODULE = {
   SCREENING_RULES: './js/services/eic-screening-rules.js',
+  DECISION_RULES: './js/services/eic-decision-rules.js',
   PANEL: './js/ui/eic-panel.js',
   TICKER_ANALYSIS: './js/ui/eic-ticker-analysis-panel.js',
   LIVE_DEEP_DIVE: './js/ui/eic-live-deep-dive.js',
 };
 
 /**
- * Ownership contract: every one of the eleven family sites has EXACTLY ONE
+ * Ownership contract: every one of the thirteen family sites has EXACTLY ONE
  * declared owner, and that owner is the module that really declares it.
  *
  * While the family was still being extracted, `guardManifest`'s shipped/pending
@@ -1418,11 +1441,11 @@ function guardOwnership(manifest, declsByModule) {
     for (const mod of Object.keys(declsByModule)) {
       for (const n of declsByModule[mod]) {
         if (!manifest.some((m) => m[0] === n)) {
-          violations.push('OWNERSHIP_UNPLANNED: ' + mod + ' declares ' + n + ', which is not in the eleven-site manifest');
+          violations.push('OWNERSHIP_UNPLANNED: ' + mod + ' declares ' + n + ', which is not in the thirteen-site manifest');
         }
       }
     }
-    // 5. the four owners together account for every manifest site
+    // 5. the five owners together account for every manifest site
     const total = Object.keys(declsByModule).reduce((a, mod) => a + declsByModule[mod].length, 0);
     if (total !== manifest.length) {
       violations.push('OWNERSHIP_CONSERVATION: the modules declare ' + total + ' sites, the manifest lists ' + manifest.length);
@@ -1473,12 +1496,12 @@ function guardManifest(manifest) {
  * Ratchet contract: shrink-only, floor equals the real residue, and — once the
  * family reaches ZERO — that zero is TERMINAL.
  *
- * The shrink-only rule alone is not enough after PR 4. `[11,7,5,4,0,3]` shrinks
- * at every step except one, and a reviewer scanning for "did it grow?" would
- * have to notice that the growth is at the very end. Worse, `[11,7,5,4,0]`
- * followed later by a re-opened allowance would mean the family had been closed
- * and then quietly re-opened — precisely the failure a terminal zero exists to
- * prevent. So zero is checked three ways:
+ * The corrected owner-aware ratchet is `[13,9,7,6,2,0]`. The earlier
+ * `[11,7,5,4,0]` series was not a terminal family proof: it omitted two
+ * generically named owner declarations before it even opened. A later positive
+ * allowance would mean the family had been closed and then quietly re-opened —
+ * precisely the failure a terminal zero exists to prevent. So zero is checked
+ * three ways:
  *
  *   • it must be the LAST value;
  *   • it must be the MINIMUM (nothing negative may sneak under it);
@@ -1559,11 +1582,13 @@ module.exports = {
   EXPECTED_PANEL,
   EXPECTED_TICKER_ANALYSIS,
   EXPECTED_LIVE_DEEP_DIVE,
+  EXPECTED_DECISION_RULES,
   SHIPPED_NAMES,
   PR1_NAMES,
   PANEL_NAMES,
   TICKER_ANALYSIS_NAMES,
   LIVE_DEEP_DIVE_NAMES,
+  DECISION_RULES_NAMES,
   PENDING_ORDER,
   PENDING_SITES,
   PENDING_CHARS,
@@ -1575,6 +1600,7 @@ module.exports = {
   SHIPPED_SITES,
   SHIPPED_CHARS,
   MODULE_SRC_ATTR,
+  DECISION_RULES_SRC_ATTR,
   PANEL_SRC_ATTR,
   TICKER_ANALYSIS_SRC_ATTR,
   LIVE_DEEP_DIVE_SRC_ATTR,
