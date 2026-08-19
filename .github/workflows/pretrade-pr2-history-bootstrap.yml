@@ -1,0 +1,50 @@
+name: pretrade-pr2-history-bootstrap
+
+on:
+  push:
+    branches:
+      - agent/extract-pretrade-technicals
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/extract-pretrade-technicals
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Make PR1 contract replay the pre-PR2 state
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const p = 'tests/pretrade-risk-rules-boundary-contract.test.js';
+          let s = fs.readFileSync(p, 'utf8');
+          const importNeedle = "const { execFileSync } = require('child_process');\n";
+          const importInsert = importNeedle + "const { undoPretradePr2, isApplied: isPr2Applied } = require('./lib/pretrade-pr2-undo');\n";
+          if ((s.split(importNeedle).length - 1) !== 1) throw new Error('PR1_IMPORT_ANCHOR_IDENTITY');
+          s = s.replace(importNeedle, importInsert);
+          const readNeedle = "const index = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');";
+          const readInsert = "const currentIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst pr2Module = fs.readFileSync(path.join(ROOT,'js/services/pretrade-technicals.js'),'utf8');\nconst index = isPr2Applied(currentIndex) ? undoPretradePr2(currentIndex, pr2Module) : currentIndex;\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');";
+          if ((s.split(readNeedle).length - 1) !== 1) throw new Error('PR1_INDEX_ANCHOR_IDENTITY');
+          s = s.replace(readNeedle, readInsert);
+          fs.writeFileSync(p, s);
+          NODE
+          node tests/pretrade-risk-rules-boundary-contract.test.js
+      - name: Remove bootstrap and publish verified repair
+        shell: bash
+        run: |
+          git rm .github/workflows/pretrade-pr2-history-bootstrap.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tests/pretrade-risk-rules-boundary-contract.test.js
+          git diff --cached --check
+          git commit -m "test(pretrade): replay PR1 contract before PR2"
+          git push origin HEAD:agent/extract-pretrade-technicals
