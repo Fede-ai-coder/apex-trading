@@ -1,4 +1,4 @@
-name: pretrade-pr2-history-bootstrap
+name: pretrade-pr2-ci-dry-run
 
 on:
   push:
@@ -6,11 +6,14 @@ on:
       - agent/extract-pretrade-technicals
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  repair:
-    if: github.actor != 'github-actions[bot]'
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [20, 22]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,32 +22,215 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - name: Make PR1 contract replay the pre-PR2 state
+          node-version: ${{ matrix.node }}
+
+      - name: Apply candidate test-harness repair in runner only
         shell: bash
         run: |
-          node <<'NODE'
-          const fs = require('fs');
-          const p = 'tests/pretrade-risk-rules-boundary-contract.test.js';
-          let s = fs.readFileSync(p, 'utf8');
-          const importNeedle = "const { execFileSync } = require('child_process');\n";
-          const importInsert = importNeedle + "const { undoPretradePr2, isApplied: isPr2Applied } = require('./lib/pretrade-pr2-undo');\n";
-          if ((s.split(importNeedle).length - 1) !== 1) throw new Error('PR1_IMPORT_ANCHOR_IDENTITY');
-          s = s.replace(importNeedle, importInsert);
-          const readNeedle = "const index = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');";
-          const readInsert = "const currentIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst pr2Module = fs.readFileSync(path.join(ROOT,'js/services/pretrade-technicals.js'),'utf8');\nconst index = isPr2Applied(currentIndex) ? undoPretradePr2(currentIndex, pr2Module) : currentIndex;\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');";
-          if ((s.split(readNeedle).length - 1) !== 1) throw new Error('PR1_INDEX_ANCHOR_IDENTITY');
-          s = s.replace(readNeedle, readInsert);
-          fs.writeFileSync(p, s);
-          NODE
-          node tests/pretrade-risk-rules-boundary-contract.test.js
-      - name: Remove bootstrap and publish verified repair
-        shell: bash
-        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_one(path, old, new, label):
+              p = Path(path)
+              s = p.read_text()
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f"{label}: expected one anchor in {path}, got {n}")
+              p.write_text(s.replace(old, new, 1))
+              print(f"patched {path}: {label}")
+
+          # PR1 PRETRADE contract is historical: unwind PR2 before replaying PR1.
+          p = 'tests/pretrade-risk-rules-boundary-contract.test.js'
+          replace_one(p,
+              "const { execFileSync } = require('child_process');\n",
+              "const { execFileSync } = require('child_process');\nconst PRETRADE_PR2_UNDO = require('./lib/pretrade-pr2-undo');\n",
+              'pretrade-pr1-import-pr2-undo')
+          replace_one(p,
+              "const base = execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding:'utf8',maxBuffer:8*1024*1024});\nconst index = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');",
+              "const base = execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding:'utf8',maxBuffer:8*1024*1024});\nconst liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');\nconst technicalSrc = fs.readFileSync(path.join(ROOT,'js/services/pretrade-technicals.js'),'utf8');\nconst index = PRETRADE_PR2_UNDO.isApplied(liveIndex)\n  ? PRETRADE_PR2_UNDO.undoPretradePr2(liveIndex, technicalSrc)\n  : liveIndex;\nconst moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');",
+              'pretrade-pr1-replay-post-pr1-document')
+
+          # EIC historical model: unwind PRETRADE PR2, then PR1.
+          p = 'tests/eic-extraction-boundary-contract.test.js'
+          replace_one(p,
+              "const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');\n",
+              "const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');\nconst PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');\n",
+              'eic-import-pretrade-pr2-undo')
+          replace_one(p,
+              "const LIVE_HTML = L.loadIndexHtml();\nconst PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');\nconst HTML = PRETRADE_UNDO.isApplied(LIVE_HTML) ? PRETRADE_UNDO.undoPretradePr1(LIVE_HTML, PRETRADE_SRC) : LIVE_HTML;",
+              "const LIVE_HTML = L.loadIndexHtml();\nconst PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-technicals.js'), 'utf8');\nconst POST_PRETRADE_PR2_HTML = PRETRADE_UNDO2.isApplied(LIVE_HTML)\n  ? PRETRADE_UNDO2.undoPretradePr2(LIVE_HTML, PRETRADE_TECH_SRC)\n  : LIVE_HTML;\nconst PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');\nconst HTML = PRETRADE_UNDO.isApplied(POST_PRETRADE_PR2_HTML)\n  ? PRETRADE_UNDO.undoPretradePr1(POST_PRETRADE_PR2_HTML, PRETRADE_SRC)\n  : POST_PRETRADE_PR2_HTML;",
+              'eic-unwind-pretrade-newest-first')
+
+          # SFS reconstruction chain: same newest-first PRETRADE unwind.
+          p = 'tests/sfs-extraction-boundary-contract.test.js'
+          replace_one(p,
+              "const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');\n  const EIC_PR3 = require('./lib/eic-pr3-undo.js');",
+              "const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');\n  const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');\n  const EIC_PR3 = require('./lib/eic-pr3-undo.js');",
+              'sfs-import-pretrade-pr2-undo')
+          replace_one(p,
+              "  let HEAD_HTML = HTML;\n  const pretradeRiskSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-risk-rules.js'), 'utf8');\n  if (PRETRADE_UNDO.isApplied(HEAD_HTML)) {\n    HEAD_HTML = PRETRADE_UNDO.undoPretradePr1(HEAD_HTML, pretradeRiskSrc);\n    ok(true, '11.-1 PRETRADE is undone byte-exactly before the older reconstruction chain');\n  }",
+              "  let HEAD_HTML = HTML;\n  const pretradeTechnicalSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-technicals.js'), 'utf8');\n  if (PRETRADE_UNDO2.isApplied(HEAD_HTML)) {\n    HEAD_HTML = PRETRADE_UNDO2.undoPretradePr2(HEAD_HTML, pretradeTechnicalSrc);\n    ok(true, '11.-2 PRETRADE PR2 is undone byte-exactly before PR1');\n  }\n  const pretradeRiskSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-risk-rules.js'), 'utf8');\n  if (PRETRADE_UNDO.isApplied(HEAD_HTML)) {\n    HEAD_HTML = PRETRADE_UNDO.undoPretradePr1(HEAD_HTML, pretradeRiskSrc);\n    ok(true, '11.-1 PRETRADE PR1 is undone byte-exactly before the older reconstruction chain');\n  }",
+              'sfs-unwind-pretrade-newest-first')
+
+          # Technical contract mutation must actually mutate the shipped token.
+          p = 'tests/pretrade-technicals-boundary-contract.test.js'
+          replace_one(p,
+              "module:moduleSrc.replace(\"fallbackReason: 'missing_ticker'\",\"fallbackReason: 'missing_symbol'\")",
+              "module:moduleSrc.replace(\"technicalFallbackReason: 'missing_ticker'\",\"technicalFallbackReason: 'missing_symbol'\")",
+              'technical-mutant-is-genuine')
+
+          # Adapter exact load order: DSB -> risk -> technical -> inline.
+          p = 'tests/backend-directional-adapter-boundary-contract.test.js'
+          replace_one(p,
+              "  const pretradeTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-risk-rules\\\\.js$/.test(String(t.src || '')); });\n  ok(pretradeTagIdx >= 0, 'tag order: the later PRETRADE risk-rules script is present');\n  eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: the DSB panel remains immediately before the later PRETRADE owner');\n  eq(pretradeTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE is now the LAST external classic script before the inline monolith');",
+              "  const pretradeTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-risk-rules\\\\.js$/.test(String(t.src || '')); });\n  const pretradeTechTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-technicals\\\\.js$/.test(String(t.src || '')); });\n  ok(pretradeTagIdx >= 0, 'tag order: the PRETRADE risk-rules script is present');\n  ok(pretradeTechTagIdx >= 0, 'tag order: the PRETRADE technical owner is present');\n  eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: the DSB panel remains immediately before PRETRADE risk-rules');\n  eq(pretradeTagIdx, pretradeTechTagIdx - 1, 'tag order: PRETRADE technicals load immediately after risk-rules');\n  eq(pretradeTechTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE technicals are the LAST external classic script before the inline monolith');",
+              'adapter-tag-order-pr2')
+          replace_one(p,
+              "  const pretradePart = PART_RANGES.filter(function (r) { return /pretrade-risk-rules\\\\.js$/.test(r.src); });\n  eq(pretradePart.length, 1, 'ORDER: the later PRETRADE owner is present exactly once');",
+              "  const pretradePart = PART_RANGES.filter(function (r) { return /pretrade-risk-rules\\\\.js$/.test(r.src); });\n  const pretradeTechPart = PART_RANGES.filter(function (r) { return /pretrade-technicals\\\\.js$/.test(r.src); });\n  eq(pretradePart.length, 1, 'ORDER: the PRETRADE risk-rules owner is present exactly once');\n  eq(pretradeTechPart.length, 1, 'ORDER: the PRETRADE technical owner is present exactly once');",
+              'adapter-part-inventory-pr2')
+          replace_one(p,
+              "  eq(PART_RANGES.indexOf(dsbPanelPart[0]), PART_RANGES.indexOf(pretradePart[0]) - 1,\n     'ORDER: the DSB panel remains immediately before the later PRETRADE owner');\n  eq(PART_RANGES.indexOf(pretradePart[0]), PART_RANGES.length - 2,\n     'ORDER: PRETRADE is the last application script before the inline monolith');",
+              "  eq(PART_RANGES.indexOf(dsbPanelPart[0]), PART_RANGES.indexOf(pretradePart[0]) - 1,\n     'ORDER: the DSB panel remains immediately before PRETRADE risk-rules');\n  eq(PART_RANGES.indexOf(pretradePart[0]), PART_RANGES.indexOf(pretradeTechPart[0]) - 1,\n     'ORDER: PRETRADE technicals load immediately after risk-rules');\n  eq(PART_RANGES.indexOf(pretradeTechPart[0]), PART_RANGES.length - 2,\n     'ORDER: PRETRADE technicals are the last application script before the inline monolith');",
+              'adapter-part-order-pr2')
+
+          # Preview exact load order.
+          p = 'tests/backend-directional-preview-boundary-contract.test.js'
+          replace_one(p,
+              "  const iPretrade = srcs.indexOf('./js/services/pretrade-risk-rules.js');\n  ok(iPretrade >= 0, 'index.html loads the later PRETRADE risk-rules script');\n  eq(iDsbPanel, iPretrade - 1, 'ORDER: the DSB panel remains immediately before the later PRETRADE owner');\n  eq(iPretrade, srcs.length - 2, 'ORDER: PRETRADE is the LAST external script before the inline monolith');",
+              "  const iPretrade = srcs.indexOf('./js/services/pretrade-risk-rules.js');\n  const iPretradeTech = srcs.indexOf('./js/services/pretrade-technicals.js');\n  ok(iPretrade >= 0, 'index.html loads the PRETRADE risk-rules script');\n  ok(iPretradeTech >= 0, 'index.html loads the PRETRADE technical owner');\n  eq(iDsbPanel, iPretrade - 1, 'ORDER: the DSB panel remains immediately before PRETRADE risk-rules');\n  eq(iPretrade, iPretradeTech - 1, 'ORDER: PRETRADE technicals load immediately after risk-rules');\n  eq(iPretradeTech, srcs.length - 2, 'ORDER: PRETRADE technicals are the LAST external script before the inline monolith');",
+              'preview-source-order-pr2')
+          replace_one(p,
+              "  const pretradeTagIdx = TAGS.findIndex(function (t) { return /pretrade-risk-rules\\\\.js$/.test(clean(t.src)); });\n  ok(pretradeTagIdx >= 0, 'tag order: the later PRETRADE owner tag is present');\n  eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: DSB panel remains immediately before PRETRADE');\n  eq(pretradeTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE is the LAST script tag before the inline monolith');",
+              "  const pretradeTagIdx = TAGS.findIndex(function (t) { return /pretrade-risk-rules\\\\.js$/.test(clean(t.src)); });\n  const pretradeTechTagIdx = TAGS.findIndex(function (t) { return /pretrade-technicals\\\\.js$/.test(clean(t.src)); });\n  ok(pretradeTagIdx >= 0, 'tag order: the PRETRADE risk-rules owner tag is present');\n  ok(pretradeTechTagIdx >= 0, 'tag order: the PRETRADE technical owner tag is present');\n  eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: DSB panel remains immediately before PRETRADE risk-rules');\n  eq(pretradeTagIdx, pretradeTechTagIdx - 1, 'tag order: PRETRADE technicals follow risk-rules immediately');\n  eq(pretradeTechTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE technicals are the LAST script tag before the inline monolith');",
+              'preview-tag-order-pr2')
+
+          # DSB exact foreign-script inventory gains second PRETRADE owner.
+          p = 'tests/backend-directional-snapshot-boundary-contract.test.js'
+          replace_one(p,
+              "const PRETRADE_EXTRACTION_SCRIPTS = [\n  './js/services/pretrade-risk-rules.js',\n];",
+              "const PRETRADE_EXTRACTION_SCRIPTS = [\n  './js/services/pretrade-risk-rules.js',\n  './js/services/pretrade-technicals.js',\n];",
+              'dsb-pretrade-inventory-pr2')
+          replace_one(p,
+              "eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 39,\n   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 1 PRETRADE extraction module before the inline monolith');",
+              "eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 40,\n   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 2 PRETRADE extraction modules before the inline monolith');",
+              'dsb-local-script-count-pr2')
+
+          # BSS exact tail/inventory gains second PRETRADE owner.
+          p = 'tests/backend-scanner-snapshot-ui-boundary-contract.test.js'
+          replace_one(p,
+              "  const PRETRADE_REL = './js/services/pretrade-risk-rules.js';\n  eq(idx(DSB_PANEL_REL), idx(PRETRADE_REL) - 1, 'the DSB panel remains immediately before the later PRETRADE owner');\n  eq(idx(PRETRADE_REL), SCRIPT_ORDER.length - 2, 'PRETRADE is the last external script before the monolith');",
+              "  const PRETRADE_REL = './js/services/pretrade-risk-rules.js';\n  const PRETRADE_TECH_REL = './js/services/pretrade-technicals.js';\n  eq(idx(DSB_PANEL_REL), idx(PRETRADE_REL) - 1, 'the DSB panel remains immediately before PRETRADE risk-rules');\n  eq(idx(PRETRADE_REL), idx(PRETRADE_TECH_REL) - 1, 'PRETRADE technicals load immediately after risk-rules');\n  eq(idx(PRETRADE_TECH_REL), SCRIPT_ORDER.length - 2, 'PRETRADE technicals are the last external script before the monolith');",
+              'bss-terminal-pretrade-order-pr2')
+          replace_one(p,
+              "         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, '(inline)'],\n         'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed only by PRETRADE before inline');",
+              "         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, '(inline)'],\n         'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed by both PRETRADE owners before inline');",
+              'bss-exact-tail-pr2')
+          replace_one(p,
+              "  const PRETRADE_EXTRACTION_SCRIPTS = ['./js/services/pretrade-risk-rules.js'];",
+              "  const PRETRADE_EXTRACTION_SCRIPTS = [\n    './js/services/pretrade-risk-rules.js',\n    './js/services/pretrade-technicals.js',\n  ];",
+              'bss-beyond-inventory-pr2')
+
+          # PESS exact terminal tail gains technical owner.
+          p = 'tests/pess-extraction-boundary-contract.test.js'
+          replace_one(p, "const LOCAL_SCRIPT_COUNT = 39;", "const LOCAL_SCRIPT_COUNT = 40;", 'pess-local-script-count-pr2')
+          replace_one(p,
+              "eq(A.localSrcs[A.localSrcs.length - 2], './js/ui/backend-directional-snapshot-panel.js',\n  '9.11a the DSB panel remains immediately before the later PRETRADE owner');\neq(A.localSrcs[A.localSrcs.length - 1], './js/services/pretrade-risk-rules.js',\n  '9.11b PRETRADE is the newest local script before the monolith');\neq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 39 local application scripts, including the later PRETRADE owner');",
+              "eq(A.localSrcs[A.localSrcs.length - 3], './js/ui/backend-directional-snapshot-panel.js',\n  '9.11a the DSB panel remains immediately before the PRETRADE owner chain');\neq(A.localSrcs[A.localSrcs.length - 2], './js/services/pretrade-risk-rules.js',\n  '9.11b PRETRADE risk-rules remains first in the PRETRADE owner chain');\neq(A.localSrcs[A.localSrcs.length - 1], './js/services/pretrade-technicals.js',\n  '9.11c PRETRADE technicals are the newest local script before the monolith');\neq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 40 local application scripts, including both PRETRADE owners');",
+              'pess-terminal-tail-pr2')
+
+          # Candle-read audit: pretrade adapter changed physical owner only.
+          p = 'tests/candle-read-adapters-contract.test.js'
+          replace_one(p,
+              "    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\\n');\n",
+              "    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\\n');\n    const PRETRADE_TECH_SRC = fs.readFileSync(path.resolve(__dirname, '..', 'js', 'services', 'pretrade-technicals.js'), 'utf8');\n",
+              'candle-read-load-pretrade-owner')
+          replace_one(p,
+              "        ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);\n        ok(STORE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-store-client.js: ' + name);",
+              "        if (name === '_fetchPretradeBackendCandles') {\n          ok(reDef.test(PRETRADE_TECH_SRC) && !reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] _fetchPretradeBackendCandles is owned by pretrade-technicals.js, not inline');\n        } else {\n          ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);\n        }\n        ok(STORE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-store-client.js: ' + name);",
+              'candle-read-owner-split')
+          replace_one(p,
+              "    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);\n      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: ' + n);\n    });",
+              "    ['_mcxFetchBackendCandlesForChart'].forEach((n) => {\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(inlineMonolith), '0: MCX adapter stays in the monolith: ' + n);\n      ok(DX_SRC.indexOf(n) === -1, '0: adapter NOT present in candle-dxlink-client.js: ' + n);\n    });\n    {\n      const n = '_fetchPretradeBackendCandles';\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(PRETRADE_TECH_SRC) && !reDef.test(inlineMonolith), '0: pre-trade adapter is owned by pretrade-technicals.js and absent inline');\n      ok(DX_SRC.indexOf(n) === -1, '0: pre-trade adapter NOT present in candle-dxlink-client.js');\n    }",
+              'candle-read-explicit-pretrade-owner')
+
+          # Candle-service audit: same owner correction; behavior assertions untouched.
+          p = 'tests/candle-service-contract.test.js'
+          replace_one(p,
+              "    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\\n');\n",
+              "    const inlineMonolith = ordered.filter((s) => s.kind === 'inline' && s.isAppJs).map((s) => s.code).join('\\n');\n    const PRETRADE_TECH_SRC = fs.readFileSync(path.resolve(__dirname, '..', 'js', 'services', 'pretrade-technicals.js'), 'utf8');\n",
+              'candle-service-load-pretrade-owner')
+          replace_one(p,
+              "    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(inlineMonolith), '0: feature adapter stays in the monolith: ' + n);\n      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);\n    });",
+              "    ['_mcxFetchBackendCandlesForChart'].forEach((n) => {\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(inlineMonolith), '0: MCX feature adapter stays in the monolith: ' + n);\n      ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);\n    });\n    {\n      const n = '_fetchPretradeBackendCandles';\n      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + n + '\\\\s*\\\\(');\n      ok(reDef.test(PRETRADE_TECH_SRC) && !reDef.test(inlineMonolith), '0: pre-trade feature adapter is owned by pretrade-technicals.js and absent inline');\n      ok(DX_SRC.indexOf(n) === -1, '0: pre-trade adapter NOT present in candle-dxlink-client.js');\n    }",
+              'candle-service-explicit-pretrade-owner')
+
+          print('all candidate edits applied')
+          PY
+
+          # Candidate final tree must contain no bootstrap workflow. Make a LOCAL-ONLY
+          # commit so BASE..HEAD assertions see the proposed final tree, not this workflow.
           git rm .github/workflows/pretrade-pr2-history-bootstrap.yml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add tests/pretrade-risk-rules-boundary-contract.test.js
+          git config user.name "ci-dry-run"
+          git config user.email "ci-dry-run@example.invalid"
+          git add tests
           git diff --cached --check
-          git commit -m "test(pretrade): replay PR1 contract before PR2"
-          git push origin HEAD:agent/extract-pretrade-technicals
+          git commit -m "ci(dry-run): candidate PRETRADE PR2 harness repair"
+
+      - name: Run the exact 11 initially failing suites
+        shell: bash
+        run: |
+          set +e
+          fail=0
+          suites=(
+            tests/backend-directional-adapter-boundary-contract.test.js
+            tests/backend-directional-preview-boundary-contract.test.js
+            tests/backend-directional-snapshot-boundary-contract.test.js
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js
+            tests/candle-read-adapters-contract.test.js
+            tests/candle-service-contract.test.js
+            tests/eic-extraction-boundary-contract.test.js
+            tests/pess-extraction-boundary-contract.test.js
+            tests/pretrade-risk-rules-boundary-contract.test.js
+            tests/pretrade-technicals-boundary-contract.test.js
+            tests/sfs-extraction-boundary-contract.test.js
+          )
+          for f in "${suites[@]}"; do
+            echo "===== $f ====="
+            if node "$f" > /tmp/suite.log 2>&1; then
+              echo "PASS $f"
+              tail -8 /tmp/suite.log
+            else
+              echo "::error file=$f::candidate suite failed"
+              tail -80 /tmp/suite.log
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Full frontend suite after targeted set
+        if: success()
+        shell: bash
+        run: |
+          fail=0
+          count=0
+          for f in tests/*.test.js; do
+            count=$((count+1))
+            if ! node "$f" > /tmp/out.log 2>&1; then
+              echo "::error file=$f::suite failed"
+              tail -60 /tmp/out.log
+              fail=1
+            fi
+          done
+          echo "FULL_SUITE_FILES=$count"
+          exit $fail
+
+      - name: Candidate diff scope
+        if: always()
+        shell: bash
+        run: |
+          echo "Candidate BASE..HEAD files:"
+          git diff --name-only ecb4b155b9ebe9841cbe807c6493ac269d922bc8 HEAD
+          echo "Production files:"
+          git diff --name-only ecb4b155b9ebe9841cbe807c6493ac269d922bc8 HEAD | grep -E '^(index\.html|js/)' || true
+          git diff --check ecb4b155b9ebe9841cbe807c6493ac269d922bc8 HEAD
