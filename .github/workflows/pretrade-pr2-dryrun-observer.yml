@@ -1,0 +1,53 @@
+name: pretrade-pr2-dryrun-observer
+
+on:
+  pull_request:
+    branches:
+      - dev-clean
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Wait for PRETRADE PR2 dry-run and mirror its log
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id=""
+          for i in $(seq 1 90); do
+            run_id="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${HEAD_SHA}&per_page=100" --jq '.workflow_runs[] | select(.name == "pretrade-pr2-ci-dry-run") | .id' | head -1 || true)"
+            if [ -n "$run_id" ]; then break; fi
+            echo "waiting for dry-run discovery ($i)"
+            sleep 5
+          done
+          if [ -z "$run_id" ]; then
+            echo "::error::dry-run workflow was not discovered for ${HEAD_SHA}"
+            exit 1
+          fi
+          echo "DRY_RUN_ID=$run_id"
+          for i in $(seq 1 180); do
+            status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .status)"
+            conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.conclusion // ""')"
+            echo "dry-run status=$status conclusion=$conclusion"
+            [ "$status" = "completed" ] && break
+            sleep 5
+          done
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq .status)"
+          conclusion="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.conclusion // ""')"
+          if [ "$status" != "completed" ]; then
+            echo "::error::dry-run did not complete within observer timeout"
+            exit 1
+          fi
+          echo "===== DRY-RUN JOBS ====="
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" --jq '.jobs[] | [.id,.name,.conclusion] | @tsv'
+          echo "===== DRY-RUN LOG ====="
+          gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --log || true
+          echo "===== DRY-RUN CONCLUSION: $conclusion ====="
+          [ "$conclusion" = "success" ]
