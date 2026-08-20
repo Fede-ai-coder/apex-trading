@@ -1,0 +1,39 @@
+name: node22-historical-log-probe
+
+on:
+  pull_request:
+    branches:
+      - dev-clean
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  recover:
+    if: github.head_ref == 'diagnostic/node22-job-95810718170'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact historical Node 22 job log
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body -sS -L \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/95810718170/logs" \
+            -o node22-95810718170.log
+          wc -c node22-95810718170.log
+          sha256sum node22-95810718170.log > node22-95810718170.sha256
+      - name: Upload exact historical log
+        uses: actions/upload-artifact@v4
+        with:
+          name: node22-job-95810718170-log
+          path: |
+            node22-95810718170.log
+            node22-95810718170.sha256
+          if-no-files-found: error
