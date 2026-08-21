@@ -124,7 +124,17 @@ function runOutcome(src, f) {
 }
 
 const base = execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding:'utf8',maxBuffer:8*1024*1024});
-const index = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+// THE DOCUMENT THIS CONTRACT PINS is index.html as PR #382 left it. PR #383
+// (PRETRADE technicals) has since been cut AGAINST that document, so it is
+// undone first — newest-first — restoring the exact post-#382 index that every
+// offset, hash and ratchet below addresses. The helper re-verifies the document
+// it hands back by length and SHA-256, so the reconstruction is proved, not
+// assumed, and this contract keeps checking the same invariants byte-for-byte.
+const PRETRADE_PR2 = require('./lib/pretrade-pr2-undo.js');
+const liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+const index = PRETRADE_PR2.isApplied(liveIndex)
+  ? PRETRADE_PR2.undoPretradePr2(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/pretrade-technicals.js'),'utf8'))
+  : liveIndex;
 const moduleSrc = fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');
 const expected = transformFromBase(base);
 
@@ -284,9 +294,13 @@ eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by their
 
 section('7. production scope');
 const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
-const allowedProduction=['index.html',MODULE_REL];
+// The diff is measured from the PRE-#382 base, so it spans BOTH stacked PRETRADE
+// extractions: this PR's owner and the technicals owner PR #383 added on top.
+// The list stays EXACT and named — an unplanned production file still fails.
+const TECHNICALS_REL='js/services/pretrade-technicals.js';
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + PRETRADE owner');
+same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + both stacked PRETRADE owners');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);

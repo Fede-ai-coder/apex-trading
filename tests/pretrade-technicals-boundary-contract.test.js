@@ -188,7 +188,7 @@ const mutants=[
   ['move modal residual into owner','owner',{module:moduleSrc+'\n'+r0.text,index:index.replace(r0.text,''),rules:rulesSrc}],
   ['delete modal residual','owner',{module:moduleSrc,index:index.replace(r0.text,''),rules:rulesSrc}],
   ['reorder technical declarations','owner',{module:f1.text+'\n'+f0.text,index,rules:rulesSrc}],
-  ['mutate technical body','owner',{module:moduleSrc.replace("fallbackReason: 'missing_ticker'","fallbackReason: 'missing_symbol'"),index,rules:rulesSrc}],
+  ['mutate technical body','owner',{module:moduleSrc.replace("technicalFallbackReason: 'missing_ticker'","technicalFallbackReason: 'missing_symbol'"),index,rules:rulesSrc}],
   ['add foreign top-level function','owner',{module:moduleSrc+'\nfunction foreignPretradeTechnicalMutation(){}',index,rules:rulesSrc}],
   ['wrong technical script path','load',{module:moduleSrc,index:index.replace('./js/services/pretrade-technicals.js','./js/services/pretrade-technicalz.js'),rules:rulesSrc}],
   ['remove technical script tag','load',{module:moduleSrc,index:index.replace(TAG,''),rules:rulesSrc}],

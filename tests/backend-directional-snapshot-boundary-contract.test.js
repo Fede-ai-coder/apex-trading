@@ -207,6 +207,7 @@ const EIC_EXTRACTION_SCRIPTS = [
 ];
 const PRETRADE_EXTRACTION_SCRIPTS = [
   './js/services/pretrade-risk-rules.js',
+  './js/services/pretrade-technicals.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2658,8 +2659,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 39,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 1 PRETRADE extraction module before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 40,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 2 PRETRADE extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };

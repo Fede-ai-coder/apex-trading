@@ -255,7 +255,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       // Read-first orchestrators — read → ensure/warm-if-needed → re-read → map (STAY in the monolith)
       READ_ORCHESTRATOR: ['_scannerFetchBackendCandlesForChart', '_portfolioFetchBackendCandlesForChart', '_loadBackendChartCandles'],
       // Per-feature adapters — own endpoint family / warmup / source label (STAY in the monolith)
-      FEATURE_ADAPTER: ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'],
+      FEATURE_ADAPTER: ['_mcxFetchBackendCandlesForChart'],
+      // Pre-trade technical adapter — same role as a FEATURE_ADAPTER, but no longer a
+      // monolith resident: it was EXTRACTED to js/services/pretrade-technicals.js
+      // (asserted in 0-EXTRACTION-PRETRADE-TECHNICALS below). The extraction moved only
+      // the physical location — endpoint family, warmup, gate and source label are
+      // unchanged, which every behavioural assertion below still exercises.
+      PRETRADE_TECHNICALS_ADAPTER: ['_fetchPretradeBackendCandles'],
       // Scanner session cache helpers (now EXTRACTED to js/services/candle-store-client.js;
       // the cache STATE + TTL constant stay declared in the monolith)
       CACHE: ['_scannerChartCandleCacheKey', '_scannerGetCachedBackendTfCandles', '_scannerPutCachedBackendTfCandles'],
@@ -447,6 +453,25 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(DX_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-dxlink-client.js: ' + name);
       });
     });
+    // 0-EXTRACTION-PRETRADE-TECHNICALS. The pre-trade adapter is no longer a monolith
+    // resident. The location invariant is not dropped — it MOVES with the function: the
+    // symbol must be defined EXACTLY ONCE, in its named owner module, and must still be
+    // absent from the monolith and from both candle client modules. Its behaviour is
+    // unchanged and is exercised against the reconstructed source throughout this suite.
+    {
+      const PT_PATH = path.resolve(__dirname, '..', 'js', 'services', 'pretrade-technicals.js');
+      const PT_SRC = fs.existsSync(PT_PATH) ? fs.readFileSync(PT_PATH, 'utf8') : '';
+      ok(fs.existsSync(PT_PATH), '0: js/services/pretrade-technicals.js exists');
+      MANIFEST.PRETRADE_TECHNICALS_ADAPTER.forEach((name) => {
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(', 'g');
+        const owned = PT_SRC.match(reDef) || [];
+        ok(owned.length === 1, '0: [PRETRADE_TECHNICALS_ADAPTER] defined EXACTLY ONCE in pretrade-technicals.js: ' + name);
+        ok(!new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(').test(inlineMonolith),
+           '0: [PRETRADE_TECHNICALS_ADAPTER] no longer defined in the residual inline monolith: ' + name);
+        ok(STORE_SRC.indexOf(name) === -1, '0: [PRETRADE_TECHNICALS_ADAPTER] NOT present in candle-store-client.js: ' + name);
+        ok(DX_SRC.indexOf(name) === -1, '0: [PRETRADE_TECHNICALS_ADAPTER] NOT present in candle-dxlink-client.js: ' + name);
+      });
+    }
     // (23)(24) MCX / pre-trade adapters explicitly stay in the monolith.
     // (_sfsWarmupBatch was extracted to js/services/sfs-candle-warmup.js in the warmup-coordinator
     // PR, _sfsEnsureTfCandles was extracted to js/services/sfs-candle-generic-ensure.js in the
@@ -455,11 +480,17 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // any longer; their extraction is pinned by the dedicated warmup / generic-ensure /
     // detail-4H / orchestration / service contracts, not this read-adapter audit. Either way the
     // symbol must stay OUT of the dxlink-client module, which is what this audit cares about.)
-    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+    ['_mcxFetchBackendCandlesForChart'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: ' + n);
     });
+    // _fetchPretradeBackendCandles was extracted to js/services/pretrade-technicals.js in
+    // the PRETRADE technical-enrichment PR — no longer a monolith resident; its owner is
+    // pinned in 0-EXTRACTION-PRETRADE-TECHNICALS above and by the dedicated PRETRADE
+    // technicals boundary contract, not this read-adapter audit. Either way the symbol
+    // must stay OUT of the dxlink-client module, which is what this audit cares about.
+    ok(DX_SRC.indexOf('_fetchPretradeBackendCandles') === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: _fetchPretradeBackendCandles');
     ok(DX_SRC.indexOf('_sfsEnsureDetail4hCandles') === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: _sfsEnsureDetail4hCandles');
 
     // (25) the OTHER candle modules still do NOT exist yet, and index.html does not

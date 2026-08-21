@@ -1390,7 +1390,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 39, '4.9 index.html loads 39 local application scripts, including the later PRETRADE risk-rules owner');
+  eq(local.length, 40, '4.9 index.html loads 40 local application scripts, including both later PRETRADE owners');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3136,12 +3136,22 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // offsets address the monolith as it was when that PR was cut, so the order is
   // load-bearing, and this entry point must always be the newest EIC helper.
   const EIC_UNDO = require('./lib/eic-pr5-undo.js');
+const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
 const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
   const EIC_PR3 = require('./lib/eic-pr3-undo.js');
   const EIC_PR2 = require('./lib/eic-pr2-undo.js');
   const EIC_PR1 = require('./lib/eic-pr1-undo.js');
   let HEAD_HTML = HTML;
   const pretradeRiskSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-risk-rules.js'), 'utf8');
+  // PRETRADE PR 2 (technicals) is NEWER than PR 1 (risk rules): it was cut
+  // against the document PR 1 left behind, so it is undone FIRST. The helper
+  // verifies the intermediate it restores by length and SHA-256, so a swapped
+  // order fails loudly rather than reconstructing a plausible wrong document.
+  const pretradeTechSrc = fs.readFileSync(path.join(ROOT, 'js/services/pretrade-technicals.js'), 'utf8');
+  if (PRETRADE_UNDO2.isApplied(HEAD_HTML)) {
+    HEAD_HTML = PRETRADE_UNDO2.undoPretradePr2(HEAD_HTML, pretradeTechSrc);
+    ok(true, '11.-2 PRETRADE technicals is undone byte-exactly before the older PRETRADE link');
+  }
   if (PRETRADE_UNDO.isApplied(HEAD_HTML)) {
     HEAD_HTML = PRETRADE_UNDO.undoPretradePr1(HEAD_HTML, pretradeRiskSrc);
     ok(true, '11.-1 PRETRADE is undone byte-exactly before the older reconstruction chain');

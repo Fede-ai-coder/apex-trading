@@ -691,11 +691,15 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // js/services/sfs-candle-detail-4h.js — asserted in 0a-EXTRACTION-DETAIL-4H below. After
     // that LAST extraction NO SFS read orchestrator remains in the monolith; only the per-feature
     // adapters below do.
-    ['_mcxFetchBackendCandlesForChart', '_fetchPretradeBackendCandles'].forEach((n) => {
+    ['_mcxFetchBackendCandlesForChart'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(reDef.test(inlineMonolith), '0: feature adapter stays in the monolith: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
     });
+    // _fetchPretradeBackendCandles now lives in js/services/pretrade-technicals.js; its
+    // ownership is pinned two-sided in 0c-PRETRADE-TECHNICALS below. What this audit still
+    // requires of it is unchanged: it must stay OUT of the dxlink-client module.
+    ok(DX_SRC.indexOf('_fetchPretradeBackendCandles') === -1, '0: orchestrator NOT present in candle-dxlink-client.js: _fetchPretradeBackendCandles');
     ['_sfsEnsureDetail4hCandles', '_sfsEnsureTfCandles', '_sfsEnsureChartData', '_sfsSpyReadOnly'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
       ok(!reDef.test(inlineMonolith), '0: no SFS read orchestrator left in the monolith: ' + n);
@@ -1389,8 +1393,13 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
       FEATURE_ADAPTER: [
         '_scannerFetchBackendCandlesForChart', '_loadBackendChartCandles',
         '_portfolioFetchBackendCandlesForChart', '_mcxFetchBackendCandlesForChart',
-        '_fetchPretradeBackendCandles',
       ],
+      // Same per-feature adapter role, but relocated verbatim to
+      // js/services/pretrade-technicals.js by the PRETRADE technical-enrichment PR.
+      // Asserted TWO-SIDED in 0c-PRETRADE-TECHNICALS below — declared in its owner AND
+      // no longer declared inline — which is strictly stronger than the single-sided
+      // membership of the FEATURE_ADAPTER loop it used to sit in.
+      PRETRADE_TECHNICALS_ADAPTER: ['_fetchPretradeBackendCandles'],
       // Already extracted / shared backend client (must NOT be re-owned by candles).
       SHARED_BACKEND_CLIENT: [
         'ttCall', '_backendAuthHeaders', '_recordBackendApiAuthResult',
@@ -1432,6 +1441,21 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(MODULE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-normalization.js: ' + name);
       });
     });
+    // 0c-PRETRADE-TECHNICALS. The pre-trade adapter was relocated verbatim to its own
+    // owner module. Two-sided, like every other completed relocation in this suite: it is
+    // declared in the owner AND no longer declared in the residual inline monolith, so a
+    // re-introduction inline — or a quiet disappearance — fails here by name.
+    {
+      const PT_PATH = path.resolve(__dirname, '..', 'js', 'services', 'pretrade-technicals.js');
+      const PT_SRC = fs.existsSync(PT_PATH) ? fs.readFileSync(PT_PATH, 'utf8') : '';
+      ok(fs.existsSync(PT_PATH), '0: js/services/pretrade-technicals.js exists');
+      manifest.PRETRADE_TECHNICALS_ADAPTER.forEach((name) => {
+        const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+        ok(reDef.test(PT_SRC), '0: [PRETRADE_TECHNICALS_ADAPTER] declared in pretrade-technicals.js: ' + name);
+        ok(!reDef.test(inlineMonolith), '0: [PRETRADE_TECHNICALS_ADAPTER] no longer declared in the residual inline monolith: ' + name);
+        ok(MODULE_SRC.indexOf(name) === -1, '0: [PRETRADE_TECHNICALS_ADAPTER] NOT present in candle-normalization.js: ' + name);
+      });
+    }
     // 0c-SCAN-SERVICE. The nine SFS scan-service declarations were relocated verbatim by
     // PR 2. Two-sided: each is declared in the scan-service module AND no longer declared
     // in the residual inline monolith, so a re-introduction inline fails here by name.
