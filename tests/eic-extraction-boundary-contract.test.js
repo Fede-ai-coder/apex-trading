@@ -100,6 +100,11 @@ const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 const EIC_UNDO3 = require('./lib/eic-pr3-undo.js');
 const EIC_UNDO4 = require('./lib/eic-pr4-undo.js');
 const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
+// NEWEST-FIRST. PR 2 (technicals) was cut against the document PR 1 left behind,
+// so its tag and offset must be undone BEFORE PR 1's offsets address anything.
+// Each helper verifies its own intermediate by length and SHA-256, so a wrong
+// order cannot pass quietly.
+const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
 const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -128,7 +133,11 @@ function expectClean(res, label) {
 // ─────────────────────────────────────────────────────────────────────────────
 const LIVE_HTML = L.loadIndexHtml();
 const PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');
-const HTML = PRETRADE_UNDO.isApplied(LIVE_HTML) ? PRETRADE_UNDO.undoPretradePr1(LIVE_HTML, PRETRADE_SRC) : LIVE_HTML;
+const PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-technicals.js'), 'utf8');
+const POST_PR2_HTML = PRETRADE_UNDO2.isApplied(LIVE_HTML)
+  ? PRETRADE_UNDO2.undoPretradePr2(LIVE_HTML, PRETRADE_TECH_SRC)
+  : LIVE_HTML;
+const HTML = PRETRADE_UNDO.isApplied(POST_PR2_HTML) ? PRETRADE_UNDO.undoPretradePr1(POST_PR2_HTML, PRETRADE_SRC) : POST_PR2_HTML;
 const MODULE_SRC = fs.readFileSync(MODULE_PATH, 'utf8');
 const PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-panel.js');
 const PANEL_SRC = fs.readFileSync(PANEL_PATH, 'utf8');
