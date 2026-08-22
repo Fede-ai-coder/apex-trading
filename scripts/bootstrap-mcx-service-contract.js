@@ -66,11 +66,10 @@ function extractFunction(src, name) {
 
 function extractPending(src) {
   const re = /\bvar\s+_vixFamilyPending\s*=\s*null\s*;/g;
-  const m = Array.from(src.matchAll(re));
-  if (m.length !== 1) fail('expected one _vixFamilyPending declaration, got ' + m.length);
-  return m[0][0];
+  const matches = Array.from(src.matchAll(re));
+  if (matches.length !== 1) fail('expected one _vixFamilyPending declaration, got ' + matches.length);
+  return matches[0][0];
 }
-
 function declaration(src, name) {
   return name === '_vixFamilyPending' ? extractPending(src) : extractFunction(src, name);
 }
@@ -81,7 +80,6 @@ const baseIndex = cp.execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   encoding: 'utf8',
   maxBuffer: 16 * 1024 * 1024,
 });
-
 const manifest = ORDER.map((name) => {
   const before = declaration(baseIndex, name);
   const after = declaration(moduleSource, name);
@@ -91,9 +89,7 @@ const manifest = ORDER.map((name) => {
 
 const test = `'use strict';
 // MCX Market Context / VIX service extraction boundary contract.
-// Base identity: ${BASE_SHA}
-// This test protects a relocation only: the 15 declarations below must remain
-// byte-identical to the audited base while UI/orchestration stays outside.
+// Audited base: ${BASE_SHA}
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -108,13 +104,12 @@ const APP = loadAppJavaScriptSource();
 const ORDER = ${JSON.stringify(ORDER, null, 2)};
 const MANIFEST = ${JSON.stringify(manifest, null, 2)};
 
-let pass = 0, fail = 0;
+let passed = 0, failed = 0;
 function ok(cond, msg) {
-  if (cond) { pass++; console.log('  PASS  ' + msg); }
-  else { fail++; console.log('  FAIL  ' + msg); }
+  if (cond) { passed++; console.log('  PASS  ' + msg); }
+  else { failed++; console.log('  FAIL  ' + msg); }
 }
 function hash(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
-function escRe(s) { return s.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'); }
 
 function extractFunctionSpan(src, name) {
   const prefixes = ['async function ' + name + '(', 'function ' + name + '('];
@@ -125,14 +120,15 @@ function extractFunctionSpan(src, name) {
   }
   if (start < 0) return null;
   const open = src.indexOf('{', start);
-  let depth = 0, str = null, esc = false, line = false, block = false;
+  if (open < 0) return null;
+  let depth = 0, str = null, escaped = false, line = false, block = false;
   for (let i = open; i < src.length; i++) {
     const c = src[i], n = src[i + 1];
     if (line) { if (c === '\\n') line = false; continue; }
     if (block) { if (c === '*' && n === '/') { block = false; i++; } continue; }
     if (str) {
-      if (esc) { esc = false; continue; }
-      if (c === '\\\\') { esc = true; continue; }
+      if (escaped) { escaped = false; continue; }
+      if (c === '\\\\') { escaped = true; continue; }
       if (c === str) str = null;
       continue;
     }
@@ -147,16 +143,27 @@ function extractFunctionSpan(src, name) {
   }
   return null;
 }
-
 function extractPendingSpan(src) {
   const re = /\\bvar\\s+_vixFamilyPending\\s*=\\s*null\\s*;/g;
-  const m = Array.from(src.matchAll(re));
-  if (m.length !== 1) return null;
-  return { name: '_vixFamilyPending', start: m[0].index, end: m[0].index + m[0][0].length, source: m[0][0] };
+  const matches = Array.from(src.matchAll(re));
+  if (matches.length !== 1) return null;
+  const m = matches[0];
+  return { name: '_vixFamilyPending', start: m.index, end: m.index + m[0].length, source: m[0] };
 }
-function span(src, name) { return name === '_vixFamilyPending' ? extractPendingSpan(src) : extractFunctionSpan(src, name); }
+function span(src, name) {
+  return name === '_vixFamilyPending' ? extractPendingSpan(src) : extractFunctionSpan(src, name);
+}
 function functionCount(src, name) {
-  return (src.match(new RegExp('(?:async\\\\s+)?function\\\\s+' + escRe(name) + '\\\\s*\\\\(', 'g')) || []).length;
+  const plain = 'function ' + name + '(';
+  const asyncPlain = 'async function ' + name + '(';
+  let count = 0, at = 0;
+  while ((at = src.indexOf(plain, at)) >= 0) { count++; at += plain.length; }
+  at = 0;
+  while ((at = src.indexOf(asyncPlain, at)) >= 0) { count++; at += asyncPlain.length; }
+  return count;
+}
+function hasFunction(src, name) {
+  return src.includes('function ' + name + '(') || src.includes('async function ' + name + '(');
 }
 
 console.log('MCX market-context service boundary contract');
@@ -199,7 +206,7 @@ try {
   const sandbox = {};
   vm.createContext(sandbox);
   vm.runInContext(MODULE, sandbox, { filename: MODULE_REL });
-  ok(sandbox._vixFamilyPending === null, 'module evaluates inertly and initializes only the existing pending state');
+  ok(sandbox._vixFamilyPending === null, 'module evaluates inertly and initializes only existing pending state');
 } catch (e) {
   console.log('  load-time error:', e && e.stack || e);
   ok(false, 'module evaluates inertly');
@@ -212,26 +219,26 @@ const OUTSIDE = [
   'refreshSharedMarketRegime', 'computeMarketRegime', 'ffMcxBackendSnapshot'
 ];
 for (const name of OUTSIDE) {
-  ok(!new RegExp('(?:async\\\\s+)?function\\\\s+' + escRe(name) + '\\\\s*\\\\(').test(MODULE), name + ' stays outside the service module');
-  ok(new RegExp('(?:async\\\\s+)?function\\\\s+' + escRe(name) + '\\\\s*\\\\(').test(APP), name + ' remains available app-wide');
+  ok(!hasFunction(MODULE, name), name + ' stays outside the service module');
+  ok(hasFunction(APP, name), name + ' remains available app-wide');
 }
 
 const cascade = span(MODULE, '_fetchVixFamilyBackendFirst').source;
 const iSnapshot = cascade.indexOf('fetchMarketContextSnapshotFromBackend(');
 const iDedicated = cascade.indexOf('fetchMarketContextVixFamilyFromBackend(');
 const iDxlink = cascade.indexOf('fetchVixFamily(');
-ok(iSnapshot >= 0 && iDedicated > iSnapshot && iDxlink > iDedicated, 'VIX source cascade remains snapshot -> dedicated backend -> DXLink');
+ok(iSnapshot >= 0 && iDedicated > iSnapshot && iDxlink > iDedicated, 'VIX cascade remains snapshot -> dedicated backend -> DXLink');
 const normalizer = span(MODULE, '_normalizeBackendVixFamily').source;
 ok(normalizer.includes('vf.vix3m != null ? vf.vix3m : vf.vi3m'), 'vi3m -> vix3m compatibility remains intact');
 const freshness = span(MODULE, '_applyFreshVixFamily').source;
 ok(freshness.indexOf('_vixFamilyHasAnyValue(newVf)') >= 0 && freshness.indexOf('_vixFamilyHasAnyValue(newVf)') < freshness.indexOf('S.vixFamily = newVf'), 'all-null guard still precedes VIX-family assignment');
 const ensure = span(APP, '_ensureVixFamily').source;
-ok(ensure.includes('_vixFamilyPending'), 'inline orchestrator still consumes the moved single-flight state');
+ok(!!ensure && ensure.includes('_vixFamilyPending'), 'inline orchestrator still consumes moved single-flight state');
 ok(!MODULE.includes('document.'), 'service module owns no DOM access');
 ok(!MODULE.includes('_mcxDraw'), 'service module owns no MCX rendering');
 
-console.log('\\n' + pass + ' passed, ' + fail + ' failed');
-if (fail) process.exit(1);
+console.log('\\n' + passed + ' passed, ' + failed + ' failed');
+if (failed) process.exit(1);
 console.log('ALL TESTS PASSED');
 `;
 
