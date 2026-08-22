@@ -1,0 +1,17 @@
+MCX SERVICE BOOTSTRAP FAILURE
+trigger_sha=d18f30be10c79ed8e50305f3397bbd1e5ef5c3dc
+node=v22.23.2
+
+===== /tmp/mcx-contract.log =====
+/home/runner/work/apex-trading/apex-trading/scripts/bootstrap-mcx-service-contract.js:137
+    if (c === "'" || c === '"' || c === '\\`') { str = c; continue; }
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+SyntaxError: Invalid or unexpected token
+    at wrapSafe (node:internal/modules/cjs/loader:1713:18)
+    at checkSyntax (node:internal/main/check_syntax:78:3)
+
+Node.js v22.23.2
+
+===== git status =====
+?? mcx-bootstrap-failure.txt
