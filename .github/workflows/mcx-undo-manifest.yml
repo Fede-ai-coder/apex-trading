@@ -1,0 +1,79 @@
+name: MCX undo manifest generator
+
+on:
+  push:
+    branches:
+      - agent/extract-mcx-market-context-service
+
+permissions:
+  contents: write
+
+jobs:
+  manifest:
+    if: "${{ contains(github.event.head_commit.message, 'generate MCX undo manifest') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Compute exact reversible extraction manifest
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const cp = require('child_process');
+          const crypto = require('crypto');
+          const L = require('./tests/lib/load-app-source');
+          const BASE = '34bc48ae33bf3b0044572457615f7e6efda547c0';
+          const ORDER = [
+            '_vixFamilyTimestampMs','_vixFamilyHasAnyValue','_applyFreshVixFamily','fetchVixFamily',
+            '_vixFamilyPending','_cachePortfolioMarketContextSnapshot','fetchMarketContextSnapshotFromBackend',
+            '_mcxFiniteNum','fetchMarketContextVixFamilyFromBackend','_normalizeBackendVixFamily',
+            '_applyNormalizedVixFamily','_applyBackendVixFamily','_fetchVixFamilyBackendFirst',
+            '_vixFamilyDirectWsFallbackAllowed','_mcxApplyBackendSnapshot'
+          ];
+          const sha = s => crypto.createHash('sha256').update(s).digest('hex');
+          const base = cp.execFileSync('git',['show',BASE+':index.html'],{encoding:'utf8',maxBuffer:16*1024*1024});
+          const post = fs.readFileSync('index.html','utf8');
+          const mod = fs.readFileSync('js/services/mcx-market-context-service.js','utf8');
+          const rows=[];
+          for (const name of ORDER) {
+            let source;
+            if (name === '_vixFamilyPending') {
+              const m = base.match(/\bvar\s+_vixFamilyPending\s*=\s*null\s*;/);
+              if (!m) throw new Error('pending declaration missing');
+              source=m[0];
+            } else {
+              source=L.extractFunctionSource(base,name);
+              if (!source) throw new Error('missing '+name);
+            }
+            const start=base.indexOf(source);
+            if (start<0) throw new Error('cannot locate '+name);
+            const moduleSource = name === '_vixFamilyPending'
+              ? (mod.match(/\bvar\s+_vixFamilyPending\s*=\s*null\s*;/)||[])[0]
+              : L.extractFunctionSource(mod,name);
+            if (moduleSource !== source) throw new Error('identity mismatch '+name);
+            rows.push({name,start,chars:source.length,sha256:sha(source)});
+          }
+          const out=[];
+          out.push('BASE_SHA='+BASE);
+          out.push('BASE_CHARS='+base.length);
+          out.push('BASE_SHA256='+sha(base));
+          out.push('POST_CHARS='+post.length);
+          out.push('POST_SHA256='+sha(post));
+          out.push('MODULE_CHARS='+mod.length);
+          out.push('MODULE_SHA256='+sha(mod));
+          out.push('TAG=<script src="./js/services/mcx-market-context-service.js"></script>');
+          out.push('ROWS='+JSON.stringify(rows));
+          fs.writeFileSync('mcx-undo-manifest.txt',out.join('\n')+'\n');
+          console.log(out.join('\n'));
+          NODE
+      - name: Persist manifest
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mcx-undo-manifest.txt
+          git commit -m '[mcx-bootstrap-diagnostic] MCX undo manifest result'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
