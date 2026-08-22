@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   contract-and-full-suite:
+    if: "${{ !contains(github.event.head_commit.message, '[mcx-bootstrap-diagnostic]') }}"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout extraction branch
@@ -24,40 +25,80 @@ jobs:
 
       - name: Generate byte-identity boundary contract
         run: |
-          node --check scripts/bootstrap-mcx-service-contract.js
-          node scripts/bootstrap-mcx-service-contract.js
-          node --check tests/mcx-market-context-service-boundary-contract.test.js
-          node tests/mcx-market-context-service-boundary-contract.test.js
+          set -o pipefail
+          {
+            node --check scripts/bootstrap-mcx-service-contract.js
+            node scripts/bootstrap-mcx-service-contract.js
+            node --check tests/mcx-market-context-service-boundary-contract.test.js
+            node tests/mcx-market-context-service-boundary-contract.test.js
+          } 2>&1 | tee /tmp/mcx-contract.log
 
       - name: Targeted MCX and VIX contracts
         run: |
-          set -euo pipefail
-          for f in \
-            tests/load-app-source.test.js \
-            tests/vix-family-backend-source.test.js \
-            tests/vix-family-premature-close.test.js \
-            tests/mcx_backend_snapshot.test.js \
-            tests/mcx_backend_technical_summary.test.js \
-            tests/mcx-refresh-on-open-freshness.test.js \
-            tests/mcx-regime-rules.test.js \
-            tests/mcx-sma20-rising-defense-rule.test.js \
-            tests/mcx-backend-candles.test.js \
-            tests/regime-naked-calls.test.js
-          do
-            echo "===== $f ====="
-            node "$f"
-          done
+          set -o pipefail
+          {
+            set -euo pipefail
+            for f in \
+              tests/load-app-source.test.js \
+              tests/vix-family-backend-source.test.js \
+              tests/vix-family-premature-close.test.js \
+              tests/mcx_backend_snapshot.test.js \
+              tests/mcx_backend_technical_summary.test.js \
+              tests/mcx-refresh-on-open-freshness.test.js \
+              tests/mcx-regime-rules.test.js \
+              tests/mcx-sma20-rising-defense-rule.test.js \
+              tests/mcx-backend-candles.test.js \
+              tests/regime-naked-calls.test.js
+            do
+              echo "===== $f ====="
+              node "$f"
+            done
+          } 2>&1 | tee /tmp/mcx-targeted.log
 
       - name: Full frontend suite on Node 22
         run: |
+          set -o pipefail
+          {
+            total=0
+            failed=0
+            for f in tests/*.test.js; do
+              total=$((total+1))
+              echo "===== [$total] $f ====="
+              if node "$f"; then
+                echo "PASS_FILE $f"
+              else
+                echo "FAIL_FILE $f"
+                failed=$((failed+1))
+              fi
+            done
+            echo "FULL_SUITE_RESULT files=$total failed=$failed node=$(node --version)"
+            test "$failed" -eq 0
+          } 2>&1 | tee /tmp/mcx-full-suite.log
+
+      - name: Persist exact failure log on branch
+        if: "${{ failure() }}"
+        run: |
           set -euo pipefail
-          total=0
-          for f in tests/*.test.js; do
-            total=$((total+1))
-            echo "===== [$total] $f ====="
-            node "$f"
-          done
-          echo "FULL_SUITE_GREEN files=$total node=$(node --version)"
+          {
+            echo 'MCX SERVICE BOOTSTRAP FAILURE'
+            echo "trigger_sha=${GITHUB_SHA}"
+            echo "node=$(node --version 2>/dev/null || true)"
+            echo
+            for f in /tmp/mcx-contract.log /tmp/mcx-targeted.log /tmp/mcx-full-suite.log; do
+              if [ -f "$f" ]; then
+                echo "===== $f ====="
+                cat "$f"
+                echo
+              fi
+            done
+            echo '===== git status ====='
+            git status --short
+          } > mcx-bootstrap-failure.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mcx-bootstrap-failure.txt
+          git commit -m '[mcx-bootstrap-diagnostic] capture exact failing gate'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
 
       - name: Collapse into one clean extraction commit
         env:
@@ -66,6 +107,7 @@ jobs:
           set -euo pipefail
           rm scripts/bootstrap-mcx-service-contract.js
           rm .github/workflows/mcx-service-contract-bootstrap.yml
+          rm -f mcx-bootstrap-failure.txt
           git add -A
           git reset --soft "$BASE_SHA"
 
