@@ -1,0 +1,37 @@
+name: MCX bootstrap failure summarizer
+
+on:
+  push:
+    branches:
+      - agent/extract-mcx-market-context-service
+
+permissions:
+  contents: write
+
+jobs:
+  summarize:
+    if: "${{ !contains(github.event.head_commit.message, 'summarized failures') }}"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract failing suites and concise errors
+        run: |
+          set -euo pipefail
+          {
+            echo 'MCX BOOTSTRAP FAILURE SUMMARY'
+            grep -E '^trigger_sha=|^node=' mcx-bootstrap-failure.txt || true
+            echo
+            echo '===== failing files ====='
+            grep -nE 'FAIL_FILE|FULL_SUITE_RESULT' mcx-bootstrap-failure.txt || true
+            echo
+            echo '===== concise failure/error lines ====='
+            grep -nE '(^|[[:space:]])FAIL([[:space:]]|$)|AssertionError|ReferenceError|TypeError|SyntaxError|Error:|failed,|FAILED' mcx-bootstrap-failure.txt | tail -n 300 || true
+          } > mcx-bootstrap-failure-summary.txt
+          cat mcx-bootstrap-failure-summary.txt
+      - name: Persist summary
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add mcx-bootstrap-failure-summary.txt
+          git commit -m '[mcx-bootstrap-diagnostic] summarized failures'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
