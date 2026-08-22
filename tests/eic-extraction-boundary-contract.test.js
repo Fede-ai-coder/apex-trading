@@ -100,10 +100,11 @@ const EIC_UNDO2 = require('./lib/eic-pr2-undo.js');
 const EIC_UNDO3 = require('./lib/eic-pr3-undo.js');
 const EIC_UNDO4 = require('./lib/eic-pr4-undo.js');
 const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
-// NEWEST-FIRST. PR 2 (technicals) was cut against the document PR 1 left behind,
-// so its tag and offset must be undone BEFORE PR 1's offsets address anything.
-// Each helper verifies its own intermediate by length and SHA-256, so a wrong
-// order cannot pass quietly.
+// NEWEST-FIRST. PR 3 (the risk modal) was cut against the document PR 2 left
+// behind, which was itself cut against PR 1's — so each tag and offset must be
+// undone BEFORE the older ones address anything. Each helper verifies its own
+// intermediate by length and SHA-256, so a wrong order cannot pass quietly.
+const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
 const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
 const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
 
@@ -134,9 +135,13 @@ function expectClean(res, label) {
 const LIVE_HTML = L.loadIndexHtml();
 const PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');
 const PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-technicals.js'), 'utf8');
-const POST_PR2_HTML = PRETRADE_UNDO2.isApplied(LIVE_HTML)
-  ? PRETRADE_UNDO2.undoPretradePr2(LIVE_HTML, PRETRADE_TECH_SRC)
+const PRETRADE_MODAL_SRC = fs.readFileSync(path.join(ROOT, 'js', 'ui', 'pretrade-risk-modal.js'), 'utf8');
+const POST_PR3_HTML = PRETRADE_UNDO3.isApplied(LIVE_HTML)
+  ? PRETRADE_UNDO3.undoPretradePr3(LIVE_HTML, PRETRADE_MODAL_SRC)
   : LIVE_HTML;
+const POST_PR2_HTML = PRETRADE_UNDO2.isApplied(POST_PR3_HTML)
+  ? PRETRADE_UNDO2.undoPretradePr2(POST_PR3_HTML, PRETRADE_TECH_SRC)
+  : POST_PR3_HTML;
 const HTML = PRETRADE_UNDO.isApplied(POST_PR2_HTML) ? PRETRADE_UNDO.undoPretradePr1(POST_PR2_HTML, PRETRADE_SRC) : POST_PR2_HTML;
 const MODULE_SRC = fs.readFileSync(MODULE_PATH, 'utf8');
 const PANEL_PATH = path.resolve(__dirname, '..', 'js', 'ui', 'eic-panel.js');

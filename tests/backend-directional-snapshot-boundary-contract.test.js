@@ -208,6 +208,7 @@ const EIC_EXTRACTION_SCRIPTS = [
 const PRETRADE_EXTRACTION_SCRIPTS = [
   './js/services/pretrade-risk-rules.js',
   './js/services/pretrade-technicals.js',
+  './js/ui/pretrade-risk-modal.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2659,8 +2660,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 40,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 2 PRETRADE extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 41,
+   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 3 PRETRADE extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3620,12 +3621,36 @@ eq(EXPOSURE_STATEMENT_BYTES, A.blockLength,
 eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308,
    'the two exposure STATEMENTS themselves measure 308 bytes — unchanged by the relocation');
 {
-  // Convention: how do the 20 shipped modules handle window?
-  const modulesTouchingWindow = PARTS.filter(function (p) { return p.kind === 'local'; })
-    .filter(function (p) { return /window\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/.test(maskSource(p.code)); })
+  // Convention: how do the shipped modules handle window?
+  //
+  // W1 is a claim about EVALUATION-TIME exposure — "the exposures happen
+  // earlier, during the module's evaluation" — so that is what this measures,
+  // at top level, outside every function body. The PRETRADE risk modal, lifted
+  // verbatim out of the inline monolith, installs window._ptCancel and
+  // window._ptForceSave from INSIDE _showPreTradeRiskModal: a call-time
+  // assignment the monolith already made at exactly the same moment, which
+  // changes nothing about when any module exposes anything at load. It is
+  // pinned by name and by content immediately below rather than waved through,
+  // so a second module — or a second assignment — still fails here.
+  const localParts = PARTS.filter(function (p) { return p.kind === 'local'; });
+  const WINDOW_ASSIGN = /window\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/;
+  const modulesTouchingWindow = localParts
+    .filter(function (p) { return WINDOW_ASSIGN.test(stripFunctions(maskSource(p.code))); })
     .map(function (p) { return p.src; });
   deepEq(modulesTouchingWindow, [],
-    'ZERO of the 20 shipped modules assigns anything to window — W1 would be the first');
+    'ZERO shipped modules assign anything to window AT EVALUATION TIME — W1 would be the first');
+  const modulesAssigningWindowAtAll = localParts
+    .filter(function (p) { return WINDOW_ASSIGN.test(maskSource(p.code)); })
+    .map(function (p) { return p.src; });
+  deepEq(modulesAssigningWindowAtAll, ['./js/ui/pretrade-risk-modal.js'],
+    'exactly ONE shipped module assigns to window anywhere — the PRETRADE risk modal, and only from a function body');
+  {
+    const modal = localParts.filter(function (p) { return p.src === './js/ui/pretrade-risk-modal.js'; })[0];
+    ok(!!modal, 'the PRETRADE risk-modal module is part of the measured local set');
+    deepEq((maskSource(modal.code).match(new RegExp(WINDOW_ASSIGN.source, 'g')) || []).sort(),
+      ['window._ptCancel =', 'window._ptForceSave ='],
+      '…and its window assignments are exactly the two pre-existing pre-trade modal callbacks');
+  }
   // And a sibling boundary contract already ENFORCES that convention.
   const adapterContract = fs.readFileSync(
     path.resolve(__dirname, 'backend-directional-adapter-boundary-contract.test.js'), 'utf8');

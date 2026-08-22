@@ -1095,9 +1095,11 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   const DSB_SERVICE_REL = './js/services/backend-directional-snapshot-service.js';
   const PRETRADE_REL = './js/services/pretrade-risk-rules.js';
   const PRETRADE_TECH_REL = './js/services/pretrade-technicals.js';
+  const PRETRADE_MODAL_REL = './js/ui/pretrade-risk-modal.js';
   eq(idx(DSB_PANEL_REL), idx(PRETRADE_REL) - 1, 'the DSB panel remains immediately before the later PRETRADE owner');
   eq(idx(PRETRADE_REL), idx(PRETRADE_TECH_REL) - 1, 'the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-  eq(idx(PRETRADE_TECH_REL), SCRIPT_ORDER.length - 2, 'PRETRADE technicals is the last external script before the monolith');
+  eq(idx(PRETRADE_TECH_REL), idx(PRETRADE_MODAL_REL) - 1, 'the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
+  eq(idx(PRETRADE_MODAL_REL), SCRIPT_ORDER.length - 2, 'the PRETRADE risk modal is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1108,8 +1110,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed only by the two PRETRADE owners before inline');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed only by the three PRETRADE owners before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -3333,6 +3335,7 @@ section('29. script order');
   const PRETRADE_EXTRACTION_SCRIPTS = [
     './js/services/pretrade-risk-rules.js',
     './js/services/pretrade-technicals.js',
+    './js/ui/pretrade-risk-modal.js',
   ];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)

@@ -87,7 +87,17 @@ function stripComments(src) {
 }
 
 const base=execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding:'utf8',maxBuffer:8*1024*1024});
-const index=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+// THE DOCUMENT THIS CONTRACT PINS is index.html as PR #383 left it. PRETRADE PR3
+// (the risk-modal extraction) has since been cut AGAINST that document, so it is
+// undone first — newest-first — restoring the exact post-#383 index that every
+// offset, hash and ratchet below addresses. The helper re-verifies the document
+// it hands back by length and SHA-256, so the reconstruction is proved, not
+// assumed, and this contract keeps checking the same invariants byte-for-byte.
+const PRETRADE_PR3 = require('./lib/pretrade-pr3-undo.js');
+const liveIndex=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+const index = PRETRADE_PR3.isApplied(liveIndex)
+  ? PRETRADE_PR3.undoPretradePr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
+  : liveIndex;
 const moduleSrc=fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');
 const rulesSrc=fs.readFileSync(path.join(ROOT,RULES_REL),'utf8');
 const baseRules=execFileSync('git',['show',BASE_SHA+':'+RULES_REL],{cwd:ROOT,encoding:'utf8',maxBuffer:2*1024*1024});
@@ -208,8 +218,12 @@ eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by inten
 
 section('7. production scope');
 const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+// The diff is measured from the post-#382 base, so it spans BOTH extractions
+// stacked since: this contract's technical owner and the risk-modal owner added
+// on top. The list stays EXACT and named — an unplanned production file still fails.
+const MODAL_REL='js/ui/pretrade-risk-modal.js';
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,['index.html',MODULE_REL].sort(),'production footprint is exactly index.html + technical owner');
+same(changedProduction,['index.html',MODULE_REL,MODAL_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE technical boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);
