@@ -463,7 +463,24 @@ const MONOLITH_MASKED = maskSource(MONOLITH);
     else if (c === '[') b++; else if (c === ']') b--;
   }
   eq(bad, -1, '0.2 every column-0 declaration keyword is seen at depth zero');
-  ok(anchors.length > 1300, '0.3 expected >1300 column-0 anchors, saw ' + anchors.length);
+  // A FLOOR, not a fingerprint: it proves the masking pass really walked the
+  // application source rather than matching nothing. The floor is measured over
+  // the whole application — the monolith PLUS every extracted owner module —
+  // because progressive extraction MOVES top-level declarations out of
+  // index.html without removing them from the program. Measuring only the
+  // monolith would have made this guard drift downwards, one extraction at a
+  // time, until it stopped guarding anything; measured this way the original
+  // >1300 threshold keeps its full force and every future extraction is neutral
+  // to it. (Monolith-only at this commit: 1294, after the MCX market-context
+  // owner took ten declarations out.)
+  let ownerAnchors = 0;
+  for (const part of APP_PARTS.filter((q) => q.kind === 'local')) {
+    const ore = /\n(?:async function |function |var |const |let )/g;
+    while (ore.exec(part.code) !== null) ownerAnchors++;
+  }
+  const appAnchors = anchors.length + ownerAnchors;
+  ok(appAnchors > 1300, '0.3 expected >1300 column-0 anchors across the application source, saw ' + appAnchors + ' (' + anchors.length + ' inline + ' + ownerAnchors + ' in extracted owners)');
+  ok(anchors.length > 1000, '0.3b the inline monolith is still the bulk of the application source, saw ' + anchors.length);
 }
 
 // Recorded fixtures: three already-extracted DSB modules with known shapes.
@@ -1390,7 +1407,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 41, '4.9 index.html loads 41 local application scripts, including all three later PRETRADE owners');
+  eq(local.length, 42, '4.9 index.html loads 42 local application scripts, including the three PRETRADE owners and the MCX market-context owner');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3136,6 +3153,7 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // offsets address the monolith as it was when that PR was cut, so the order is
   // load-bearing, and this entry point must always be the newest EIC helper.
   const EIC_UNDO = require('./lib/eic-pr5-undo.js');
+const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
 const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
 const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
@@ -3152,6 +3170,13 @@ const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
   // PRETRADE PR 3 (the risk modal) is NEWER still, and closed the family. It is
   // undone before PR 2 for the same reason PR 2 is undone before PR 1.
   const pretradeModalSrc = fs.readFileSync(path.join(ROOT, 'js/ui/pretrade-risk-modal.js'), 'utf8');
+  // The MCX market-context extraction is NEWER than the whole PRETRADE stack, so
+  // it is the first hop; its helper verifies by length and SHA-256 like the rest.
+  const mcxSrc = fs.readFileSync(path.join(ROOT, 'js/services/mcx-market-context.js'), 'utf8');
+  if (MCX_UNDO.isApplied(HEAD_HTML)) {
+    HEAD_HTML = MCX_UNDO.undoMcxPr1(HEAD_HTML, mcxSrc);
+    ok(true, '11.-4 MCX market context is undone byte-exactly before the PRETRADE links');
+  }
   if (PRETRADE_UNDO3.isApplied(HEAD_HTML)) {
     HEAD_HTML = PRETRADE_UNDO3.undoPretradePr3(HEAD_HTML, pretradeModalSrc);
     ok(true, '11.-3 PRETRADE risk modal is undone byte-exactly before the older PRETRADE links');

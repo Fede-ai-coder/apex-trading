@@ -619,7 +619,10 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: the DSB panel remains immediately before the later PRETRADE owner');
   eq(pretradeTagIdx, pretradeTechTagIdx - 1, 'tag order: the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
   eq(pretradeTechTagIdx, pretradeModalTagIdx - 1, 'tag order: the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
-  eq(pretradeModalTagIdx, inlineTagIdx - 1, 'tag order: the PRETRADE risk modal is now the LAST external classic script before the inline monolith');
+  const mcxTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-market-context\.js$/.test(String(t.src || '')); });
+  ok(mcxTagIdx >= 0, 'tag order: the newest MCX market-context script is present');
+  eq(pretradeModalTagIdx, mcxTagIdx - 1, 'tag order: the PRETRADE risk modal is immediately before the MCX market-context owner');
+  eq(mcxTagIdx, inlineTagIdx - 1, 'tag order: the MCX market-context owner is now the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -655,11 +658,12 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // Exact slots, counted back from the inline monolith. PR 1 added the DSB pure
 // adapter, PR 2 the DSB service and PR 3 the DSB panel as the last external
 // scripts, then the three PRETRADE owners — risk rules, technicals and the risk
-// modal that closed the family — were appended after them, shifting these two by
-// six each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 9,
+// modal that closed the family — were appended after them, and the MCX
+// market-context owner was appended after those, shifting these two by seven
+// each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 10,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 8,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 9,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -688,8 +692,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 8,
      'ORDER: the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
   eq(PART_RANGES.indexOf(pretradeTechPart[0]), PART_RANGES.indexOf(pretradeModalPart[0]) - 1,
      'ORDER: the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
-  eq(PART_RANGES.indexOf(pretradeModalPart[0]), PART_RANGES.length - 2,
-     'ORDER: the PRETRADE risk modal is the last application script before the inline monolith');
+  const mcxPart = PART_RANGES.filter(function (r) { return /mcx-market-context\.js$/.test(r.src); });
+  eq(mcxPart.length, 1, 'ORDER: the newest MCX market-context owner is present exactly once');
+  eq(PART_RANGES.indexOf(pretradeModalPart[0]), PART_RANGES.indexOf(mcxPart[0]) - 1,
+     'ORDER: the PRETRADE risk modal is immediately before the MCX market-context owner');
+  eq(PART_RANGES.indexOf(mcxPart[0]), PART_RANGES.length - 2,
+     'ORDER: the MCX market-context owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

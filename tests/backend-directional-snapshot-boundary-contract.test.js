@@ -210,10 +210,17 @@ const PRETRADE_EXTRACTION_SCRIPTS = [
   './js/services/pretrade-technicals.js',
   './js/ui/pretrade-risk-modal.js',
 ];
+// The MCX family's extraction, which began after the PRETRADE family closed.
+// Same rule as every list above: a LIST, never an `mcx-*` pattern, so a second
+// MCX owner cannot appear without an exact reviewed entry.
+const MCX_EXTRACTION_SCRIPTS = [
+  './js/services/mcx-market-context.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
-  .concat(PRETRADE_EXTRACTION_SCRIPTS);
+  .concat(PRETRADE_EXTRACTION_SCRIPTS)
+  .concat(MCX_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -1093,10 +1100,42 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     return sum;
   })();
   ok(PRECEDING_TOTAL > 0, 'modules load before the inline monolith and contribute to the reconstructed source');
-  eq(rlpd.start - PRECEDING_TOTAL, 242549, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
-  eq(drp.start - PRECEDING_TOTAL, 203132, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
-  eq(rlpd.start - drp.start, 242549 - 203132,
+  // AND WHY THE MONOLITH-RELATIVE PIN NOW SUBTRACTS A RELOCATION TOO
+  //
+  // The MCX market-context extraction removed two spans from the monolith ABOVE
+  // both of these declarations and moved them, verbatim, into
+  // js/services/mcx-market-context.js. That is the same permitted operation as
+  // adding a script tag — code leaving the monolith for an owner module — not the
+  // monolith edit this invariant forbids. A bare monolith-relative pin cannot
+  // tell the two apart, so the relocated size is DERIVED from the MCX undo
+  // helper's own pinned span constants and subtracted.
+  //
+  // This is a sharper measurement, not an exemption: the pins stay exact, the
+  // shift must equal the relocation EXACTLY, and the gap assertion below is
+  // untouched — so a real edit above either declaration produces a different
+  // delta and still fails here.
+  const MCX_UNDO_SPANS = require('./lib/mcx-pr1-undo.js');
+  const MCX_RELOCATED_ABOVE = (MCX_UNDO_SPANS.A_CHARS + 2) + (1 + MCX_UNDO_SPANS.B_CHARS + 2);
+  eq(MCX_RELOCATED_ABOVE, 14216, 'the MCX relocation removed exactly 14,216 chars from the monolith');
+  const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
+  eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - MCX_RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
+  eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - MCX_RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
+  eq(rlpd.start - drp.start, RLPD_PRE_MCX - DRP_PRE_MCX,
      'the gap between the two declarations is unchanged — nothing was inserted between them');
+  // The relocation really happened: none of the MCX owner's declarations is left
+  // in the monolith. Without this the subtraction above could mask a plain edit.
+  {
+    const mcxOwner = APP_PARTS.filter(function (q) { return /mcx-market-context\.js$/.test(String(q.name || '')); });
+    eq(mcxOwner.length, 1, 'the MCX market-context owner is loaded exactly once');
+    const inlinePart = APP_PARTS.find(function (q) { return q.name === 'INLINE'; });
+    const owned = (mcxOwner[0].code.match(/^(?:async )?function ([A-Za-z_$][\w$]*)/gm) || [])
+      .map(function (m2) { return m2.replace(/^(?:async )?function /, ''); });
+    eq(owned.length, 10, 'the MCX owner declares its ten relocated functions');
+    owned.forEach(function (n) {
+      ok(inlinePart.code.indexOf('\nfunction ' + n + '(') < 0 && inlinePart.code.indexOf('\nasync function ' + n + '(') < 0,
+         'relocated, not edited: ' + n + ' is no longer declared in the monolith');
+    });
+  }
   {
     // Both offsets moved by EXACTLY the three modules' contribution to the
     // reconstructed source (each one's length plus the loader's joining '\n'),
@@ -2641,6 +2680,9 @@ PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
 EIC_EXTRACTION_SCRIPTS.forEach(function (src) {
   ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared EIC extraction module is loaded: ' + src);
 });
+MCX_EXTRACTION_SCRIPTS.forEach(function (src) {
+  ok(ALL_LOCAL_SCRIPTS.indexOf(src) >= 0, 'the declared MCX extraction module is loaded: ' + src);
+});
 const LOCAL_SCRIPTS = ALL_LOCAL_SCRIPTS
   .filter(function (src) { return DECLARED_NON_DSB_SCRIPTS.indexOf(src) < 0; });
 deepEq(LOCAL_SCRIPTS, [
@@ -2660,7 +2702,7 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 41,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 42,
    'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 3 PRETRADE extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
@@ -3381,7 +3423,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && STRESS_COMPANION_SCRIPTS.indexOf(m.name) < 0
     && PESS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && EIC_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && PRETRADE_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && PRETRADE_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

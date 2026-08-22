@@ -153,7 +153,17 @@ function transformFromBase(base) {
 }
 
 const base=execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding:'utf8',maxBuffer:8*1024*1024});
-const index=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+// THE DOCUMENT THIS CONTRACT PINS predates the MCX market-context extraction,
+// which has since been cut against it, so that extraction is undone FIRST —
+// newest-first, the same rule the existing links follow. The helper re-verifies
+// the document it hands back by length and SHA-256, so this hop is proved rather
+// than assumed and every offset, hash and ratchet below still addresses exactly
+// the document it was written against.
+const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
+const liveIndex=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
+const index = MCX_UNDO.isApplied(liveIndex)
+  ? MCX_UNDO.undoMcxPr1(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
+  : liveIndex;
 const moduleSrc=fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');
 const rulesSrc=fs.readFileSync(path.join(ROOT,RULES_REL),'utf8');
 const techSrc=fs.readFileSync(path.join(ROOT,TECH_REL),'utf8');
@@ -508,7 +518,11 @@ eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by their
 section('11. production scope');
 const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,['index.html',MODULE_REL].sort(),'production footprint is exactly index.html + the modal owner');
+// The diff is measured from the pre-modal base, so it now also spans the MCX
+// market-context owner extracted on top. The list stays EXACT and named — an
+// unplanned production file still fails here.
+const MCX_MODULE_REL='js/services/mcx-market-context.js';
+same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL].sort(),'production footprint is exactly index.html + the modal owner + the MCX owner');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no workflow or bootstrap script was touched');
 ok(!changed.some(p=>p===RULES_REL||p===TECH_REL),'neither earlier PRETRADE owner was modified');
 
