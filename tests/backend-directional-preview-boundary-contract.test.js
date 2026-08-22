@@ -130,6 +130,7 @@ const EIC_TICKER_PANEL_REL = './js/ui/eic-ticker-analysis-panel.js';
 // every entry above — an exact-set inventory, never an `eic-*` glob — and with
 // this entry the EIC family is closed at four modules.
 const EIC_LIVE_DEEP_DIVE_REL = './js/ui/eic-live-deep-dive.js';
+const PRETRADE_RISK_MODAL_REL = './js/ui/pretrade-risk-modal.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2298,11 +2299,14 @@ section('30. physical script order');
   ok(iDsbPanel >= 0, 'index.html loads the DSB panel script');
   const iPretrade = srcs.indexOf('./js/services/pretrade-risk-rules.js');
   const iPretradeTech = srcs.indexOf('./js/services/pretrade-technicals.js');
+  const iPretradeModal = srcs.indexOf('./js/ui/pretrade-risk-modal.js');
   ok(iPretrade >= 0, 'index.html loads the later PRETRADE risk-rules script');
-  ok(iPretradeTech >= 0, 'index.html loads the newest PRETRADE technicals script');
+  ok(iPretradeTech >= 0, 'index.html loads the PRETRADE technicals script');
+  ok(iPretradeModal >= 0, 'index.html loads the newest PRETRADE risk-modal script');
   eq(iDsbPanel, iPretrade - 1, 'ORDER: the DSB panel remains immediately before the later PRETRADE owner');
   eq(iPretrade, iPretradeTech - 1, 'ORDER: the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-  eq(iPretradeTech, srcs.length - 2, 'ORDER: PRETRADE technicals is the LAST external script before the inline monolith');
+  eq(iPretradeTech, iPretradeModal - 1, 'ORDER: the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
+  eq(iPretradeModal, srcs.length - 2, 'ORDER: the PRETRADE risk modal is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2346,11 +2350,14 @@ section('30. physical script order');
   ok(dsbPanelTagIdx >= 0, 'tag order: the DSB panel tag is present');
   const pretradeTagIdx = TAGS.findIndex(function (t) { return /pretrade-risk-rules\.js$/.test(clean(t.src)); });
   const pretradeTechTagIdx = TAGS.findIndex(function (t) { return /pretrade-technicals\.js$/.test(clean(t.src)); });
+  const pretradeModalTagIdx = TAGS.findIndex(function (t) { return /pretrade-risk-modal\.js$/.test(clean(t.src)); });
   ok(pretradeTagIdx >= 0, 'tag order: the later PRETRADE owner tag is present');
-  ok(pretradeTechTagIdx >= 0, 'tag order: the newest PRETRADE technicals tag is present');
+  ok(pretradeTechTagIdx >= 0, 'tag order: the PRETRADE technicals tag is present');
+  ok(pretradeModalTagIdx >= 0, 'tag order: the newest PRETRADE risk-modal tag is present');
   eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: DSB panel remains immediately before PRETRADE');
   eq(pretradeTagIdx, pretradeTechTagIdx - 1, 'tag order: PRETRADE risk rules remains immediately before PRETRADE technicals');
-  eq(pretradeTechTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE technicals is the LAST script tag before the inline monolith');
+  eq(pretradeTechTagIdx, pretradeModalTagIdx - 1, 'tag order: PRETRADE technicals remains immediately before the PRETRADE risk modal');
+  eq(pretradeModalTagIdx, inlineTagIdx - 1, 'tag order: the PRETRADE risk modal is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
@@ -2399,8 +2406,8 @@ section('30. physical script order');
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
      [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL, PESS_UI_PANEL_REL,
-      EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly nine scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel, the EIC ticker-analysis panel and the EIC live-deep-dive module');
+      EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL, PRETRADE_RISK_MODAL_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly ten scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel, the EIC ticker-analysis panel, the EIC live-deep-dive module and the PRETRADE risk modal');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

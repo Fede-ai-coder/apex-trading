@@ -612,11 +612,14 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: the DSB service is immediately before the DSB panel');
   const pretradeTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-risk-rules\.js$/.test(String(t.src || '')); });
   const pretradeTechTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-technicals\.js$/.test(String(t.src || '')); });
+  const pretradeModalTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /pretrade-risk-modal\.js$/.test(String(t.src || '')); });
   ok(pretradeTagIdx >= 0, 'tag order: the later PRETRADE risk-rules script is present');
-  ok(pretradeTechTagIdx >= 0, 'tag order: the newest PRETRADE technicals script is present');
+  ok(pretradeTechTagIdx >= 0, 'tag order: the PRETRADE technicals script is present');
+  ok(pretradeModalTagIdx >= 0, 'tag order: the newest PRETRADE risk-modal script is present');
   eq(dsbPanelTagIdx, pretradeTagIdx - 1, 'tag order: the DSB panel remains immediately before the later PRETRADE owner');
   eq(pretradeTagIdx, pretradeTechTagIdx - 1, 'tag order: the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-  eq(pretradeTechTagIdx, inlineTagIdx - 1, 'tag order: PRETRADE technicals is now the LAST external classic script before the inline monolith');
+  eq(pretradeTechTagIdx, pretradeModalTagIdx - 1, 'tag order: the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
+  eq(pretradeModalTagIdx, inlineTagIdx - 1, 'tag order: the PRETRADE risk modal is now the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -651,11 +654,12 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
    'ORDER: the preview module is loaded AFTER the adapter module');
 // Exact slots, counted back from the inline monolith. PR 1 added the DSB pure
 // adapter, PR 2 the DSB service and PR 3 the DSB panel as the last external
-// scripts, then the PRETRADE risk-rules owner and the PRETRADE technicals owner
-// were appended after them — shifting these two by five each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 8,
+// scripts, then the three PRETRADE owners — risk rules, technicals and the risk
+// modal that closed the family — were appended after them, shifting these two by
+// six each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 9,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 7,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 8,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -663,8 +667,10 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 7,
   const dsbPanelPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-panel\.js$/.test(r.src); });
   const pretradePart = PART_RANGES.filter(function (r) { return /pretrade-risk-rules\.js$/.test(r.src); });
   const pretradeTechPart = PART_RANGES.filter(function (r) { return /pretrade-technicals\.js$/.test(r.src); });
+  const pretradeModalPart = PART_RANGES.filter(function (r) { return /pretrade-risk-modal\.js$/.test(r.src); });
   eq(pretradePart.length, 1, 'ORDER: the later PRETRADE owner is present exactly once');
-  eq(pretradeTechPart.length, 1, 'ORDER: the newest PRETRADE technicals owner is present exactly once');
+  eq(pretradeTechPart.length, 1, 'ORDER: the PRETRADE technicals owner is present exactly once');
+  eq(pretradeModalPart.length, 1, 'ORDER: the newest PRETRADE risk-modal owner is present exactly once');
   eq(dsbAdapterPart.length, 1, 'the DSB pure adapter is its own external script');
   eq(dsbServicePart.length, 1, 'the DSB service is its own external script');
   eq(dsbPanelPart.length, 1, 'the DSB panel is its own external script');
@@ -674,14 +680,16 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 7,
      'ORDER: the DSB service is the application script immediately before the DSB panel');
   eq(PART_RANGES.indexOf(dsbPanelPart[0]), PART_RANGES.indexOf(pretradePart[0]) - 1,
      'ORDER: the DSB panel remains immediately before the later PRETRADE owner');
-  // The PRETRADE technicals owner was appended after the risk-rules owner, so the
-  // tail is now DSB panel → PRETRADE risk rules → PRETRADE technicals → inline.
-  // Every position stays EXACT and every occupant is named, so an unplanned script
-  // appearing anywhere in that tail still fails.
+  // The PRETRADE risk modal closed the family after the technicals owner, so the
+  // tail is now DSB panel → PRETRADE risk rules → PRETRADE technicals → PRETRADE
+  // risk modal → inline. Every position stays EXACT and every occupant is named,
+  // so an unplanned script appearing anywhere in that tail still fails.
   eq(PART_RANGES.indexOf(pretradePart[0]), PART_RANGES.indexOf(pretradeTechPart[0]) - 1,
      'ORDER: the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-  eq(PART_RANGES.indexOf(pretradeTechPart[0]), PART_RANGES.length - 2,
-     'ORDER: PRETRADE technicals is the last application script before the inline monolith');
+  eq(PART_RANGES.indexOf(pretradeTechPart[0]), PART_RANGES.indexOf(pretradeModalPart[0]) - 1,
+     'ORDER: the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
+  eq(PART_RANGES.indexOf(pretradeModalPart[0]), PART_RANGES.length - 2,
+     'ORDER: the PRETRADE risk modal is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,
