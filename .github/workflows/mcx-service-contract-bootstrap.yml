@@ -1,0 +1,82 @@
+name: MCX service boundary bootstrap
+
+on:
+  push:
+    branches:
+      - agent/extract-mcx-market-context-service
+
+permissions:
+  contents: write
+
+jobs:
+  contract-and-full-suite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout extraction branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate byte-identity boundary contract
+        run: |
+          node --check scripts/bootstrap-mcx-service-contract.js
+          node scripts/bootstrap-mcx-service-contract.js
+          node --check tests/mcx-market-context-service-boundary-contract.test.js
+          node tests/mcx-market-context-service-boundary-contract.test.js
+
+      - name: Targeted MCX and VIX contracts
+        run: |
+          set -euo pipefail
+          for f in \
+            tests/load-app-source.test.js \
+            tests/vix-family-backend-source.test.js \
+            tests/vix-family-premature-close.test.js \
+            tests/mcx_backend_snapshot.test.js \
+            tests/mcx_backend_technical_summary.test.js \
+            tests/mcx-refresh-on-open-freshness.test.js \
+            tests/mcx-regime-rules.test.js \
+            tests/mcx-sma20-rising-defense-rule.test.js \
+            tests/mcx-backend-candles.test.js \
+            tests/regime-naked-calls.test.js
+          do
+            echo "===== $f ====="
+            node "$f"
+          done
+
+      - name: Full frontend suite on Node 22
+        run: |
+          set -euo pipefail
+          total=0
+          for f in tests/*.test.js; do
+            total=$((total+1))
+            echo "===== [$total] $f ====="
+            node "$f"
+          done
+          echo "FULL_SUITE_GREEN files=$total node=$(node --version)"
+
+      - name: Collapse into one clean extraction commit
+        env:
+          BASE_SHA: 34bc48ae33bf3b0044572457615f7e6efda547c0
+        run: |
+          set -euo pipefail
+          rm scripts/bootstrap-mcx-service-contract.js
+          rm .github/workflows/mcx-service-contract-bootstrap.yml
+          git add -A
+          git reset --soft "$BASE_SHA"
+
+          echo 'Final staged files:'
+          git diff --cached --name-only
+          actual="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' index.html js/services/mcx-market-context-service.js tests/mcx-market-context-service-boundary-contract.test.js | sort)"
+          test "$actual" = "$expected"
+          git diff --cached --check
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(mcx): extract market context service'
+          git push --force-with-lease origin "HEAD:${GITHUB_REF_NAME}"
