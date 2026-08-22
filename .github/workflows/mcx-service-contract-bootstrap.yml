@@ -23,12 +23,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Generate byte-identity boundary contract
+      - name: Permanent MCX service boundary contract
         run: |
           set -o pipefail
           {
-            node --check scripts/bootstrap-mcx-service-contract.js
-            node scripts/bootstrap-mcx-service-contract.js
+            node --check js/services/mcx-market-context-service.js
             node --check tests/mcx-market-context-service-boundary-contract.test.js
             node tests/mcx-market-context-service-boundary-contract.test.js
           } 2>&1 | tee /tmp/mcx-contract.log
@@ -105,7 +104,7 @@ jobs:
           BASE_SHA: 34bc48ae33bf3b0044572457615f7e6efda547c0
         run: |
           set -euo pipefail
-          rm scripts/bootstrap-mcx-service-contract.js
+          rm -f scripts/bootstrap-mcx-service-contract.js
           rm .github/workflows/mcx-service-contract-bootstrap.yml
           rm -f mcx-bootstrap-failure.txt
           git add -A
