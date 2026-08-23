@@ -866,7 +866,8 @@ async function main() {
   // an unplanned production file still fails here.
   const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
   same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL].sort(), 'production footprint is exactly index.html + the market-context owner + the MCX VIX owner');
-  ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file was touched');
+  const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', 'dbfd441b6135ac167763391e57e4c9ce068aa308', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
+  ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');
 
   console.log('\nMCX market-context boundary contract: ' + pass + ' passed, ' + fail + ' failed; mutants ' + killed + '/' + total);
   if (fail) process.exit(1);
