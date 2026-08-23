@@ -625,7 +625,10 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   const mcxVixTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-vix-market-context\.js$/.test(String(t.src || '')); });
   ok(mcxVixTagIdx >= 0, 'tag order: the newest MCX VIX market-context script is present');
   eq(mcxTagIdx, mcxVixTagIdx - 1, 'tag order: the MCX market-context owner is immediately before the MCX VIX owner');
-  eq(mcxVixTagIdx, inlineTagIdx - 1, 'tag order: the MCX VIX owner is now the LAST external classic script before the inline monolith');
+  const mcxBackendTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-backend-candles\.js$/.test(String(t.src || '')); });
+  ok(mcxBackendTagIdx >= 0, 'tag order: the MCX backend-candle owner is present');
+  eq(mcxVixTagIdx, mcxBackendTagIdx - 1, 'tag order: the MCX VIX owner is immediately before the MCX backend-candle owner');
+  eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is now the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -664,9 +667,9 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // modal that closed the family — were appended after them, and the two MCX
 // owners (market context, then VIX market context) were appended after those,
 // shifting these two by eight each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 11,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 12,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 10,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 11,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -700,11 +703,15 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 10,
   eq(PART_RANGES.indexOf(pretradeModalPart[0]), PART_RANGES.indexOf(mcxPart[0]) - 1,
      'ORDER: the PRETRADE risk modal is immediately before the MCX market-context owner');
   const mcxVixPart = PART_RANGES.filter(function (r) { return /mcx-vix-market-context\.js$/.test(r.src); });
+  const mcxBackendPart = PART_RANGES.filter(function (r) { return /mcx-backend-candles\.js$/.test(r.src); });
   eq(mcxVixPart.length, 1, 'ORDER: the newest MCX VIX owner is present exactly once');
   eq(PART_RANGES.indexOf(mcxPart[0]), PART_RANGES.indexOf(mcxVixPart[0]) - 1,
      'ORDER: the MCX market-context owner is immediately before the MCX VIX owner');
-  eq(PART_RANGES.indexOf(mcxVixPart[0]), PART_RANGES.length - 2,
-     'ORDER: the MCX VIX owner is the last application script before the inline monolith');
+  eq(mcxBackendPart.length, 1, 'ORDER: the MCX backend-candle owner is present exactly once');
+  eq(PART_RANGES.indexOf(mcxVixPart[0]), PART_RANGES.indexOf(mcxBackendPart[0]) - 1,
+     'ORDER: the MCX VIX owner is immediately before the MCX backend-candle owner');
+  eq(PART_RANGES.indexOf(mcxBackendPart[0]), PART_RANGES.length - 2,
+     'ORDER: the MCX backend-candle owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

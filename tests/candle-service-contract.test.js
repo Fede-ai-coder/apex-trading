@@ -614,6 +614,8 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // (1) module file exists.
     ok(fs.existsSync(DX_PATH), '0: js/services/candle-dxlink-client.js exists');
     const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
+    const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');
+    const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';
 
     // (2) exactly one <script src> tag for it in index.html.
     const dxTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-dxlink-client\.js["'][^>]*>/gi) || [];
@@ -693,7 +695,8 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // adapters below do.
     ['_mcxFetchBackendCandlesForChart'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
-      ok(reDef.test(inlineMonolith), '0: feature adapter stays in the monolith: ' + n);
+      ok(reDef.test(MCX3_SRC), '0: MCX feature adapter is owned by mcx-backend-candles.js: ' + n);
+      ok(!reDef.test(inlineMonolith), '0: MCX feature adapter has zero residual inline declaration: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator NOT present in candle-dxlink-client.js: ' + n);
     });
     // _fetchPretradeBackendCandles now lives in js/services/pretrade-technicals.js; its
@@ -1437,7 +1440,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     ['FEATURE_ADAPTER', 'LEGACY_PUBLIC_READ'].forEach((cat) => {
       manifest[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
-        ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
+        if (name === '_mcxFetchBackendCandlesForChart') {
+          ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);
+          ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);
+        } else {
+          ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
+        }
         ok(MODULE_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-normalization.js: ' + name);
       });
     });

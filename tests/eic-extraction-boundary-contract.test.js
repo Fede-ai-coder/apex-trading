@@ -111,6 +111,7 @@ const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
 // Each helper re-verifies the document it hands back by length and SHA-256,
 // so every offset below still addresses exactly the document it was written
 // against.
+const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
@@ -147,9 +148,13 @@ const PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pre
 const PRETRADE_MODAL_SRC = fs.readFileSync(path.join(ROOT, 'js', 'ui', 'pretrade-risk-modal.js'), 'utf8');
 const MCX_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-market-context.js'), 'utf8');
 const MCX2_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8');
-const POST_MCX2_HTML = MCX_UNDO2.isApplied(LIVE_HTML)
-  ? MCX_UNDO2.undoMcxPr2(LIVE_HTML, MCX2_SRC)
+const MCX3_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
+const POST_MCX3_HTML = MCX_UNDO3.isApplied(LIVE_HTML)
+  ? MCX_UNDO3.undoMcxPr3(LIVE_HTML, MCX3_SRC)
   : LIVE_HTML;
+const POST_MCX2_HTML = MCX_UNDO2.isApplied(POST_MCX3_HTML)
+  ? MCX_UNDO2.undoMcxPr2(POST_MCX3_HTML, MCX2_SRC)
+  : POST_MCX3_HTML;
 const POST_MCX_HTML = MCX_UNDO.isApplied(POST_MCX2_HTML)
   ? MCX_UNDO.undoMcxPr1(POST_MCX2_HTML, MCX_SRC)
   : POST_MCX2_HTML;

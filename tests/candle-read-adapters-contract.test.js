@@ -381,6 +381,8 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // (1) module file exists.
     ok(fs.existsSync(DX_PATH), '0: js/services/candle-dxlink-client.js exists');
     const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
+    const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');
+    const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';
     const DX_CODE = stripComments(DX_SRC); // construct checks run against CODE only (verbatim prose keeps words like "window")
 
     // (2)(3)(4) exactly one classic <script src> tag (no type=module, no async, no defer).
@@ -445,7 +447,7 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // NOT moved: they stay defined in the residual inline monolith and did NOT leak into the
     // store-client or dxlink-client modules. The DXLINK_PRIMITIVE is asserted separately in
     // 0-EXTRACTION-DXLINK above (it now lives in candle-dxlink-client.js, not the monolith).
-    ['READ_ORCHESTRATOR', 'FEATURE_ADAPTER'].forEach((cat) => {
+    ['READ_ORCHESTRATOR'].forEach((cat) => {
       MANIFEST[cat].forEach((name) => {
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);
@@ -453,6 +455,14 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         ok(DX_SRC.indexOf(name) === -1, '0: [' + cat + '] NOT present in candle-dxlink-client.js: ' + name);
       });
     });
+    {
+      const name = '_mcxFetchBackendCandlesForChart';
+      const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+      ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);
+      ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);
+      ok(STORE_SRC.indexOf(name) === -1, '0: [FEATURE_ADAPTER] NOT present in candle-store-client.js: ' + name);
+      ok(DX_SRC.indexOf(name) === -1, '0: [FEATURE_ADAPTER] NOT present in candle-dxlink-client.js: ' + name);
+    }
     // 0-EXTRACTION-PRETRADE-TECHNICALS. The pre-trade adapter is no longer a monolith
     // resident. The location invariant is not dropped — it MOVES with the function: the
     // symbol must be defined EXACTLY ONCE, in its named owner module, and must still be
@@ -482,7 +492,8 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     // symbol must stay OUT of the dxlink-client module, which is what this audit cares about.)
     ['_mcxFetchBackendCandlesForChart'].forEach((n) => {
       const reDef = new RegExp('(?:async\\s+)?function\\s+' + n + '\\s*\\(');
-      ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);
+      ok(reDef.test(MCX3_SRC), '0: MCX adapter is owned by mcx-backend-candles.js: ' + n);
+      ok(!reDef.test(inlineMonolith), '0: MCX adapter has zero residual inline declaration: ' + n);
       ok(DX_SRC.indexOf(n) === -1, '0: orchestrator/adapter NOT present in candle-dxlink-client.js: ' + n);
     });
     // _fetchPretradeBackendCandles was extracted to js/services/pretrade-technicals.js in
