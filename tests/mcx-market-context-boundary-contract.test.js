@@ -55,21 +55,35 @@ const MANIFEST = SPAN_A.concat(SPAN_B);
 
 // The two cuts, pinned as base offsets. A_* is the helper's own line; B_* is the
 // family's comment header plus its nine declarations.
-const A_AT = 208421, A_CHARS = 73;
-const B_AT = 215538, B_CHARS = 14138;
+const A_AT = 208421, A_CHARS = 73;          // slice; the cut also took the blank line after it
+const B_AT = 215538, B_CHARS = 14138;       // slice; the cut also took one newline before and the blank line after
 const JOINER = '\n\n';
-const EXPECTED_MODULE_CHARS = A_CHARS + JOINER.length + B_CHARS;
+const EXPECTED_MODULE_CHARS = A_CHARS + JOINER.length + B_CHARS;   // 14213
 
+// Call-time dependencies that STAY inline. Copying or moving any of these is the
+// mistake this PR is most likely to make by accident, so each is pinned by owner:
+// still declared exactly once inline, never declared in the owner, still read by
+// the owner. Each is genuinely owned by another family — every one of them has
+// callers outside MCX, which is why the boundary runs where it does.
+// These four are owned by another family AND still have inline callers that are
+// not this owner, which is the reason the boundary runs where it does.
 const SHARED_INLINE_DEPS = [
-  'fetchMarketContextSnapshotFromBackend',
-  '_applyFreshVixFamily',
-  '_ensureVixFamily',
-  '_mcxDrawVixCurve',
+  'fetchMarketContextSnapshotFromBackend', // backend market-context fetch family
+  '_applyFreshVixFamily',                  // VIX-family freshness guard
+  '_ensureVixFamily',                      // VIX-family dedupe
+  '_mcxDrawVixCurve',                      // MCX CHART family — deliberately not extracted
 ];
+// The feature flag is different and is pinned differently on purpose: after this
+// extraction the owner is its ONLY consumer, so "it has other callers" would be
+// false. What makes it another family's is that it is one of the fourteen ff*
+// flags declared together inline — so the assertion below is that the whole flag
+// cluster stayed inline and intact, not that someone else calls it.
 const FLAG_DEP = 'ffMcxBackendSnapshot';
 const INLINE_FF_DECLS = 14;
 const INLINE_DEPS = [FLAG_DEP].concat(SHARED_INLINE_DEPS);
 
+// MCX declarations that are deliberately LEFT inline. These name the adjacent
+// clusters this extraction must not swallow.
 const NOT_EXTRACTED = [
   '_mcxRenderCharts', '_mcxDrawOne', '_mcxDrawRsi', '_mcxDrawVixCurve', '_mcxUpdateTable',
   '_mcxRegimeOf', '_mcxRenderSpySqzBadge', '_mcxSpy1dSma20Rising', '_mcxRenderSma20DefenseRule',
@@ -80,16 +94,22 @@ const NOT_EXTRACTED = [
   '_mcxVi3mSym', '_mcxTechCtx', '_mcxSqzToast', '_mcxCheckSqz', '_mcxSpySqzBadgeHtml',
   '_mcxStopPolls', '_mcxRunMacroCheck', 'ffMcxBackendSnapshot', 'ffBackendCandlesMcxCharts',
 ];
+// The inline MCX top-level declaration count, before and after. A ratchet, so a
+// later PR that pastes any of them back inline fails here.
 const MCX_INLINE_DECLS_BASE = 57;
 const MCX_INLINE_DECLS_HEAD = 47;
 
+// The three application callsites, pinned verbatim from the base document.
 const CALLSITES = [
   '  _mcxRenderSpySqzBadge(); // update MCX VIX block badge after ctxMap is fully built\n  _mcxRenderBackendTechnicalSummary();\n}',
   "  var tsEl = document.getElementById('mcx-ts');\n  if (tsEl) tsEl.textContent = 'Refreshing…';\n  var p = _mcxRefreshVixData();",
   '  // post-login VIX-family prefetch fills S.vixFamily with DXLink data and the\n  // backend snapshot then never runs.\n  _mcxRefreshVixData();',
 ];
 
+// The DOM ids this family owns. The extraction must not have widened its DOM
+// surface, so the set is pinned exactly.
 const OWNED_DOM_IDS = ['mcx-ts', 'mcx-snapshot-src', 'mcx-backend-tech-summary'];
+// The S.marketContextSnapshot fields the family writes. Same reasoning.
 const OWNED_STATE_WRITES = [
   'data', 'error', 'pending', 'regimeSummary', 'source', 'technicals',
   'termShape', 'updatedAt', 'vixSource', 'volatilityBucket',
@@ -123,6 +143,8 @@ function matchBrace(src, open) {
   }
   return -1;
 }
+// Declaration finder, not a regex: a regex over a 2 MB document matches text in
+// strings, comments and unrelated identifiers. This walks to the real body.
 function findFunctionFrom(src, name, from) {
   for (const sig of ['async function ' + name + '(', 'function ' + name + '(']) {
     let p = src.indexOf(sig, from || 0);
@@ -138,6 +160,10 @@ function findFunctionFrom(src, name, from) {
   return null;
 }
 function findFunction(src, name) { return findFunctionFrom(src, name, 0); }
+// Advances past the matched BODY, not past its first character: `async function X(`
+// contains `function X(` six characters in, so a start+1 walk counts one async
+// declaration twice. Stepping to d.end still finds a genuine second top-level
+// declaration, so this is exact rather than lenient.
 function countDeclarations(src, name) {
   let n = 0, from = 0, d;
   while ((d = findFunctionFrom(src, name, from))) { n++; from = d.end; }
@@ -166,6 +192,8 @@ function stripComments(src) {
   return out;
 }
 
+// The whole transform, DERIVED from the base rather than described. Two cuts,
+// then one classic tag added directly after the risk-modal owner.
 function transformFromBase(base) {
   const a = findFunction(base, SPAN_A[0]);
   const first = findFunction(base, SPAN_B[0]);
@@ -173,6 +201,9 @@ function transformFromBase(base) {
   if (!a || !first || !last) throw new Error('missing base targets');
   if (!(a.end < first.start && first.start < last.start)) throw new Error('unexpected base ordering');
   const sliceA = base.slice(a.start, a.end);
+  // Span B opens at the family's comment header, which is the run of comment
+  // lines directly above the first declaration — located from the base, not
+  // hardcoded, so a shifted comment is a failure rather than a silent re-pin.
   let bStart = first.start;
   while (bStart > 0) {
     const lineStart = base.lastIndexOf('\n', bStart - 2) + 1;
@@ -181,6 +212,8 @@ function transformFromBase(base) {
   }
   const sliceB = base.slice(bStart, last.end);
   const module = sliceA + JOINER + sliceB;
+  // Cut A takes the declaration plus the blank line after it; cut B takes the
+  // newline before the comment header plus the blank line after the family.
   const cutA = { start: a.start, end: a.end + 2 };
   const cutB = { start: bStart - 1, end: last.end + 2 };
   if (base.slice(cutA.start, cutA.end) !== sliceA + '\n\n') throw new Error('cut A shape');
@@ -192,6 +225,13 @@ function transformFromBase(base) {
 }
 
 const base = execFileSync('git', ['show', BASE_SHA + ':index.html'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+// THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it.
+// The MCX VIX extraction (PR #389) has since been cut against that document,
+// so it is undone first — newest-first — restoring the exact post-#386 index
+// that every offset, hash, slice and mutant below addresses. The helper
+// re-verifies what it hands back by length and SHA-256, so this hop is proved
+// rather than assumed, and the assertions below keep meaning exactly what they
+// meant before PR #389 existed: this stays a proof of PR #386.
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const index = MCX_UNDO2.isApplied(liveIndex)
@@ -213,6 +253,9 @@ eq(expected.bStart, B_AT, 'span B start offset in the base document is pinned');
 eq(expected.sliceB.length, B_CHARS, 'span B is exactly 14,138 chars');
 eq(digest(expected.sliceA), '8acf64fbbcf084c9dbdfa5051b07f12a0c5cf7f2c3f58d5d46e32c106daafc2f', 'span A SHA-256 is the recorded one');
 eq(digest(expected.sliceB), 'bf93da90ca861f678884fdcb5aa037142252b3c5f5efb7a99aea28b8d816def9', 'span B SHA-256 is the recorded one');
+// The two spans are genuinely NON-CONTIGUOUS: if they ever became adjacent the
+// transform would be a single cut and this contract would be over-complicated
+// for the job — that is a change worth failing on.
 ok(expected.a.end + 2 < expected.bStart, 'the two spans are non-contiguous in the base — the two-cut transform is the right shape');
 eq(base.slice(expected.a.end, expected.a.end + 2), '\n\n', 'span A is followed by exactly one blank line at the base');
 eq(base.slice(expected.last.end, expected.last.end + 2), '\n\n', 'span B is followed by exactly one blank line at the base');
@@ -235,6 +278,8 @@ eq(moduleSrc.slice(0, A_CHARS), expected.sliceA, 'the owner opens with the exact
 eq(moduleSrc.slice(A_CHARS, A_CHARS + JOINER.length), JOINER, 'the two spans are joined by exactly one blank line');
 eq(moduleSrc.slice(A_CHARS + JOINER.length), expected.sliceB, 'the owner continues with the exact base span B');
 eq(digest(moduleSrc), '0b11f9ae056f85c9ab4987f945609db7f33960516a6e18794e86f61819f306a0', 'owner SHA-256 is the recorded one');
+// Nothing executable hides between the declarations: cut all ten out and only
+// comments and whitespace are left.
 let residue = moduleSrc, cutOut = 0;
 for (const name of MANIFEST.slice().reverse()) {
   const d = findFunction(residue, name);
@@ -267,6 +312,8 @@ ok(inlineOpen === tagAt + TAG.length, 'the owner loads immediately before the in
 ok(modalAt < tagAt && tagAt < inlineOpen, 'load order is risk modal -> market context -> monolith');
 eq(index.slice(tagAt, tagAt + TAG.length), TAG, 'the load tag is the exact classic src-only form');
 ok(!/<script[^>]*mcx-market-context[^>]*(defer|async|type=)/.test(index), 'the owner tag carries no defer, async or type attribute');
+// Load-order safety measured, not assumed: nothing the owner needs is resolved
+// at evaluation time, and every consumer of the owner runs later in the document.
 for (const n of MANIFEST) {
   const at = index.indexOf(n + '(');
   ok(at < 0 || at > inlineOpen, 'every remaining reference to ' + n + ' is inside the inline monolith, which loads after the owner');
@@ -279,6 +326,9 @@ for (const token of ['import', 'export', 'require', 'module.exports', 'define(',
 }
 ok(!/^\s*['"]use strict['"]/.test(bare), 'the owner adds no strict-mode pragma the inline monolith did not have');
 ok(!/^\s*\(function/.test(bare), 'the owner adds no IIFE wrapper');
+// Empirical: evaluate the owner with NO document, NO window, NO helpers. A file
+// that touched anything at load time would throw here; a file that defined
+// anything extra would show up in the sandbox key diff.
 const probe = {};
 vm.createContext(probe);
 const before = Object.keys(probe).sort();
@@ -299,6 +349,7 @@ for (const dep of INLINE_DEPS) {
 for (const dep of SHARED_INLINE_DEPS) {
   ok(count(index, dep) > 1, dep + ' still has inline callers of its own — it belongs to its family, not to this owner');
 }
+// The flag cluster stayed inline and whole; the owner declares none of it.
 const inlineFf = topLevelNames(index).filter((n) => /^ff[A-Z]/.test(n));
 eq(inlineFf.length, INLINE_FF_DECLS, 'all fourteen ff* feature-flag declarations are still inline');
 ok(inlineFf.indexOf(FLAG_DEP) >= 0, FLAG_DEP + ' is still one of them — the flag family was not split');
@@ -315,12 +366,16 @@ for (const site of CALLSITES) {
   eq(count(index, site), 1, 'the pinned callsite still occurs exactly once inline: ' + JSON.stringify(site.slice(-40)));
   ok(index.indexOf(site) > inlineOpen, 'the callsite is still inside the inline monolith, after the owner loads');
 }
+// Counted on the comment-stripped document: the monolith also MENTIONS
+// _mcxRefreshVixData() in a comment, and a comment is not a callsite.
 const indexCode = stripComments(index);
 eq(count(indexCode, '_mcxRefreshVixData()'), 2, '_mcxRefreshVixData is invoked from exactly two places inline');
 eq(count(indexCode, '_mcxRenderBackendTechnicalSummary()'), 1, '_mcxRenderBackendTechnicalSummary is invoked from exactly one place inline');
 eq(count(index, '_mcxRefreshVixData()') - count(indexCode, '_mcxRefreshVixData()'), 1, 'the one remaining mention is the comment the base already carried');
 
 section('8. side-effect boundary');
+// Enumerated, then pinned. The point is not that the owner has side effects —
+// it always did — but that the extraction introduced no NEW foreign ones.
 for (const forbidden of ['window.', 'globalThis.', 'localStorage', 'sessionStorage', 'fetch(', 'XMLHttpRequest', 'WebSocket', 'setTimeout', 'setInterval', 'requestAnimationFrame']) {
   eq(count(bare, forbidden), 0, 'the owner performs no ' + forbidden + ' — it did not at the base either');
 }
@@ -330,6 +385,7 @@ const domIds = [...new Set((moduleSrc.match(/'(mcx-[a-z0-9-]+)'/g) || []).map((s
 same(domIds, OWNED_DOM_IDS.slice().sort(), 'the owner names exactly the three MCX DOM ids it owned at the base');
 const stateWrites = [...new Set((bare.match(/\bst\.([A-Za-z0-9_$]+)\s*=/g) || []).map((s) => s.replace(/^st\./, '').replace(/\s*=$/, '')))].sort();
 same(stateWrites, OWNED_STATE_WRITES.slice().sort(), 'the owner writes exactly the ten S.marketContextSnapshot fields it wrote at the base');
+// Whatever the owner writes, it must be the same set the BASE slices wrote.
 const baseBare = stripComments(expected.module);
 same([...new Set((baseBare.match(/\bst\.([A-Za-z0-9_$]+)\s*=/g) || []))].sort(), [...new Set((bare.match(/\bst\.([A-Za-z0-9_$]+)\s*=/g) || []))].sort(), 'the state-write set is identical between the base slices and the owner');
 eq(count(bare, 'S.vixFamily'), count(baseBare, 'S.vixFamily'), 'the owner reads S.vixFamily exactly as often as the base slices did');
@@ -342,14 +398,18 @@ rebuilt = rebuilt.slice(0, expected.cutB.start) + '\n' + expected.sliceB + '\n\n
 eq(rebuilt, base, 'byte-exact MCX undo reconstructs the pinned base index');
 eq(digest(rebuilt), digest(base), 'round-trip SHA-256 matches the pinned base');
 eq(cutALen, A_CHARS + 2, 'cut A took the declaration plus its trailing blank line');
+// The shared helper is what the OLDER contracts chain through, so it is
+// exercised here against the same documents they will hand it.
 const MCX = require('./lib/mcx-pr1-undo.js');
 ok(MCX.isApplied(index), 'the shared MCX undo helper recognises this tree as extracted');
 eq(MCX.undoMcxPr1(index, moduleSrc), base, 'the shared MCX undo helper reproduces the pinned base');
+// And the link below it still closes: base -> the PRETRADE chain.
 const PR3 = require('./lib/pretrade-pr3-undo.js');
 ok(PR3.isApplied(base), 'the pinned base is still a PRETRADE-PR3-extracted document — the chain has somewhere to go');
 const at383 = PR3.undoPretradePr3(base, modalSrc);
 const at383Git = execFileSync('git', ['show', '0552fd129b9448a52ba379cae705e4077f8ad1e7:index.html'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 eq(at383, at383Git, 'chaining MCX -> PRETRADE PR3 reaches the post-#383 document — the whole chain closes');
+// The helper must REFUSE a source it was not given, not silently rebuild garbage.
 for (const [name, bad] of [
   ['a truncated owner', moduleSrc.slice(0, -1)],
   ['an equal-length byte mutation', moduleSrc.replace("return { label:'Near', color:'var(--tx3)' };", "return { label:'near', color:'var(--tx3)' };")],
@@ -367,6 +427,12 @@ for (const [name, bad] of [
 }
 
 section('10. BASE-vs-HEAD behavioural transcript parity');
+// The family is RUN for real — base slices and extracted owner alike — against a
+// deterministic DOM/state double. Every observable the PR promised not to change
+// is recorded: the DOM writes and their order, the state mutations, the console
+// transcript, the dependency call order, and the resolved value of the async
+// refresh path. Anything that differs between the two sources shows up as a
+// transcript diff rather than as a missing assertion.
 function mkEl(id, log) {
   const st = { text: null, html: null };
   const e = { id: id, style: {}, parentNode: null, nextSibling: null };
@@ -401,6 +467,10 @@ function makeWorld(f) {
     byId['mcx-snapshot-src'] = pre;
   }
   const S = JSON.parse(JSON.stringify(f.S));
+  // The family stamps st.updatedAt with `new Date().toISOString()`, so a live
+  // clock would make every transcript differ from every other one. Date is
+  // frozen at a fixed instant; explicit `new Date(x)` still parses normally, so
+  // the freshness formatting under test is exercised for real.
   function FrozenDate(a) { return arguments.length ? new Date(a) : new Date(FIXED_NOW); }
   FrozenDate.now = () => FIXED_NOW;
   FrozenDate.parse = Date.parse;
@@ -426,6 +496,10 @@ function makeWorld(f) {
   sandbox.globalThis = sandbox;
   return { log, byId, S, sandbox };
 }
+// Date/toLocaleTimeString make the rendered summary clock-dependent; the fixture
+// freshness values are fixed strings so both runs format the same instant, and
+// the comparison is base-vs-head in the SAME process, so any residual locale
+// dependence cancels.
 async function runFamily(src, f) {
   const w = makeWorld(f);
   vm.createContext(w.sandbox);
@@ -433,12 +507,14 @@ async function runFamily(src, f) {
   try {
     vm.runInContext(src, w.sandbox);
   } catch (e) { return { loadError: String(e && e.message), log: w.log }; }
+  // Pure helpers first — cheap, total, and the ones most likely to be "cleaned up".
   out.pure = [];
   for (const [fn, args] of f.pureCalls || []) {
     w.sandbox.__a = args;
     try { out.pure.push([fn, JSON.stringify(vm.runInContext(fn + '(...__a)', w.sandbox))]); }
     catch (e) { out.pure.push([fn, 'THREW:' + (e && e.message)]); }
   }
+  // Then the stateful entry points, in the order the application calls them.
   for (const step of f.steps) {
     w.sandbox.__arg = step.arg;
     try {
@@ -481,6 +557,10 @@ SNAP_BAD_VIX.data.vixFamily = { vix: 15.1, vix9d: null, vi3m: 17.3, vix6m: 18.9,
 const SNAP_UNAVAILABLE_VIX = JSON.parse(JSON.stringify(SNAP_OK));
 SNAP_UNAVAILABLE_VIX.data.vixFamily.source = 'UNAVAILABLE';
 const SNAP_NO_TECH = { ok: true, data: { source: 'BACKEND', vixFamily: SNAP_OK.data.vixFamily } };
+// Rows that sit exactly on the two acceptance rules _mcxBackendTech enforces:
+// ok:false is rejected however rich the row is, and a row needs at least TWO
+// finite fields. Without these the corpus cannot tell either rule from its
+// absence.
 const SNAP_EDGE_TECH = {
   ok: true,
   data: {
@@ -576,6 +656,7 @@ const fixtures = [
     ] },
 ];
 
+// ── mutation guards ────────────────────────────────────────────────────────
 function ownerViolations(layout) {
   const v = [];
   if (JSON.stringify(topLevelNames(layout.module)) !== JSON.stringify(MANIFEST)) v.push('OWNER_MANIFEST');
@@ -652,6 +733,7 @@ async function main() {
     transcripts.push(h);
   }
 
+  // The corpus has to actually reach the behaviour it claims to protect.
   const all = JSON.stringify(transcripts);
   ok(transcripts.every((t) => !t.loadError), 'every fixture loaded the owner without a load-time error');
   ok(transcripts.every((t) => !t.errors.some((e) => e.indexOf('THREW') >= 0)), 'no entry point ever threw — the family never throws into the render loop');
@@ -666,6 +748,9 @@ async function main() {
   ok(all.indexOf('dep:_ensureVixFamily') >= 0, 'the corpus exercises the DXLink VIX fallback path');
   ok(all.indexOf('removeChild#mcx-snapshot-src') >= 0, 'the corpus exercises the flag-OFF self-removal of the status indicator');
   ok(all.indexOf('insertBefore#mcx-snapshot-src') >= 0, 'the corpus exercises the flag-ON insertion of the status indicator');
+  // Label coverage is read off the PARSED pure-helper results rather than the
+  // escaped transcript blob, so 'Above' inside rendered HTML cannot stand in for
+  // the label the helper actually returned.
   const pureByFn = {};
   for (const t of transcripts) for (const [fn, json] of (t.pure || [])) (pureByFn[fn] = pureByFn[fn] || []).push(json);
   function labels(fn) { return [...new Set((pureByFn[fn] || []).map((j) => { try { return JSON.parse(j).label; } catch (e) { return null; } }))].filter(Boolean).sort(); }
@@ -675,6 +760,8 @@ async function main() {
   same(labels('_mcxSqueezeLabel'), ['OFF', 'ON', 'Unknown'], 'the corpus reaches every squeeze label the helper can return');
   same([...new Set((pureByFn['_mcxFiniteNum'] || []))].sort(), ['false', 'true'], 'the finite helper is exercised on both outcomes');
   ok((pureByFn['_mcxFormatTechValue'] || []).indexOf('"N/A"') >= 0, 'the value formatter is exercised on its N/A path');
+  // The acceptance edges really are reached: the backend-tech lookup returns a
+  // row for some fixtures and null for the ok:false / single-field ones.
   const techResults = [].concat(...transcripts.map((t) => (t.errors || []).filter((e) => e.indexOf('_mcxBackendTech(') === 0)));
   ok(techResults.some((e) => e.indexOf('-> null') > 0), 'the corpus reaches a rejected technical row');
   ok(techResults.some((e) => e.indexOf('"close"') > 0), 'the corpus reaches an accepted technical row');
@@ -683,6 +770,7 @@ async function main() {
   const guards = { owner: ownerViolations, load: loadViolations, dep: depViolations, scope: scopeViolations, callsite: callsiteViolations, sideEffect: sideEffectViolations, roundtrip: roundTripViolations, undo: undoViolations };
   const healthy = { module: moduleSrc, index: index };
   for (const [n, g] of Object.entries(guards)) same(g(healthy), [], n + ' guard is clean on the healthy repository');
+  // The behaviour guard is async, so it is applied separately below.
   async function behaviourViolations(layout) {
     for (const f of fixtures) {
       const b = await runFamily(expected.module, f), h = await runFamily(layout.module, f);
@@ -692,6 +780,9 @@ async function main() {
   }
   same(await behaviourViolations(healthy), [], 'behaviour guard is clean on the healthy repository');
 
+  // A line-start position INSIDE the inline monolith, in index.html coordinates.
+  // (expected.cutA.start is a BASE offset and does not address the same byte in
+  // the transformed document, nor necessarily a line boundary.)
   const INLINE_SLOT = index.indexOf(INLINE_OPEN) + INLINE_OPEN.length + 1;
   eq(index[INLINE_SLOT - 1], '\n', 'the mutant splice point is at a line boundary inside the inline monolith');
   const fA = findFunction(moduleSrc, SPAN_A[0]);
@@ -732,6 +823,7 @@ async function main() {
     ['the joiner between the spans changed', 'roundtrip', { module: moduleSrc.slice(0, A_CHARS) + '\n\n\n' + moduleSrc.slice(A_CHARS + JOINER.length), index }],
     ['undo helper handed a truncated source', 'undo', { module: moduleSrc.slice(0, -1), index }],
   ];
+  // Behaviour mutants are run through the async guard.
   const behaviourMutants = [
     ['the finite check accepts non-numbers', { module: moduleSrc.replace("return typeof x === 'number' && isFinite(x);", 'return isFinite(x);') }],
     ['the VIX bridge no longer requires all four legs', { module: moduleSrc.replace('_mcxFiniteNum(vf.vix9d) && _mcxFiniteNum(vf.vix) && _mcxFiniteNum(vf.vi3m) && _mcxFiniteNum(vf.vix6m)', '_mcxFiniteNum(vf.vix)') }],
@@ -769,6 +861,9 @@ async function main() {
   section('12. production scope');
   const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
+  // The diff is measured from THIS extraction's base, so it now also spans the
+  // MCX VIX owner extracted on top by PR #389. The list stays EXACT and named —
+  // an unplanned production file still fails here.
   const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
   same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL].sort(), 'production footprint is exactly index.html + the market-context owner + the MCX VIX owner');
   const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', 'dbfd441b6135ac167763391e57e4c9ce068aa308', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
