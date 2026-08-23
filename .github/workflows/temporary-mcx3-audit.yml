@@ -1,14 +1,11 @@
-name: temporary-mcx3-structural-repair
+name: temporary-mcx3-final-diagnostic
 
 on:
   pull_request:
     branches: [dev-clean]
 
-permissions:
-  contents: write
-
 jobs:
-  repair:
+  diagnose:
     if: github.head_ref == 'agent/extract-mcx-backend-candle-service'
     runs-on: ubuntu-latest
     steps:
@@ -20,76 +17,37 @@ jobs:
         with:
           node-version: '22'
 
-      - name: prepare exact structural repairs
+      - name: MCX3 boundary contract
         run: |
-          python tests/tools/mcx3-structural-repair.py
-          for f in \
-            tests/pretrade-risk-modal-boundary-contract.test.js \
-            tests/pretrade-technicals-boundary-contract.test.js \
-            tests/pretrade-risk-rules-boundary-contract.test.js \
-            tests/mcx-market-context-boundary-contract.test.js \
-            tests/mcx-vix-market-context-boundary-contract.test.js \
-            tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js; do
-            node --check "$f"
-          done
-          git diff --check
+          node --check tests/mcx-backend-candles-boundary-contract.test.js
+          node tests/mcx-backend-candles-boundary-contract.test.js
 
-      - name: prove contracts with only temporary-file maintenance failures tolerated
+      - name: full-suite diagnostic
         run: |
           set +e
-          bad=0
-          for f in \
-            tests/pretrade-risk-modal-boundary-contract.test.js \
-            tests/pretrade-technicals-boundary-contract.test.js \
-            tests/pretrade-risk-rules-boundary-contract.test.js \
-            tests/mcx-market-context-boundary-contract.test.js; do
+          fail=0
+          : > /tmp/failures.txt
+          total=0
+          green=0
+          for f in tests/*.test.js; do
+            total=$((total+1))
             out="/tmp/$(basename "$f").log"
             node "$f" >"$out" 2>&1
             rc=$?
-            echo "=== $f rc=$rc ==="
-            tail -n 20 "$out"
-            grep '^  FAIL  ' "$out" | grep -Ev 'no (workflow|bootstrap)|no workflow, bootstrap' > /tmp/unexpected-fails.txt || true
-            if [ -s /tmp/unexpected-fails.txt ]; then
-              echo "unexpected failures in $f:"
-              cat /tmp/unexpected-fails.txt
-              bad=1
+            if [ "$rc" -eq 0 ]; then
+              green=$((green+1))
+              continue
             fi
+            fail=1
+            echo "$f" >> /tmp/failures.txt
+            echo "=== FAIL $f ==="
+            grep -E '(^|  )(FAIL|FAILURES:|FAILED|✗|• |AssertionError|Error:|expected .*got|suite failed)' "$out" | tail -n 80 || tail -n 50 "$out"
           done
-          for f in \
-            tests/mcx-vix-market-context-boundary-contract.test.js \
-            tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js \
-            tests/mcx-backend-candles.test.js \
-            tests/mcx-refresh-on-open-freshness.test.js \
-            tests/load-app-source.test.js; do
-            out="/tmp/$(basename "$f").log"
-            node "$f" >"$out" 2>&1
-            rc=$?
-            echo "=== $f rc=$rc ==="
-            tail -n 20 "$out"
-            if [ "$rc" -ne 0 ]; then bad=1; fi
-          done
+          echo "FULL_SUITE total=$total green=$green red=$((total-green))"
+          if [ -s /tmp/failures.txt ]; then
+            echo 'FAILING_FILES_BEGIN'
+            cat /tmp/failures.txt
+            echo 'FAILING_FILES_END'
+          fi
           set -e
-          test "$bad" -eq 0
-          git diff --check
-
-      - name: commit structural contract repairs only
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add \
-            tests/pretrade-risk-modal-boundary-contract.test.js \
-            tests/pretrade-technicals-boundary-contract.test.js \
-            tests/pretrade-risk-rules-boundary-contract.test.js \
-            tests/mcx-market-context-boundary-contract.test.js \
-            tests/mcx-vix-market-context-boundary-contract.test.js \
-            tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js
-          git diff --cached --check
-          git diff --cached --stat
-          git commit -m 'test(mcx): align historical contracts with PR3'
-          git push origin HEAD:agent/extract-mcx-backend-candle-service
+          exit "$fail"
