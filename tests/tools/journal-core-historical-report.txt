@@ -1,0 +1,162 @@
+JOURNAL CORE HISTORICAL DIAGNOSTIC
+
+=== mcx-pr3-undo consumers ===
+tests/eic-extraction-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L153: ? MCX_UNDO3.undoMcxPr3(LIVE_HTML, MCX3_SRC)
+tests/mcx-backend-candles-boundary-contract.test.js
+  imports=['U']
+  L175: const rebuilt = U.undoMcxPr3(INDEX, MODULE);
+  L178: throws(() => U.undoMcxPr3(INDEX, MODULE + ' '), 'module-byte mutant is rejected by identity guard');
+  L179: throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, MCX3_TAG + '\n' + MCX3_TAG), MODULE),
+  L181: throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, ''), MODULE), 'missing-tag mutant is rejected');
+tests/mcx-market-context-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L239: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pess-extraction-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L3218: RECON_HTML = MCX_UNDO3.undoMcxPr3(RECON_HTML, mcx3Src);
+tests/pretrade-risk-modal-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L172: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pretrade-risk-rules-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L149: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pretrade-technicals-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L110: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/sfs-extraction-boundary-contract.test.js
+  imports=['MCX_UNDO3']
+  L3183: HEAD_HTML = MCX_UNDO3.undoMcxPr3(HEAD_HTML, mcx3Src);
+
+=== mcx3-last ===
+tests/backend-directional-adapter-boundary-contract.test.js:L631: eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is now the LAST external classic script before the inline monolith');
+tests/backend-directional-adapter-boundary-contract.test.js:L714: 'ORDER: the MCX backend-candle owner is the last application script before the inline monolith');
+tests/backend-directional-preview-boundary-contract.test.js:L2317: eq(iMcxBackend, srcs.length - 2, 'ORDER: the MCX backend-candle owner is the LAST external script before the inline monolith');
+tests/backend-directional-preview-boundary-contract.test.js:L2377: eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is the LAST script tag before the inline monolith');
+tests/backend-scanner-snapshot-ui-boundary-contract.test.js:L1108: eq(idx(MCX_BACKEND_REL), SCRIPT_ORDER.length - 2, 'the MCX backend-candle owner is the last external script before the monolith');
+tests/mcx-backend-candles-boundary-contract.test.js:L115: eq(varDeclCount(INDEX, '_mcxBackendFetchInFlight'), 1, '_mcxBackendFetchInFlight remains inline exactly once');
+
+=== mcx-tail ===
+tests/backend-directional-adapter-boundary-contract.test.js:L628: const mcxBackendTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-backend-candles\.js$/.test(String(t.src || '')); });
+tests/backend-directional-adapter-boundary-contract.test.js:L706: const mcxBackendPart = PART_RANGES.filter(function (r) { return /mcx-backend-candles\.js$/.test(r.src); });
+tests/backend-directional-preview-boundary-contract.test.js:L2313: const iMcxBackend = srcs.indexOf('./js/services/mcx-backend-candles.js');
+tests/backend-directional-preview-boundary-contract.test.js:L2372: const mcxBackendTagIdx = TAGS.findIndex(function (t) { return /mcx-backend-candles\.js$/.test(clean(t.src)); });
+tests/backend-directional-snapshot-boundary-contract.test.js:L219: './js/services/mcx-backend-candles.js',
+tests/backend-directional-snapshot-boundary-contract.test.js:L1129: // MCX3's two cuts are BELOW both shared-price outliers, so they do not
+tests/backend-scanner-snapshot-ui-boundary-contract.test.js:L1104: const MCX_BACKEND_REL = './js/services/mcx-backend-candles.js';
+tests/backend-scanner-snapshot-ui-boundary-contract.test.js:L1120: 'ORDER 1 (9), EXACT: historical chain remains contiguous and is followed only by the three PRETRADE owners and both MCX owners before inline');
+tests/backend-scanner-snapshot-ui-boundary-contract.test.js:L3351: './js/services/mcx-backend-candles.js',
+tests/candle-read-adapters-contract.test.js:L384: const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');
+tests/candle-read-adapters-contract.test.js:L385: const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';
+tests/candle-read-adapters-contract.test.js:L461: ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);
+tests/candle-read-adapters-contract.test.js:L495: ok(reDef.test(MCX3_SRC), '0: MCX adapter is owned by mcx-backend-candles.js: ' + n);
+tests/candle-service-contract.test.js:L617: const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');
+tests/candle-service-contract.test.js:L618: const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';
+tests/candle-service-contract.test.js:L698: ok(reDef.test(MCX3_SRC), '0: MCX feature adapter is owned by mcx-backend-candles.js: ' + n);
+tests/candle-service-contract.test.js:L1444: ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);
+tests/eic-extraction-boundary-contract.test.js:L151: const MCX3_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
+tests/eic-extraction-boundary-contract.test.js:L152: const POST_MCX3_HTML = MCX_UNDO3.isApplied(LIVE_HTML)
+tests/eic-extraction-boundary-contract.test.js:L153: ? MCX_UNDO3.undoMcxPr3(LIVE_HTML, MCX3_SRC)
+tests/eic-extraction-boundary-contract.test.js:L155: const POST_MCX2_HTML = MCX_UNDO2.isApplied(POST_MCX3_HTML)
+tests/eic-extraction-boundary-contract.test.js:L156: ? MCX_UNDO2.undoMcxPr2(POST_MCX3_HTML, MCX2_SRC)
+tests/eic-extraction-boundary-contract.test.js:L157: : POST_MCX3_HTML;
+tests/journal-core-boundary-contract.test.js:L45: const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
+tests/journal-core-boundary-contract.test.js:L103: const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
+tests/journal-core-boundary-contract.test.js:L107: MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n',
+tests/journal-core-boundary-contract.test.js:L108: 'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> inline');
+tests/journal-core-boundary-contract.test.js:L109: ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
+tests/mcx-backend-candles-boundary-contract.test.js:L21: const MODULE_REL = 'js/services/mcx-backend-candles.js';
+tests/mcx-backend-candles-boundary-contract.test.js:L43: const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
+tests/mcx-backend-candles-boundary-contract.test.js:L89: eq(fnCount(MODULE, name), 1, name + ' is declared once in MCX3');
+tests/mcx-backend-candles-boundary-contract.test.js:L94: eq(varDeclCount(MODULE, name), 1, name + ' is declared once in MCX3');
+tests/mcx-backend-candles-boundary-contract.test.js:L98: // occurrence from the audited base belongs to the two slices now owned by MCX3.
+tests/mcx-backend-candles-boundary-contract.test.js:L107: eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
+tests/mcx-backend-candles-boundary-contract.test.js:L108: const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
+tests/mcx-backend-candles-boundary-contract.test.js:L110: eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n',
+tests/mcx-backend-candles-boundary-contract.test.js:L111: 'MCX tail is contiguous and ordered MCX1 -> MCX2 -> MCX3 -> inline');
+tests/mcx-backend-candles-boundary-contract.test.js:L112: ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && inlineAt > mcx3At,
+tests/mcx-backend-candles-boundary-contract.test.js:L113: 'MCX3 loads synchronously after its predecessors and before residual inline code');
+tests/mcx-backend-candles-boundary-contract.test.js:L114: ok(!/\b(?:async|defer|type)\s*=/.test(MCX3_TAG), 'MCX3 tag is classic synchronous src-only form');
+tests/mcx-backend-candles-boundary-contract.test.js:L116: eq(varDeclCount(MODULE, '_mcxBackendFetchInFlight'), 0, '_mcxBackendFetchInFlight is not pulled into MCX3');
+tests/mcx-backend-candles-boundary-contract.test.js:L118: eq(fnCount(MODULE, 'ffBackendCandlesMcxCharts'), 0, 'feature flag is not redeclared by MCX3');
+tests/mcx-backend-candles-boundary-contract.test.js:L130: ok(false, 'MCX3 evaluates without touching call-time dependencies');
+tests/mcx-backend-candles-boundary-contract.test.js:L134: ok(!/\bdocument\s*\./.test(MODULE), 'MCX3 owns no DOM access');
+tests/mcx-backend-candles-boundary-contract.test.js:L135: ok(!/\bsetInterval\s*\(/.test(MODULE), 'MCX3 creates no recurring timer');
+tests/mcx-backend-candles-boundary-contract.test.js:L136: ok(!/\bnew\s+WebSocket\b/.test(MODULE), 'MCX3 opens no frontend WebSocket');
+tests/mcx-backend-candles-boundary-contract.test.js:L143: ok(!/yahoo/i.test(CODE), 'executable MCX3 source remains Yahoo-free');
+tests/mcx-backend-candles-boundary-contract.test.js:L179: throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, MCX3_TAG + '\n' + MCX3_TAG), MODULE),
+tests/mcx-backend-candles-boundary-contract.test.js:L181: throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, ''), MODULE), 'missing-tag mutant is rejected');
+tests/mcx-backend-candles-boundary-contract.test.js:L182: same(topLevelNames(MODULE + '\nfunction foreignMcx3Owner(){}'), MANIFEST.concat(['foreignMcx3Owner']),
+tests/mcx-backend-candles.test.js:L18: // Run: node tests/mcx-backend-candles.test.js
+tests/mcx-market-context-boundary-contract.test.js:L239: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/mcx-market-context-boundary-contract.test.js:L872: const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';
+tests/mcx-market-context-boundary-contract.test.js:L873: same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL].sort(), 'production footprint is exactly index.html + all three MCX owners');
+tests/mcx-vix-market-context-boundary-contract.test.js:L19: const MCX3_REL = 'js/services/mcx-backend-candles.js';
+tests/mcx-vix-market-context-boundary-contract.test.js:L155: // shared owners at runtime. MCX3 now follows MCX2; the residual inline app follows MCX3.
+tests/mcx-vix-market-context-boundary-contract.test.js:L158: const mcx3Tag = '<script src="./' + MCX3_REL + '"></script>';
+tests/mcx-vix-market-context-boundary-contract.test.js:L161: ok((INDEX.split(mcx3Tag).length - 1) === 1, 'exactly one MCX-3 service script tag exists');
+tests/mcx-vix-market-context-boundary-contract.test.js:L167: const mcx3At = INDEX.indexOf(mcx3Tag);
+tests/mcx-vix-market-context-boundary-contract.test.js:L168: const afterMcx3At = INDEX.indexOf('<script', mcx3At + mcx3Tag.length);
+tests/mcx-vix-market-context-boundary-contract.test.js:L169: const afterMcx3End = afterMcx3At >= 0 ? INDEX.indexOf('>', afterMcx3At) : -1;
+tests/mcx-vix-market-context-boundary-contract.test.js:L170: const afterMcx3Tag = afterMcx3End >= 0 ? INDEX.slice(afterMcx3At, afterMcx3End + 1) : '';
+tests/mcx-vix-market-context-boundary-contract.test.js:L172: ok(nextTag === '<script src="./' + MCX3_REL + '">', 'MCX-2 loads immediately before MCX-3');
+tests/mcx-vix-market-context-boundary-contract.test.js:L173: ok(mcx3At > tagAt && afterMcx3At > mcx3At && !/\bsrc\s*=/i.test(afterMcx3Tag),
+tests/pess-extraction-boundary-contract.test.js:L455: // 44 once MCX PR3 added js/services/mcx-backend-candles.js.
+tests/pess-extraction-boundary-contract.test.js:L1361: '9.11a the DSB panel remains immediately before the three PRETRADE owners and all three MCX owners');
+tests/pess-extraction-boundary-contract.test.js:L1372: eq(A.localSrcs[A.localSrcs.length - 1], './js/services/mcx-backend-candles.js',
+tests/pess-extraction-boundary-contract.test.js:L1374: eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 44 local application scripts, including all three PRETRADE owners and all three MCX owners');
+tests/pess-extraction-boundary-contract.test.js:L3217: const mcx3Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
+tests/pess-extraction-boundary-contract.test.js:L3218: RECON_HTML = MCX_UNDO3.undoMcxPr3(RECON_HTML, mcx3Src);
+tests/pess-extraction-boundary-contract.test.js:L3560: r.localSrcs[r.localSrcs.length - 1] === './js/services/mcx-backend-candles.js'],
+tests/pretrade-risk-modal-boundary-contract.test.js:L172: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pretrade-risk-modal-boundary-contract.test.js:L540: const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
+tests/pretrade-risk-modal-boundary-contract.test.js:L541: same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL].sort(),'production footprint is exactly index.html + the modal owner + all three MCX owners');
+tests/pretrade-risk-rules-boundary-contract.test.js:L149: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pretrade-risk-rules-boundary-contract.test.js:L331: const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
+tests/pretrade-risk-rules-boundary-contract.test.js:L334: same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + all three MCX owners');
+tests/pretrade-technicals-boundary-contract.test.js:L110: ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+tests/pretrade-technicals-boundary-contract.test.js:L249: const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
+tests/pretrade-technicals-boundary-contract.test.js:L250: same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + all three MCX owners');
+tests/sfs-extraction-boundary-contract.test.js:L1410: eq(local.length, 44, '4.9 index.html loads 44 local application scripts, including the three PRETRADE owners and all three MCX owners');
+tests/sfs-extraction-boundary-contract.test.js:L3181: const mcx3Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
+tests/sfs-extraction-boundary-contract.test.js:L3183: HEAD_HTML = MCX_UNDO3.undoMcxPr3(HEAD_HTML, mcx3Src);
+
+=== local-count ===
+tests/backend-directional-snapshot-boundary-contract.test.js:L2717: eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 44,
+tests/backend-scanner-snapshot-ui-boundary-contract.test.js:L958: eq(ALL_BSS_DECLS.length, 44, 'the application declares 44 bss*/ff* functions in total (32 UI + 12 service)');
+tests/pess-extraction-boundary-contract.test.js:L456: const LOCAL_SCRIPT_COUNT = 44;
+tests/pess-extraction-boundary-contract.test.js:L1374: eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 44 local application scripts, including all three PRETRADE owners and all three MCX owners');
+tests/sfs-extraction-boundary-contract.test.js:L1410: eq(local.length, 44, '4.9 index.html loads 44 local application scripts, including the three PRETRADE owners and all three MCX owners');
+
+=== exact inlineTagIdx predecessor contexts ===
+--- tests/backend-directional-adapter-boundary-contract.test.js:L631 ---
+625:   const mcxVixTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-vix-market-context\.js$/.test(String(t.src || '')); });
+626:   ok(mcxVixTagIdx >= 0, 'tag order: the newest MCX VIX market-context script is present');
+627:   eq(mcxTagIdx, mcxVixTagIdx - 1, 'tag order: the MCX market-context owner is immediately before the MCX VIX owner');
+628:   const mcxBackendTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-backend-candles\.js$/.test(String(t.src || '')); });
+629:   ok(mcxBackendTagIdx >= 0, 'tag order: the MCX backend-candle owner is present');
+630:   eq(mcxVixTagIdx, mcxBackendTagIdx - 1, 'tag order: the MCX VIX owner is immediately before the MCX backend-candle owner');
+631:   eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is now the LAST external classic script before the inline monolith');
+632: }
+633: 
+634: const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
+635: let offset = 0;
+636: const PART_RANGES = APP_PARTS.map(function (p) {
+637:   const r = { src: p.src || '(inline)', kind: p.kind, start: offset, end: offset + p.code.length };
+
+--- tests/backend-directional-preview-boundary-contract.test.js:L2377 ---
+2371:   const mcxVixTagIdx = TAGS.findIndex(function (t) { return /mcx-vix-market-context\.js$/.test(clean(t.src)); });
+2372:   const mcxBackendTagIdx = TAGS.findIndex(function (t) { return /mcx-backend-candles\.js$/.test(clean(t.src)); });
+2373:   ok(mcxVixTagIdx >= 0, 'tag order: the newest MCX VIX market-context tag is present');
+2374:   eq(mcxTagIdx, mcxVixTagIdx - 1, 'tag order: the MCX market-context owner remains immediately before the MCX VIX owner');
+2375:   ok(mcxBackendTagIdx >= 0, 'tag order: the MCX backend-candle owner is present');
+2376:   eq(mcxVixTagIdx, mcxBackendTagIdx - 1, 'tag order: the MCX VIX owner remains immediately before the MCX backend-candle owner');
+2377:   eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is the LAST script tag before the inline monolith');
+2378:   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
+2379:   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
+2380:   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
+2381:   eq(adapterTagIdx, previewTagIdx - 1, 'tag order: no tag was inserted between the adapter and the BDSP module');
+2382: })();
+2383: (function () {
+
