@@ -1,0 +1,25 @@
+{
+  "base_commit": "dfb8433e8e7b0403fca5a23874dfbc600f5069c4",
+  "base_index_utf16_chars": 2044679,
+  "base_index_sha256": "2ed09ffa631c3ed3c7c99316c2159809af01e8d0c476c888d39b84573f64b80e",
+  "slice_start_utf16": 1939622,
+  "slice_utf16_chars": 6524,
+  "slice_sha256": "06b504736e028cca2f29b4df7ebe99d37913c41c4a24af3fa222058537bee5ba",
+  "module_utf16_chars": 6524,
+  "module_sha256": "06b504736e028cca2f29b4df7ebe99d37913c41c4a24af3fa222058537bee5ba",
+  "post_index_utf16_chars": 2038209,
+  "post_index_sha256": "72d2f06eb5b71092ba3446628eacb4abaf30c7f3a31a21d89adce459a27aca09",
+  "tag": "<script src=\"./js/services/journal-core.js\"></script>",
+  "anchor": "<script src=\"./js/services/mcx-backend-candles.js\"></script>",
+  "owners": [
+    "JOURNAL_KEY",
+    "jLoad",
+    "jSave",
+    "jAddTrade",
+    "jUpdateTrade",
+    "jDeleteTrade",
+    "jBuildSnapshot",
+    "jAutoTags",
+    "jComputeStats"
+  ]
+}
