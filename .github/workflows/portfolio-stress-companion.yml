@@ -123,12 +123,19 @@ jobs:
         if: matrix.node == '20'
         run: node tests/lib/node20-known-failures.js --run
 
-      # pull_request workflows run on GitHub's synthetic merge ref. HEAD^1 is the
-      # target-branch parent, so this checks the committed PR diff itself instead
-      # of comparing a clean working tree against HEAD (which can only prove that
-      # checkout left no uncommitted whitespace errors).
+      # Validate the committed change set, not the clean checkout. PRs use the
+      # merge-base-to-head diff that GitHub shows reviewers; push runs cover the
+      # whole pushed range; manual runs fall back to the current commit.
       - name: git diff --check
-        run: git diff --check HEAD^1 HEAD
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            git diff --check "${{ github.event.before }}" "${{ github.sha }}"
+          else
+            git diff --check HEAD^1 HEAD
+          fi
 
   # Cross-repo, so it needs a token that can read apex-backend. The default
   # GITHUB_TOKEN is scoped to THIS repository and returns "Repository not found"
