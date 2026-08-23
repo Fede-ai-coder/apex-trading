@@ -136,11 +136,20 @@ const PRETRADE_PR2 = require('./lib/pretrade-pr2-undo.js');
 // The MCX market-context extraction is NEWER than either PRETRADE link, so it
 // is undone first; each helper re-verifies by length and SHA-256, which is what
 // makes the order safe to depend on.
+// The MCX VIX extraction (PR #389) is NEWER than every link below, so it is
+// undone FIRST — newest-first, the rule the existing links already follow.
+// Each helper re-verifies the document it hands back by length and SHA-256,
+// so every offset below still addresses exactly the document it was written
+// against.
+const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const at385 = MCX_UNDO.isApplied(liveIndex)
-  ? MCX_UNDO.undoMcxPr1(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
+const at386 = MCX_UNDO2.isApplied(liveIndex)
+  ? MCX_UNDO2.undoMcxPr2(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-vix-market-context.js'),'utf8'))
   : liveIndex;
+const at385 = MCX_UNDO.isApplied(at386)
+  ? MCX_UNDO.undoMcxPr1(at386, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
+  : at386;
 const at383 = PRETRADE_PR3.isApplied(at385)
   ? PRETRADE_PR3.undoPretradePr3(at385, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
   : at385;
@@ -313,9 +322,11 @@ const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROO
 const TECHNICALS_REL='js/services/pretrade-technicals.js';
 const MODAL_REL='js/ui/pretrade-risk-modal.js';
 const MCX_MODULE_REL='js/services/mcx-market-context.js';
-const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL];
+// PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
+const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + the MCX owner');
+same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + both MCX owners');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);
