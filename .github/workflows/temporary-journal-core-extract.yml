@@ -99,7 +99,8 @@ jobs:
       - name: Focused historical and Journal proof
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          : > /tmp/focused-failure.txt
           for f in \
             tests/journal-core-boundary-contract.test.js \
             tests/backend-directional-adapter-boundary-contract.test.js \
@@ -116,8 +117,29 @@ jobs:
             tests/pretrade-technicals-boundary-contract.test.js \
             tests/sfs-extraction-boundary-contract.test.js; do
             echo "=== $f ==="
-            node "$f"
+            node "$f" > /tmp/focused-current.log 2>&1
+            rc=$?
+            if [ "$rc" -ne 0 ]; then
+              {
+                echo "FAILED_FILE=$f"
+                echo "EXIT_CODE=$rc"
+                echo "--- LAST 120 LINES ---"
+                tail -120 /tmp/focused-current.log
+              } > /tmp/focused-failure.txt
+              cat /tmp/focused-failure.txt
+              exit "$rc"
+            fi
+            tail -8 /tmp/focused-current.log
           done
+
+      - name: Upload focused failure diagnostic
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: journal-core-focused-failure
+          path: /tmp/focused-failure.txt
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Diff hygiene
         run: git diff --check
@@ -137,4 +159,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: exact-mcx1-indent-normalization
+# repair-trigger: focused-failure-artifact
