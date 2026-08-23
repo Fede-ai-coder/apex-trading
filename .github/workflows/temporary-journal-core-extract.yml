@@ -124,8 +124,10 @@ jobs:
               {
                 echo "FAILED_FILE=$f"
                 echo "EXIT_CODE=$rc"
-                echo "--- LAST 120 LINES ---"
-                tail -120 /tmp/focused-current.log
+                echo "--- FAILURES WITH EXPECTED/GOT CONTEXT ---"
+                grep -n -B2 -A5 'FAIL  ' /tmp/focused-current.log || true
+                echo "--- SUMMARY FAILURE LIST ---"
+                grep -n -A20 '^FAILURES:' /tmp/focused-current.log || true
               } > /tmp/focused-failure.txt
               cat /tmp/focused-failure.txt
               exit "$rc"
@@ -159,4 +161,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: capture-dsb-failure-under-errexit
+# repair-trigger: dsb-fail-expected-got
