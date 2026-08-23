@@ -22,6 +22,9 @@ jobs:
       - name: prepare newest-first reconstruction repair
         run: |
           python tests/tools/mcx3-repair-reconstruction.py
+          # DSB needs piecewise offset treatment: both shared-price outliers are
+          # above the MCX3 cuts, so the generic +12,006 subtraction is invalid.
+          git checkout -- tests/backend-directional-snapshot-boundary-contract.test.js
           node --check tests/lib/mcx-pr3-undo.js
           for f in \
             tests/eic-extraction-boundary-contract.test.js \
@@ -30,8 +33,7 @@ jobs:
             tests/pretrade-risk-rules-boundary-contract.test.js \
             tests/mcx-market-context-boundary-contract.test.js \
             tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js; do
+            tests/pess-extraction-boundary-contract.test.js; do
             node --check "$f"
           done
       - name: prove PR3 undo identity and no reconstruction-chain crash
@@ -54,8 +56,7 @@ jobs:
             tests/pretrade-risk-rules-boundary-contract.test.js \
             tests/mcx-market-context-boundary-contract.test.js \
             tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js; do
+            tests/pess-extraction-boundary-contract.test.js; do
             out="/tmp/$(basename "$f").log"
             node "$f" >"$out" 2>&1
             rc=$?
@@ -80,8 +81,7 @@ jobs:
             tests/pretrade-risk-rules-boundary-contract.test.js \
             tests/mcx-market-context-boundary-contract.test.js \
             tests/sfs-extraction-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js
+            tests/pess-extraction-boundary-contract.test.js
           git diff --cached --check
           git diff --cached --stat
           git commit -m 'test(mcx): chain PR3 reconstruction newest-first'
