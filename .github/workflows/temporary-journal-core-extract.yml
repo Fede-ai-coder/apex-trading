@@ -130,8 +130,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          : > /tmp/focused-failure.txt
           git rm .github/workflows/temporary-journal-core-extract.yml
-          git rm tests/tools/journal-core-repair-historical.py
+          git rm -f tests/tools/journal-core-repair-historical.py
           git add tests/*.test.js
           git diff --cached --check
           git config user.name "Fede-ai-coder"
