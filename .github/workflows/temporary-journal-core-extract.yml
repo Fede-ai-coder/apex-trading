@@ -117,9 +117,10 @@ jobs:
             tests/pretrade-technicals-boundary-contract.test.js \
             tests/sfs-extraction-boundary-contract.test.js; do
             echo "=== $f ==="
-            node "$f" > /tmp/focused-current.log 2>&1
-            rc=$?
-            if [ "$rc" -ne 0 ]; then
+            if node "$f" > /tmp/focused-current.log 2>&1; then
+              tail -8 /tmp/focused-current.log
+            else
+              rc=$?
               {
                 echo "FAILED_FILE=$f"
                 echo "EXIT_CODE=$rc"
@@ -129,7 +130,6 @@ jobs:
               cat /tmp/focused-failure.txt
               exit "$rc"
             fi
-            tail -8 /tmp/focused-current.log
           done
 
       - name: Upload focused failure diagnostic
@@ -159,4 +159,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: focused-failure-artifact
+# repair-trigger: capture-dsb-failure-under-errexit
