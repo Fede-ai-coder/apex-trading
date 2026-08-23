@@ -4,12 +4,17 @@ on:
   push:
     branches:
       - agent/extract-journal-core-service
+  pull_request:
+    branches:
+      - dev-clean
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   verify:
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/extract-journal-core-service'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact feature branch
