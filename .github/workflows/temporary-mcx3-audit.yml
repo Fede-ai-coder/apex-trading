@@ -1,45 +1,122 @@
-name: temporary-mcx3-extraction
+name: temporary-mcx3-post-extraction-audit
 
 on:
   pull_request:
     branches: [dev-clean]
 
-permissions:
-  contents: write
-
 jobs:
-  extract:
+  audit:
     if: github.head_ref == 'agent/extract-mcx-backend-candle-service'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: prepare exact MCX3 relocation
+      - name: prove exact MCX3 transform and print reconstruction pins
         env:
           BASE_SHA: 2b61bbd1ed11f227032529e9147c82434b5720b2
-        run: python tests/tools/mcx3-extract.py
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, os, re, subprocess
 
-      - name: focused proof before push
+          BASE = os.environ['BASE_SHA']
+          base = subprocess.check_output(['git','show',BASE + ':index.html'], text=True)
+          head = Path('index.html').read_text()
+          module = Path('js/services/mcx-backend-candles.js').read_text()
+          sha = lambda s: hashlib.sha256(s.encode()).hexdigest()
+
+          def fn_span(text, name):
+              pat = re.compile(r'(?m)^(?:async\s+)?function\s+' + re.escape(name) + r'\(')
+              ms = list(pat.finditer(text))
+              if len(ms) != 1: raise SystemExit(f'{name}: declarations={len(ms)}')
+              start = ms[0].start(); open_at = text.find('{', start)
+              depth=0; quote=None; esc=False; line=False; block=False; i=open_at
+              while i < len(text):
+                  c=text[i]; n=text[i+1] if i+1<len(text) else ''
+                  if line:
+                      if c=='\n': line=False
+                      i+=1; continue
+                  if block:
+                      if c=='*' and n=='/': block=False; i+=2; continue
+                      i+=1; continue
+                  if quote:
+                      if esc: esc=False; i+=1; continue
+                      if c=='\\': esc=True; i+=1; continue
+                      if c==quote: quote=None
+                      i+=1; continue
+                  if c=='/' and n=='/': line=True; i+=2; continue
+                  if c=='/' and n=='*': block=True; i+=2; continue
+                  if c in ("'",'"','`'): quote=c; i+=1; continue
+                  if c=='{': depth+=1
+                  elif c=='}':
+                      depth-=1
+                      if depth==0: return start,i+1
+                  i+=1
+              raise SystemExit(name + ': unterminated')
+
+          def var_span(text,name):
+              ms=list(re.finditer(r'(?m)^var\s+'+re.escape(name)+r'\s*=.*?;[^\n]*(?:\n|$)',text))
+              if len(ms)!=1: raise SystemExit(f'{name}: declarations={len(ms)}')
+              return ms[0].start(),ms[0].end()
+
+          header='// ── FF_BACKEND_CANDLES_MCX_CHARTS helpers ─────────────────────────────────────'
+          first,_=fn_span(base,'_mcxGetBackendCandleEntry')
+          _,fetch_end=fn_span(base,'_mcxFetchBackendCandlesForChart')
+          func_at=base.rfind(header,0,first)
+          func_slice=base[func_at:fetch_end]
+          state_at,cache_end=var_span(base,'_mcxBackendCandleCache')
+          ttl_at,state_end=var_span(base,'_MCX_BACKEND_CACHE_TTL')
+          if cache_end != ttl_at: raise SystemExit('state no longer contiguous')
+          state_slice=base[state_at:state_end]
+          expected_module=func_slice+'\n\n'+state_slice
+          if module != expected_module: raise SystemExit('module is not exact two-slice concatenation')
+
+          out=base[:state_at]+base[state_end:]
+          if base[fetch_end:fetch_end+2] != '\n\n': raise SystemExit('function cut suffix changed')
+          out=out[:func_at]+out[fetch_end+2:]
+          anchor='<script src="./js/services/mcx-vix-market-context.js"></script>\n'
+          tag='<script src="./js/services/mcx-backend-candles.js"></script>\n'
+          if out.count(anchor)!=1: raise SystemExit('anchor count changed')
+          p=out.index(anchor)+len(anchor)
+          out=out[:p]+tag+out[p:]
+          if head != out: raise SystemExit('HEAD index is not exact mechanical transform')
+
+          gap=base[fetch_end:state_at]
+          for name in ['_mcxGetBackendCandleEntry','_mcxGetCachedBackendCandles','_mcxNewestBarTime','_mcxStoreBackendCandleEntry','_mcxCandlesLookStale']:
+              if name in gap: raise SystemExit(name+' pre-state reference makes timing observable')
+          expected='var r = await _mcxFetchBackendCandlesForChart(sym);'
+          if gap.count('_mcxFetchBackendCandlesForChart')!=1 or expected not in gap:
+              raise SystemExit('pre-state fetch reference changed')
+          if gap.find('window.apexDebugLoadMcxBackendCandles = async function(symbol) {') > gap.find(expected):
+              raise SystemExit('fetch reference no longer inside debug closure')
+
+          print('BASE_SHA='+BASE)
+          print('BASE_CHARS='+str(len(base)))
+          print('BASE_SHA256='+sha(base))
+          print('HEAD_CHARS='+str(len(head)))
+          print('HEAD_SHA256='+sha(head))
+          print('FUNC_AT='+str(func_at))
+          print('FUNC_CHARS='+str(len(func_slice)))
+          print('FUNC_SHA256='+sha(func_slice))
+          print('STATE_AT='+str(state_at))
+          print('STATE_CHARS='+str(len(state_slice)))
+          print('STATE_SHA256='+sha(state_slice))
+          print('MODULE_CHARS='+str(len(module)))
+          print('MODULE_SHA256='+sha(module))
+          print('TEMPORAL_SAFETY=private-state + closure-only pre-state fetch reference')
+          print('EXACT_TRANSFORM=PASS')
+          PY
+
+      - name: focused behavior and loader compatibility
         run: |
           node --check js/services/mcx-backend-candles.js
           node tests/mcx-backend-candles.test.js
           node tests/mcx-refresh-on-open-freshness.test.js
           node tests/load-app-source.test.js
           git diff --check
-
-      - name: commit relocation only
-        env:
-          BRANCH: agent/extract-mcx-backend-candle-service
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add index.html js/services/mcx-backend-candles.js
-          git commit -m "refactor(mcx): extract backend-candle cache service"
-          git push origin "HEAD:$BRANCH"
