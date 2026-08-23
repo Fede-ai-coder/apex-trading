@@ -149,4 +149,3 @@ function jComputeStats(trades) {
     byStrategy, byContext, byGrade, byCap,
   };
 }
-

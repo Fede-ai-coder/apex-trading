@@ -15,10 +15,10 @@ const crypto = require('crypto');
 const TAG = '<script src="./js/services/journal-core.js"></script>\n';
 const BASE_CHARS = 2044679;
 const BASE_SHA256 = '2ed09ffa631c3ed3c7c99316c2159809af01e8d0c476c888d39b84573f64b80e';
-const MODULE_CHARS = 6524;
-const MODULE_SHA256 = '06b504736e028cca2f29b4df7ebe99d37913c41c4a24af3fa222058537bee5ba';
+const MODULE_CHARS = 6523;
+const MODULE_SHA256 = '4a819feeb4376a5d876e8310fd2687976d42fd94df316523957eb3b4113109bc';
 const SLICE_AT = 1939622;
-const SLICE_CHARS = 6524;
+const SLICE_CHARS = 6523;
 const SLICE_SHA256 = MODULE_SHA256;
 
 function digest(s) { return crypto.createHash('sha256').update(s, 'utf8').digest('hex'); }
