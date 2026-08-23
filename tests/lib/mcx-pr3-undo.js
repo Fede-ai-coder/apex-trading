@@ -15,7 +15,10 @@
 const crypto = require('crypto');
 
 const TAG = '<script src="./js/services/mcx-backend-candles.js"></script>\n';
-const BASE_CHARS = 2056623;
+// Node String#length counts UTF-16 code units; index.html contains one non-BMP
+// code point, so this is one larger than Python len() from the extraction audit.
+// SHA-256 remains the byte-identity authority and is identical in both runtimes.
+const BASE_CHARS = 2056624;
 const BASE_SHA256 = '0f8baf79f8e52a76d650ca2fb7c4165f05cf34ded3cc182fc2f0cd24157f0a6c';
 const MODULE_CHARS = 12006;
 const MODULE_SHA256 = '4b3838bcd9b85fc7e75452ae968feb1d91ea0edc531108f2cc71a65b4176109a';
