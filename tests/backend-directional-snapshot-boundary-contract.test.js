@@ -1125,7 +1125,10 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const MCX2_UNDO_SPANS = require('./lib/mcx-pr2-undo.js');
   const MCX2_RELOCATED_ABOVE = MCX2_UNDO_SPANS.CUT_CHARS;
   eq(MCX2_RELOCATED_ABOVE, 24690, 'the MCX VIX relocation removed exactly 24,690 chars from the monolith');
-  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE;
+  const MCX3_UNDO_SPANS = require('./lib/mcx-pr3-undo.js');
+  const MCX3_RELOCATED_ABOVE = MCX3_UNDO_SPANS.FUNC_CHARS + MCX3_UNDO_SPANS.SEPARATOR.length + MCX3_UNDO_SPANS.STATE_CHARS;
+  eq(MCX3_RELOCATED_ABOVE, 12006, 'the MCX backend-candle relocation removed exactly 12,006 chars from the monolith');
+  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + MCX3_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');

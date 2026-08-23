@@ -3192,6 +3192,7 @@ section('13. RECONSTRUCTION');
 // extraction is the fifth and newest link; every older offset becomes valid
 // only after its successor has restored the exact intermediate document.
 const EIC_UNDO = require('./lib/eic-pr5-undo.js');
+const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
@@ -3207,8 +3208,14 @@ let RECON_HTML = HTML;
 // is what makes the order safe to depend on.
 // The MCX market-context extraction is NEWER than the whole PRETRADE stack, so
 // it is the first hop; its helper verifies by length and SHA-256 like the rest.
-// The MCX VIX extraction (PR #389) is the newest hop; it is undone before the
-// MCX snapshot extraction it was cut against.
+// MCX PR 3 is newer still: undo the backend-candle extraction before the
+// VIX and snapshot links so every older offset sees its own historical document.
+if (MCX_UNDO3.isApplied(RECON_HTML)) {
+  const mcx3Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
+  RECON_HTML = MCX_UNDO3.undoMcxPr3(RECON_HTML, mcx3Src);
+  ok(true, '13.-6 MCX backend-candle service is undone byte-exactly before the MCX VIX link');
+}
+// The MCX VIX extraction (PR #389) is then undone before the snapshot link.
 if (MCX_UNDO2.isApplied(RECON_HTML)) {
   const mcx2Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8');
   RECON_HTML = MCX_UNDO2.undoMcxPr2(RECON_HTML, mcx2Src);

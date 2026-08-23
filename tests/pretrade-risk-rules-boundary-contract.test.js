@@ -141,12 +141,16 @@ const PRETRADE_PR2 = require('./lib/pretrade-pr2-undo.js');
 // Each helper re-verifies the document it hands back by length and SHA-256,
 // so every offset below still addresses exactly the document it was written
 // against.
+const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const at386 = MCX_UNDO2.isApplied(liveIndex)
-  ? MCX_UNDO2.undoMcxPr2(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-vix-market-context.js'),'utf8'))
+const at392 = MCX_UNDO3.isApplied(liveIndex)
+  ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
   : liveIndex;
+const at386 = MCX_UNDO2.isApplied(at392)
+  ? MCX_UNDO2.undoMcxPr2(at392, fs.readFileSync(path.join(ROOT,'js/services/mcx-vix-market-context.js'),'utf8'))
+  : at392;
 const at385 = MCX_UNDO.isApplied(at386)
   ? MCX_UNDO.undoMcxPr1(at386, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
   : at386;
