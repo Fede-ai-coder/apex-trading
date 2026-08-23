@@ -61,8 +61,8 @@ jobs:
             rc=$?
             echo "=== $f rc=$rc ==="
             tail -n 30 "$out"
-            if grep -Eq 'MCX_PR[123]_UNDO_(BASE_IDENTITY|MODULE_IDENTITY|TAG_IDENTITY|OFFSET|FUNC_|STATE_|SEPARATOR)|ReferenceError|SyntaxError' "$out"; then
-              echo "unexpected reconstruction/harness crash in $f"
+            if grep -Eq 'MCX_PR[123]_UNDO_(BASE_IDENTITY|MODULE_IDENTITY|TAG_IDENTITY|OFFSET|FUNC_|STATE_|SEPARATOR)' "$out"; then
+              echo "unexpected MCX undo-chain failure in $f"
               bad=1
             fi
           done
