@@ -328,9 +328,10 @@ const MODAL_REL='js/ui/pretrade-risk-modal.js';
 const MCX_MODULE_REL='js/services/mcx-market-context.js';
 // PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
 const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
-const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL];
+const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + both MCX owners');
+same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + all three MCX owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 ok(!maintenanceScopeChanged.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script changed after the CI maintenance baseline');
 

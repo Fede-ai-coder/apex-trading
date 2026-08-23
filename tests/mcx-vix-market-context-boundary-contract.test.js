@@ -16,6 +16,7 @@ const { loadIndexHtml, loadAppJavaScriptSource } = require('./lib/load-app-sourc
 const BASE_SHA = 'a3111a13ad1586e54ebef0d3c079fd8966ba3d03';
 const MODULE_REL = 'js/services/mcx-vix-market-context.js';
 const MCX1_REL = 'js/services/mcx-market-context.js';
+const MCX3_REL = 'js/services/mcx-backend-candles.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -151,19 +152,26 @@ ok(gitBlobSha(MODULE) === EXPECTED_MODULE_GIT_BLOB,
   'MCX-2 service module Git blob identity matches audited extraction');
 
 // 2. Script ownership / load order. MCX-1 must load first because MCX-2 calls its
-// shared owners at runtime; MCX-2 then loads immediately before residual inline app.
+// shared owners at runtime. MCX3 now follows MCX2; the residual inline app follows MCX3.
 const mcx1Tag = '<script src="./' + MCX1_REL + '"></script>';
 const tag = '<script src="./' + MODULE_REL + '"></script>';
+const mcx3Tag = '<script src="./' + MCX3_REL + '"></script>';
 ok((INDEX.split(mcx1Tag).length - 1) === 1, 'exactly one MCX-1 script tag exists');
 ok((INDEX.split(tag).length - 1) === 1, 'exactly one MCX-2 service script tag exists');
+ok((INDEX.split(mcx3Tag).length - 1) === 1, 'exactly one MCX-3 service script tag exists');
 const mcx1At = INDEX.indexOf(mcx1Tag);
 const tagAt = INDEX.indexOf(tag);
 const nextScriptAt = INDEX.indexOf('<script', tagAt + tag.length);
 const nextScriptEnd = nextScriptAt >= 0 ? INDEX.indexOf('>', nextScriptAt) : -1;
 const nextTag = nextScriptEnd >= 0 ? INDEX.slice(nextScriptAt, nextScriptEnd + 1) : '';
+const mcx3At = INDEX.indexOf(mcx3Tag);
+const afterMcx3At = INDEX.indexOf('<script', mcx3At + mcx3Tag.length);
+const afterMcx3End = afterMcx3At >= 0 ? INDEX.indexOf('>', afterMcx3At) : -1;
+const afterMcx3Tag = afterMcx3End >= 0 ? INDEX.slice(afterMcx3At, afterMcx3End + 1) : '';
 ok(mcx1At >= 0 && tagAt > mcx1At, 'MCX-1 loads before MCX-2');
-ok(tagAt >= 0 && nextScriptAt > tagAt && !/\bsrc\s*=/i.test(nextTag),
-  'MCX-2 loads immediately before the residual inline application script');
+ok(nextTag === '<script src="./' + MCX3_REL + '">', 'MCX-2 loads immediately before MCX-3');
+ok(mcx3At > tagAt && afterMcx3At > mcx3At && !/\bsrc\s*=/i.test(afterMcx3Tag),
+  'MCX-3 loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

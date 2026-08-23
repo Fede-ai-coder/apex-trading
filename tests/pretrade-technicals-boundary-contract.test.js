@@ -246,7 +246,8 @@ const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/'))
 const MCX_MODULE_REL='js/services/mcx-market-context.js';
 // PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
 const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
-same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + both MCX owners');
+const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
+same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + all three MCX owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 ok(!maintenanceScopeChanged.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script changed after the CI maintenance baseline');
 

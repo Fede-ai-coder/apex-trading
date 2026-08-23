@@ -1407,7 +1407,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 43, '4.9 index.html loads 43 local application scripts, including the three PRETRADE owners and both MCX owners');
+  eq(local.length, 44, '4.9 index.html loads 44 local application scripts, including the three PRETRADE owners and all three MCX owners');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,

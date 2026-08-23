@@ -211,11 +211,12 @@ const PRETRADE_EXTRACTION_SCRIPTS = [
   './js/ui/pretrade-risk-modal.js',
 ];
 // The MCX family's extraction, which began after the PRETRADE family closed.
-// Same rule as every list above: a LIST, never an `mcx-*` pattern, so a second
+// Same rule as every list above: a LIST, never an `mcx-*` pattern, so another
 // MCX owner cannot appear without an exact reviewed entry.
 const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-market-context.js',
   './js/services/mcx-vix-market-context.js',
+  './js/services/mcx-backend-candles.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -1125,10 +1126,9 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const MCX2_UNDO_SPANS = require('./lib/mcx-pr2-undo.js');
   const MCX2_RELOCATED_ABOVE = MCX2_UNDO_SPANS.CUT_CHARS;
   eq(MCX2_RELOCATED_ABOVE, 24690, 'the MCX VIX relocation removed exactly 24,690 chars from the monolith');
-  const MCX3_UNDO_SPANS = require('./lib/mcx-pr3-undo.js');
-  const MCX3_RELOCATED_ABOVE = MCX3_UNDO_SPANS.FUNC_CHARS + MCX3_UNDO_SPANS.SEPARATOR.length + MCX3_UNDO_SPANS.STATE_CHARS;
-  eq(MCX3_RELOCATED_ABOVE, 12006, 'the MCX backend-candle relocation removed exactly 12,006 chars from the monolith');
-  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + MCX3_RELOCATED_ABOVE;
+  // MCX3's two cuts are BELOW both shared-price outliers, so they do not
+  // contribute to this piecewise 'relocated above' offset.
+  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2714,8 +2714,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 43,
-   'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 3 PRETRADE extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 44,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE and three MCX extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
