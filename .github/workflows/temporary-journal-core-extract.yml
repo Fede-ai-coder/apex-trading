@@ -109,3 +109,5 @@ jobs:
           git add tests/*.test.js tests/tools/journal-core-historical-repair.done
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
+
+# repair-trigger: 2026-08-23T20:57+02:00
