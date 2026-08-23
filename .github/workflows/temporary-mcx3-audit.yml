@@ -1,0 +1,128 @@
+name: temporary-mcx3-backend-candle-audit
+
+on:
+  push:
+    branches: [agent/extract-mcx-backend-candle-service]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: audit exact MCX backend-candle extraction boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib, re
+
+          src = Path('index.html').read_text()
+          owners = [
+              '_mcxBackendCandleCache',
+              '_MCX_BACKEND_CACHE_TTL',
+              '_mcxGetBackendCandleEntry',
+              '_mcxGetCachedBackendCandles',
+              '_mcxNewestBarTime',
+              '_mcxStoreBackendCandleEntry',
+              '_mcxCandlesLookStale',
+              '_mcxFetchBackendCandlesForChart',
+          ]
+
+          def line_of(pos):
+              return src.count('\n', 0, pos) + 1
+
+          def fn_span(name):
+              starts = []
+              for sig in ('async function ' + name + '(', 'function ' + name + '('):
+                  p = src.find(sig)
+                  if p >= 0: starts.append(p)
+              if len(starts) != 1:
+                  raise SystemExit(f'{name}: expected one declaration start, got {starts}')
+              start = starts[0]
+              open_at = src.find('{', start)
+              if open_at < 0: raise SystemExit(name + ': missing body')
+              depth = 0; quote = None; esc = False; line = False; block = False
+              i = open_at
+              while i < len(src):
+                  c = src[i]; n = src[i+1] if i+1 < len(src) else ''
+                  if line:
+                      if c == '\n': line = False
+                      i += 1; continue
+                  if block:
+                      if c == '*' and n == '/': block = False; i += 2; continue
+                      i += 1; continue
+                  if quote:
+                      if esc: esc = False; i += 1; continue
+                      if c == '\\': esc = True; i += 1; continue
+                      if c == quote: quote = None
+                      i += 1; continue
+                  if c == '/' and n == '/': line = True; i += 2; continue
+                  if c == '/' and n == '*': block = True; i += 2; continue
+                  if c in ("'", '"', '`'): quote = c; i += 1; continue
+                  if c == '{': depth += 1
+                  elif c == '}':
+                      depth -= 1
+                      if depth == 0: return start, i + 1
+                  i += 1
+              raise SystemExit(name + ': unterminated body')
+
+          def var_span(name):
+              pat = re.compile(r'(?m)^var\s+' + re.escape(name) + r'\s*=.*?;[^\n]*(?:\n|$)')
+              ms = list(pat.finditer(src))
+              if len(ms) != 1: raise SystemExit(f'{name}: expected one var declaration, got {len(ms)}')
+              return ms[0].start(), ms[0].end()
+
+          spans = {}
+          for name in owners:
+              a,b = var_span(name) if name in owners[:2] else fn_span(name)
+              spans[name] = (a,b)
+              text = src[a:b]
+              print(f'OWNER {name} start={a} end={b} chars={len(text)} lines={line_of(a)}-{line_of(b)} sha256={hashlib.sha256(text.encode()).hexdigest()}')
+
+          ordered = sorted(spans.items(), key=lambda x: x[1][0])
+          print('\nORDER')
+          for n,(a,b) in ordered: print(f'  {n}: {a}-{b}')
+
+          print('\nGAPS')
+          for (n1,(a1,b1)),(n2,(a2,b2)) in zip(ordered, ordered[1:]):
+              gap = src[b1:a2]
+              executable = re.sub(r'/\*.*?\*/|//[^\n]*', '', gap, flags=re.S).strip()
+              preview = gap[:240].replace('\n','\\n')
+              print(f'  {n1} -> {n2}: chars={len(gap)} executable={bool(executable)} preview={preview!r}')
+
+          print('\nGLOBAL REFERENCE COUNTS')
+          for n in owners:
+              print(f'  {n}: {src.count(n)}')
+
+          print('\nCANDIDATE PRIVATE STATE')
+          for n in ['_mcxBackendCandleCache','_MCX_BACKEND_CACHE_TTL','_mcxBackendFetchInFlight']:
+              print(f'  {n}: refs={src.count(n)}')
+
+          print('\nBOUNDARY REFERENCES')
+          for n in ['ffBackendCandlesMcxCharts','_mcxBackendFetchInFlight','_mcxRenderCharts','_backendCandleGateOpen','_backendCandleGateReason','_recordCandleProvenance','_backendGateProvenanceSource','_extractBackend4hDiag']:
+              print(f'  {n}: refs={src.count(n)}')
+
+          # Confirm the two state declarations are uniquely owned by the candidate functions.
+          candidate_code = '\n'.join(src[a:b] for _,(a,b) in ordered)
+          for state in ['_mcxBackendCandleCache','_MCX_BACKEND_CACHE_TTL']:
+              outside = src.count(state) - candidate_code.count(state)
+              print(f'PRIVATE {state}: total={src.count(state)} candidate={candidate_code.count(state)} outside={outside}')
+
+          # Print exact neighborhood around the function cluster and state declarations.
+          fn_ordered = [(n,s) for n,s in ordered if n not in owners[:2]]
+          fa = fn_ordered[0][1][0]; fb = fn_ordered[-1][1][1]
+          print('\nFUNCTION_CLUSTER_NEIGHBORHOOD_START')
+          print(src[max(0,fa-500):min(len(src),fb+500)])
+          print('FUNCTION_CLUSTER_NEIGHBORHOOD_END')
+
+          sa = min(spans[n][0] for n in owners[:2]); sb = max(spans[n][1] for n in owners[:2])
+          print('\nSTATE_NEIGHBORHOOD_START')
+          print(src[max(0,sa-500):min(len(src),sb+500)])
+          print('STATE_NEIGHBORHOOD_END')
+          PY
