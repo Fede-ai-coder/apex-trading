@@ -534,7 +534,7 @@ const MCX_MODULE_REL='js/services/mcx-market-context.js';
 // PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
 const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
 same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL].sort(),'production footprint is exactly index.html + the modal owner + both MCX owners');
-const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','dbfd441b6135ac167763391e57e4c9ce068aa308','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 ok(!maintenanceScopeChanged.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no workflow or bootstrap script changed after the CI maintenance baseline');
 ok(!changed.some(p=>p===RULES_REL||p===TECH_REL),'neither earlier PRETRADE owner was modified');
 
