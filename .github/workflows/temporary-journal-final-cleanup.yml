@@ -111,10 +111,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          refs="$(git grep -nE 'journal-core-(extract\.py|extraction-pins\.json|historical-diagnostic\.py|historical-report\.txt)' -- . ':!tests/tools/*' || true)"
+          refs="$(git grep -nE 'journal-core-(extract\.py|extraction-pins\.json|historical-diagnostic\.py|historical-report\.txt)' -- . ':!tests/tools/*' ':!.github/workflows/temporary-journal-final-cleanup.yml' || true)"
           if [ -n "$refs" ]; then
             echo "$refs"
-            echo 'REFUSE: transient Journal tooling is referenced outside tests/tools/' >&2
+            echo 'REFUSE: transient Journal tooling is referenced outside tests/tools/ and its cleanup workflow' >&2
             exit 1
           fi
           git rm \
