@@ -1,48 +1,209 @@
-name: temporary-mcx-surgical-file-patch
+# ══════════════════════════════════════════════════════════════════════════
+# Portfolio Stress — frontend companion contract suites.
+#
+# WHY THIS EXISTS
+#   The only check this PR had was a Netlify deploy preview. A green preview
+#   proves the site builds; it proves nothing about the contracts this PR is
+#   entirely made of. Everything below used to be "verified locally", which is a
+#   claim a reviewer has to take on trust.
+#
+# THE STRICT JOB IS THE POINT
+#   The structural job runs offline against this repository alone. The STRICT job
+#   checks out apex-backend AT AN EXACT COMMIT and re-derives every recorded
+#   hash, evidence snippet and zero-count from it. The commit is pinned in this
+#   file — never a branch tip — because a branch tip is a moving target and
+#   "verified against the branch" would mean verified against whatever landed
+#   last. A negative control then proves the same evidence FAILS against the
+#   deployed commit, so a green strict run cannot be green by accident.
+#
+#   Nothing here reaches the network after the checkouts.
+# ══════════════════════════════════════════════════════════════════════════
+name: portfolio-stress-companion
 
 on:
   pull_request:
     branches: [dev-clean]
+  push:
+    branches: [claude/portfolio-stress-backend-parity-v1]
+  workflow_dispatch:
 
-permissions:
-  contents: write
+# The backend commit this companion is audited against. A PIN, not a branch:
+# bump it deliberately, in the same commit that updates the recorded hashes.
+env:
+  BACKEND_REPO: Fede-ai-coder/apex-backend
+  BACKEND_COMMIT: 12f3ba1821d809d5d9dbf86b86e8199e84e14119
+  BACKEND_DEPLOYED_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
 
 jobs:
-  patch:
-    if: github.head_ref == 'fix/ci-diff-check-maintenance-baseline'
+  contracts:
+    name: contract suites (node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
     steps:
+      # Full history. The architecture contract compares this branch against its
+      # declared base commit and walks only the commits THIS BRANCH adds; with a
+      # shallow clone the base is unreachable and those checks would skip rather
+      # than run — a green suite that verified less than it appears to.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # No `npm install`. The suites import Node builtins and local test helpers
+      # only, so an absent node_modules is itself the proof that no third-party
+      # dependency crept into a contract test.
+      - name: syntax check every companion module and suite
+        run: |
+          for f in js/services/portfolio-stress-*.js js/api/backend-client.js \
+                   tests/portfolio-stress-*.test.js; do
+            node --check "$f"
+          done
+
+      - name: JSON parses
+        run: |
+          node -e "JSON.parse(require('fs').readFileSync('config/risk-models/portfolio-stress-test-v1.json','utf8'))"
+          node -e "JSON.parse(require('fs').readFileSync('contracts/portfolio-scope-parity-manifest.json','utf8'))"
+
+      - name: model contract
+        run: node tests/portfolio-stress-model-contract.test.js
+
+      - name: architecture contract
+        run: node tests/portfolio-stress-architecture-contract.test.js
+
+      - name: reuse contract
+        run: node tests/portfolio-stress-reuse-contract.test.js
+
+      - name: source facts (structural)
+        run: node tests/portfolio-stress-source-facts.test.js
+
+      - name: parity runtime
+        run: node tests/portfolio-stress-parity-runtime.test.js
+
+      - name: client contract
+        run: node tests/portfolio-stress-client-contract.test.js
+
+      - name: null safety
+        run: node tests/portfolio-stress-null-safety.test.js
+
+      # On node 22 the full suite must be GREEN — no exceptions, no allowances.
+      - name: full frontend suite (node 22)
+        if: matrix.node == '22'
+        run: |
+          fail=0
+          for f in tests/*.test.js; do
+            if ! node "$f" > /tmp/out.log 2>&1; then
+              echo "::error file=$f::suite failed"
+              tail -40 /tmp/out.log
+              fail=1
+            fi
+          done
+          exit $fail
+
+      # On node 20, four DSB/scanner boundary suites already fail AT THE BASE
+      # COMMIT on a vm-sandbox proxy-trap difference between the runtimes. They
+      # are allowed — but ONLY for the exact cause measured for each of them.
+      #
+      # The rule is not written here on purpose. Shell in a workflow is a rule
+      # nobody can test: you would find out whether it rejects a SyntaxError by
+      # pushing a SyntaxError. tests/lib/node20-known-failures.js owns the
+      # decision as a pure function, the architecture contract feeds it synthetic
+      # SyntaxError / AssertionError / TypeError outputs and proves it rejects
+      # them even for a listed filename, and this step just runs it.
+      #
+      # It fails if a listed file passes, fails for a different cause, fails for
+      # a forbidden cause, disappears, is listed without a measured fingerprint,
+      # or if any UNLISTED file fails.
+      - name: full frontend suite (node 20) — known failures pinned to their measured cause
+        if: matrix.node == '20'
+        run: node tests/lib/node20-known-failures.js --run
+
+      # Validate the committed change set, not the clean checkout. PRs use the
+      # merge-base-to-head diff that GitHub shows reviewers; push runs cover the
+      # whole pushed range; manual runs fall back to the current commit.
+      - name: git diff --check
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            git diff --check "${{ github.event.before }}" "${{ github.sha }}"
+          else
+            git diff --check HEAD^1 HEAD
+          fi
+
+  # Cross-repo, so it needs a token that can read apex-backend. The default
+  # GITHUB_TOKEN is scoped to THIS repository and returns "Repository not found"
+  # for a private sibling — which is what the first run of this workflow proved.
+  #
+  # The job therefore runs only when BACKEND_READ_TOKEN exists, and the companion
+  # PR body says plainly that strict verification is locally executed until the
+  # secret is configured. A job that silently degraded to "green because it did
+  # not run" would be worse than no job at all.
+  strict-source-facts:
+    name: strict source facts vs the pinned backend commit
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.BACKEND_READ_TOKEN_CONFIGURED == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: apex-trading
+
+      # An EXACT commit. `ref` is a full sha, so this cannot silently follow a
+      # branch that moved after the evidence was recorded.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BACKEND_REPO }}
+          ref: ${{ env.BACKEND_COMMIT }}
+          path: apex-backend
+          fetch-depth: 0
+          token: ${{ secrets.BACKEND_READ_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: restore original MCX contract and push only surgical scope edit
-        env:
-          ORIGINAL_MCX_COMMIT: 73e2f2458ff4585042e1954bfff2a67f62345498
-          BRANCH: fix/ci-diff-check-maintenance-baseline
+      - name: the checkout really is the pinned commit
+        working-directory: apex-backend
         run: |
-          git show "$ORIGINAL_MCX_COMMIT:tests/mcx-market-context-boundary-contract.test.js" > /tmp/mcx-original.js
+          actual="$(git rev-parse HEAD)"
+          echo "checked out: $actual"
+          if [ "$actual" != "${{ env.BACKEND_COMMIT }}" ]; then
+            echo "::error::expected ${{ env.BACKEND_COMMIT }}, got $actual"
+            exit 1
+          fi
 
-          python - <<'PY'
-          from pathlib import Path
+      # From here on nothing touches the network.
+      - name: strict source facts
+        working-directory: apex-trading
+        env:
+          PST_REQUIRE_BACKEND_SOURCE: '1'
+          APEX_BACKEND_PATH: ${{ github.workspace }}/apex-backend
+        run: node tests/portfolio-stress-source-facts.test.js
 
-          src = Path('/tmp/mcx-original.js').read_text()
-          old = "  ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file was touched');"
-          new = "  const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', 'dbfd441b6135ac167763391e57e4c9ce068aa308', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\\r?\\n/).filter(Boolean);\n  ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');"
-          if src.count(old) != 1:
-              raise SystemExit('MCX scope target is not unique in original contract')
-          Path('tests/mcx-market-context-boundary-contract.test.js').write_text(src.replace(old, new, 1))
-          PY
+      - name: the parity manifest copy is byte-identical to the backend's
+        run: |
+          cmp apex-trading/contracts/portfolio-scope-parity-manifest.json \
+              apex-backend/contracts/portfolio-scope-parity-manifest.json
 
-          node --check tests/mcx-market-context-boundary-contract.test.js
-          git diff --check -- tests/mcx-market-context-boundary-contract.test.js
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add tests/mcx-market-context-boundary-contract.test.js
-          git commit -m "test: make MCX maintenance-scope change surgical"
-          git push origin "HEAD:$BRANCH"
+      # NEGATIVE CONTROL. The strict suite carries its own controls against the
+      # deployed commit, but they only run when that commit is fetchable, so it
+      # is fetched explicitly here rather than left to chance.
+      - name: negative control — the deployed commit must NOT satisfy the evidence
+        working-directory: apex-backend
+        run: |
+          git fetch --no-tags origin ${{ env.BACKEND_DEPLOYED_COMMIT }}
+          git cat-file -e ${{ env.BACKEND_DEPLOYED_COMMIT }}^{commit}
+          echo "deployed commit present; the strict suite's negative controls will exercise it"
+
+      - name: strict source facts, with the negative controls exercised
+        working-directory: apex-trading
+        env:
+          PST_REQUIRE_BACKEND_SOURCE: '1'
+          APEX_BACKEND_PATH: ${{ github.workspace }}/apex-backend
+        run: node tests/portfolio-stress-source-facts.test.js
