@@ -104,6 +104,9 @@ const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
 // behind, which was itself cut against PR 1's — so each tag and offset must be
 // undone BEFORE the older ones address anything. Each helper verifies its own
 // intermediate by length and SHA-256, so a wrong order cannot pass quietly.
+// The MCX market-context extraction is NEWER than every PRETRADE link, so it is
+// the new entry point of this chain.
+const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
 const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
 const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
@@ -136,9 +139,13 @@ const LIVE_HTML = L.loadIndexHtml();
 const PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-risk-rules.js'), 'utf8');
 const PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-technicals.js'), 'utf8');
 const PRETRADE_MODAL_SRC = fs.readFileSync(path.join(ROOT, 'js', 'ui', 'pretrade-risk-modal.js'), 'utf8');
-const POST_PR3_HTML = PRETRADE_UNDO3.isApplied(LIVE_HTML)
-  ? PRETRADE_UNDO3.undoPretradePr3(LIVE_HTML, PRETRADE_MODAL_SRC)
+const MCX_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-market-context.js'), 'utf8');
+const POST_MCX_HTML = MCX_UNDO.isApplied(LIVE_HTML)
+  ? MCX_UNDO.undoMcxPr1(LIVE_HTML, MCX_SRC)
   : LIVE_HTML;
+const POST_PR3_HTML = PRETRADE_UNDO3.isApplied(POST_MCX_HTML)
+  ? PRETRADE_UNDO3.undoPretradePr3(POST_MCX_HTML, PRETRADE_MODAL_SRC)
+  : POST_MCX_HTML;
 const POST_PR2_HTML = PRETRADE_UNDO2.isApplied(POST_PR3_HTML)
   ? PRETRADE_UNDO2.undoPretradePr2(POST_PR3_HTML, PRETRADE_TECH_SRC)
   : POST_PR3_HTML;

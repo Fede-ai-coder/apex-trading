@@ -94,10 +94,17 @@ const base=execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding
 // it hands back by length and SHA-256, so the reconstruction is proved, not
 // assumed, and this contract keeps checking the same invariants byte-for-byte.
 const PRETRADE_PR3 = require('./lib/pretrade-pr3-undo.js');
+// The MCX market-context extraction is NEWER than the risk modal, so it is
+// undone first; each helper re-verifies by length and SHA-256, which is what
+// makes the order safe to depend on.
+const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const index = PRETRADE_PR3.isApplied(liveIndex)
-  ? PRETRADE_PR3.undoPretradePr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
+const at385 = MCX_UNDO.isApplied(liveIndex)
+  ? MCX_UNDO.undoMcxPr1(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
   : liveIndex;
+const index = PRETRADE_PR3.isApplied(at385)
+  ? PRETRADE_PR3.undoPretradePr3(at385, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
+  : at385;
 const moduleSrc=fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');
 const rulesSrc=fs.readFileSync(path.join(ROOT,RULES_REL),'utf8');
 const baseRules=execFileSync('git',['show',BASE_SHA+':'+RULES_REL],{cwd:ROOT,encoding:'utf8',maxBuffer:2*1024*1024});
@@ -223,7 +230,8 @@ const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROO
 // on top. The list stays EXACT and named — an unplanned production file still fails.
 const MODAL_REL='js/ui/pretrade-risk-modal.js';
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,['index.html',MODULE_REL,MODAL_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner');
+const MCX_MODULE_REL='js/services/mcx-market-context.js';
+same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + MCX owner');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE technical boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);

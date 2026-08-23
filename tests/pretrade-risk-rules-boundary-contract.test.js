@@ -133,10 +133,17 @@ const base = execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encodi
 // keeps checking the same invariants byte-for-byte.
 const PRETRADE_PR3 = require('./lib/pretrade-pr3-undo.js');
 const PRETRADE_PR2 = require('./lib/pretrade-pr2-undo.js');
+// The MCX market-context extraction is NEWER than either PRETRADE link, so it
+// is undone first; each helper re-verifies by length and SHA-256, which is what
+// makes the order safe to depend on.
+const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const at383 = PRETRADE_PR3.isApplied(liveIndex)
-  ? PRETRADE_PR3.undoPretradePr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
+const at385 = MCX_UNDO.isApplied(liveIndex)
+  ? MCX_UNDO.undoMcxPr1(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
   : liveIndex;
+const at383 = PRETRADE_PR3.isApplied(at385)
+  ? PRETRADE_PR3.undoPretradePr3(at385, fs.readFileSync(path.join(ROOT,'js/ui/pretrade-risk-modal.js'),'utf8'))
+  : at385;
 const index = PRETRADE_PR2.isApplied(at383)
   ? PRETRADE_PR2.undoPretradePr2(at383, fs.readFileSync(path.join(ROOT,'js/services/pretrade-technicals.js'),'utf8'))
   : at383;
@@ -305,9 +312,10 @@ const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROO
 // The list stays EXACT and named — an unplanned production file still fails.
 const TECHNICALS_REL='js/services/pretrade-technicals.js';
 const MODAL_REL='js/ui/pretrade-risk-modal.js';
-const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL];
+const MCX_MODULE_REL='js/services/mcx-market-context.js';
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
-same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners');
+same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + the MCX owner');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);
