@@ -1,56 +1,88 @@
-name: temporary-mcx3-reconstruction-diagnostic
+name: temporary-mcx3-reconstruction-repair
 
 on:
   pull_request:
     branches: [dev-clean]
 
+permissions:
+  contents: write
+
 jobs:
-  diagnose:
+  repair:
     if: github.head_ref == 'agent/extract-mcx-backend-candle-service'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: measure raw Node identity and inverse transform
-        env:
-          BASE_SHA: 2b61bbd1ed11f227032529e9147c82434b5720b2
+      - name: prepare newest-first reconstruction repair
         run: |
-          git show "$BASE_SHA:index.html" > /tmp/mcx3-base.html
+          python tests/tools/mcx3-repair-reconstruction.py
+          node --check tests/lib/mcx-pr3-undo.js
+          for f in \
+            tests/eic-extraction-boundary-contract.test.js \
+            tests/pretrade-risk-modal-boundary-contract.test.js \
+            tests/pretrade-technicals-boundary-contract.test.js \
+            tests/pretrade-risk-rules-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
+            tests/sfs-extraction-boundary-contract.test.js \
+            tests/pess-extraction-boundary-contract.test.js \
+            tests/backend-directional-snapshot-boundary-contract.test.js; do
+            node --check "$f"
+          done
+      - name: prove PR3 undo identity and no reconstruction-chain crash
+        run: |
           node - <<'JS'
           const fs = require('fs');
-          const crypto = require('crypto');
           const U = require('./tests/lib/mcx-pr3-undo.js');
-          const h = s => crypto.createHash('sha256').update(s,'utf8').digest('hex');
-          const base = fs.readFileSync('/tmp/mcx3-base.html','utf8');
           const html = fs.readFileSync('index.html','utf8');
           const mod = fs.readFileSync('js/services/mcx-backend-candles.js','utf8');
-          console.log('NODE_BASE_CHARS=' + base.length);
-          console.log('NODE_BASE_SHA256=' + h(base));
-          console.log('NODE_HEAD_CHARS=' + html.length);
-          console.log('NODE_HEAD_SHA256=' + h(html));
-          console.log('NODE_MODULE_CHARS=' + mod.length);
-          console.log('NODE_MODULE_SHA256=' + h(mod));
-          console.log('PIN_BASE_CHARS=' + U.BASE_CHARS);
-          console.log('PIN_BASE_SHA256=' + U.BASE_SHA256);
-          const func = mod.slice(0,U.FUNC_CHARS);
-          const sep = mod.slice(U.FUNC_CHARS,U.FUNC_CHARS + U.SEPARATOR.length);
-          const state = mod.slice(U.FUNC_CHARS + U.SEPARATOR.length);
-          const tagAt = html.indexOf(U.TAG);
-          let rebuilt = html.slice(0,tagAt) + html.slice(tagAt + U.TAG.length);
-          console.log('AFTER_TAG chars=' + rebuilt.length + ' sha=' + h(rebuilt));
-          rebuilt = rebuilt.slice(0,U.FUNC_AT) + func + sep + rebuilt.slice(U.FUNC_AT);
-          console.log('AFTER_FUNC chars=' + rebuilt.length + ' sha=' + h(rebuilt));
-          rebuilt = rebuilt.slice(0,U.STATE_AT) + state + rebuilt.slice(U.STATE_AT);
-          console.log('AFTER_STATE chars=' + rebuilt.length + ' sha=' + h(rebuilt));
-          console.log('EQUAL_BASE=' + (rebuilt === base));
-          if (rebuilt !== base) {
-            let i=0; while(i<rebuilt.length && i<base.length && rebuilt[i]===base[i]) i++;
-            console.log('FIRST_DIFF=' + i);
-            console.log('BASE_AROUND=' + JSON.stringify(base.slice(Math.max(0,i-80),i+160)));
-            console.log('REBUILT_AROUND=' + JSON.stringify(rebuilt.slice(Math.max(0,i-80),i+160)));
-          }
+          const rebuilt = U.undoMcxPr3(html, mod);
+          if (rebuilt.length !== U.BASE_CHARS) throw new Error('rebuilt length mismatch');
+          console.log('MCX3 undo exact identity: PASS');
           JS
+          set +e
+          bad=0
+          for f in \
+            tests/eic-extraction-boundary-contract.test.js \
+            tests/pretrade-risk-modal-boundary-contract.test.js \
+            tests/pretrade-technicals-boundary-contract.test.js \
+            tests/pretrade-risk-rules-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
+            tests/sfs-extraction-boundary-contract.test.js \
+            tests/pess-extraction-boundary-contract.test.js \
+            tests/backend-directional-snapshot-boundary-contract.test.js; do
+            out="/tmp/$(basename "$f").log"
+            node "$f" >"$out" 2>&1
+            rc=$?
+            echo "=== $f rc=$rc ==="
+            tail -n 30 "$out"
+            if grep -Eq 'MCX_PR[123]_UNDO_(BASE_IDENTITY|MODULE_IDENTITY|TAG_IDENTITY|OFFSET|FUNC_|STATE_|SEPARATOR)|ReferenceError|SyntaxError' "$out"; then
+              echo "unexpected reconstruction/harness crash in $f"
+              bad=1
+            fi
+          done
+          set -e
+          test "$bad" -eq 0
+          git diff --check
+      - name: commit only historical reconstruction repairs
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            tests/eic-extraction-boundary-contract.test.js \
+            tests/pretrade-risk-modal-boundary-contract.test.js \
+            tests/pretrade-technicals-boundary-contract.test.js \
+            tests/pretrade-risk-rules-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
+            tests/sfs-extraction-boundary-contract.test.js \
+            tests/pess-extraction-boundary-contract.test.js \
+            tests/backend-directional-snapshot-boundary-contract.test.js
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m 'test(mcx): chain PR3 reconstruction newest-first'
+          git push origin HEAD:agent/extract-mcx-backend-candle-service
