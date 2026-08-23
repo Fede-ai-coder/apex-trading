@@ -1,49 +1,53 @@
-name: temporary-mcx3-backend-candle-audit
+name: temporary-mcx3-extraction
 
 on:
   pull_request:
     branches: [dev-clean]
 
+permissions:
+  contents: write
+
 jobs:
-  audit:
+  extract:
+    if: github.head_ref == 'agent/extract-mcx-backend-candle-service'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: audit exact MCX backend-candle extraction boundary
+      - name: perform exact two-slice relocation and prove focused contracts
+        env:
+          BASE_SHA: 2b61bbd1ed11f227032529e9147c82434b5720b2
+          BRANCH: agent/extract-mcx-backend-candle-service
         run: |
           python - <<'PY'
           from pathlib import Path
-          import hashlib, re
+          import hashlib, os, re, subprocess
 
-          src = Path('index.html').read_text()
-          owners = [
-              '_mcxBackendCandleCache',
-              '_MCX_BACKEND_CACHE_TTL',
-              '_mcxGetBackendCandleEntry',
-              '_mcxGetCachedBackendCandles',
-              '_mcxNewestBarTime',
-              '_mcxStoreBackendCandleEntry',
-              '_mcxCandlesLookStale',
-              '_mcxFetchBackendCandlesForChart',
-          ]
+          BASE = os.environ['BASE_SHA']
+          index_path = Path('index.html')
+          src = index_path.read_text()
+          base = subprocess.check_output(['git','show',BASE + ':index.html'], text=True)
+          if src != base:
+              raise SystemExit('index.html drifted from the pinned extraction base before relocation')
 
-          def line_of(pos): return src.count('\n', 0, pos) + 1
+          def digest(s): return hashlib.sha256(s.encode()).hexdigest()
 
-          def fn_span(name):
+          def fn_span(text, name):
               pat = re.compile(r'(?m)^(?:async\s+)?function\s+' + re.escape(name) + r'\(')
-              ms = list(pat.finditer(src))
-              if len(ms) != 1: raise SystemExit(f'{name}: expected one top-level declaration, got {len(ms)}')
-              start = ms[0].start(); open_at = src.find('{', start)
+              ms = list(pat.finditer(text))
+              if len(ms) != 1:
+                  raise SystemExit(f'{name}: expected exactly one top-level declaration, got {len(ms)}')
+              start = ms[0].start(); open_at = text.find('{', start)
               depth = 0; quote = None; esc = False; line = False; block = False; i = open_at
-              while i < len(src):
-                  c = src[i]; n = src[i+1] if i+1 < len(src) else ''
+              while i < len(text):
+                  c = text[i]; n = text[i+1] if i+1 < len(text) else ''
                   if line:
                       if c == '\n': line = False
                       i += 1; continue
@@ -63,47 +67,256 @@ jobs:
                       depth -= 1
                       if depth == 0: return start, i + 1
                   i += 1
-              raise SystemExit(name + ': unterminated body')
+              raise SystemExit(name + ': unterminated function')
 
-          def var_span(name):
+          def var_span(text, name):
               pat = re.compile(r'(?m)^var\s+' + re.escape(name) + r'\s*=.*?;[^\n]*(?:\n|$)')
-              ms = list(pat.finditer(src))
+              ms = list(pat.finditer(text))
               if len(ms) != 1: raise SystemExit(f'{name}: expected one var declaration, got {len(ms)}')
               return ms[0].start(), ms[0].end()
 
-          spans = {}
-          for name in owners:
-              a,b = var_span(name) if name in owners[:2] else fn_span(name)
-              spans[name] = (a,b); text = src[a:b]
-              print(f'OWNER {name} start={a} end={b} chars={len(text)} lines={line_of(a)}-{line_of(b)} sha256={hashlib.sha256(text.encode()).hexdigest()}')
+          first_name = '_mcxGetBackendCandleEntry'
+          fetch_name = '_mcxFetchBackendCandlesForChart'
+          first_start, _ = fn_span(src, first_name)
+          _, fetch_end = fn_span(src, fetch_name)
+          header = '// ── FF_BACKEND_CANDLES_MCX_CHARTS helpers ─────────────────────────────────────'
+          func_start = src.rfind(header, 0, first_start)
+          if func_start < 0: raise SystemExit('MCX backend-candle family header not found')
+          if src[fetch_end:fetch_end+2] != '\n\n':
+              raise SystemExit('function-family cut suffix is not exactly one blank line')
+          func_slice = src[func_start:fetch_end]
+          func_cut_suffix = '\n\n'
 
-          ordered = sorted(spans.items(), key=lambda x: x[1][0])
-          print('\nORDER')
-          for n,(a,b) in ordered: print(f'  {n}: {a}-{b}')
+          state_start, cache_end = var_span(src, '_mcxBackendCandleCache')
+          ttl_start, state_end = var_span(src, '_MCX_BACKEND_CACHE_TTL')
+          if cache_end != ttl_start:
+              raise SystemExit('cache and TTL declarations are not contiguous')
+          state_slice = src[state_start:state_end]
 
-          print('\nGAPS')
-          for (n1,(a1,b1)),(n2,(a2,b2)) in zip(ordered, ordered[1:]):
-              gap = src[b1:a2]
-              executable = re.sub(r'/\*.*?\*/|//[^\n]*', '', gap, flags=re.S).strip()
-              print(f'  {n1} -> {n2}: chars={len(gap)} executable={bool(executable)} preview={gap[:240].replace(chr(10), "\\n")!r}')
+          if not (func_start < fetch_end < state_start < state_end):
+              raise SystemExit('unexpected two-slice ordering')
 
-          print('\nGLOBAL REFERENCE COUNTS')
-          for n in owners: print(f'  {n}: {src.count(n)}')
-          for n in ['_mcxBackendFetchInFlight','ffBackendCandlesMcxCharts','_mcxRenderCharts','_backendCandleGateOpen','_backendCandleGateReason','_recordCandleProvenance','_backendGateProvenanceSource','_extractBackend4hDiag']:
-              print(f'  BOUNDARY {n}: refs={src.count(n)}')
+          joiner = '\n\n'
+          module = func_slice + joiner + state_slice
+          Path('js/services/mcx-backend-candles.js').write_text(module)
 
-          candidate_code = '\n'.join(src[a:b] for _,(a,b) in ordered)
-          for state in ['_mcxBackendCandleCache','_MCX_BACKEND_CACHE_TTL']:
-              outside = src.count(state) - candidate_code.count(state)
-              print(f'PRIVATE {state}: total={src.count(state)} candidate={candidate_code.count(state)} outside={outside}')
+          out = src[:state_start] + src[state_end:]
+          out = out[:func_start] + out[fetch_end + len(func_cut_suffix):]
+          anchor = '<script src="./js/services/mcx-vix-market-context.js"></script>\n'
+          tag = '<script src="./js/services/mcx-backend-candles.js"></script>\n'
+          if out.count(anchor) != 1: raise SystemExit('MCX VIX module anchor is not unique')
+          if tag in out: raise SystemExit('MCX backend-candles tag already present')
+          at = out.index(anchor) + len(anchor)
+          out = out[:at] + tag + out[at:]
+          index_path.write_text(out)
 
-          fn_ordered = [(n,s) for n,s in ordered if n not in owners[:2]]
-          fa = fn_ordered[0][1][0]; fb = fn_ordered[-1][1][1]
-          print('\nFUNCTION_CLUSTER_NEIGHBORHOOD_START')
-          print(src[max(0,fa-500):min(len(src),fb+500)])
-          print('FUNCTION_CLUSTER_NEIGHBORHOOD_END')
-          sa = min(spans[n][0] for n in owners[:2]); sb = max(spans[n][1] for n in owners[:2])
-          print('\nSTATE_NEIGHBORHOOD_START')
-          print(src[max(0,sa-500):min(len(src),sb+500)])
-          print('STATE_NEIGHBORHOOD_END')
+          values = {
+              '@BASE_SHA@': BASE,
+              '@BASE_CHARS@': str(len(src)),
+              '@BASE_HASH@': digest(src),
+              '@MODULE_CHARS@': str(len(module)),
+              '@MODULE_HASH@': digest(module),
+              '@FUNC_AT@': str(func_start),
+              '@FUNC_CHARS@': str(len(func_slice)),
+              '@FUNC_HASH@': digest(func_slice),
+              '@STATE_AT@': str(state_start),
+              '@STATE_CHARS@': str(len(state_slice)),
+              '@STATE_HASH@': digest(state_slice),
+          }
+
+          undo = r'''\
+'use strict';
+const crypto = require('crypto');
+
+const BASE_SHA = '@BASE_SHA@';
+const BASE_CHARS = @BASE_CHARS@;
+const BASE_SHA256 = '@BASE_HASH@';
+const MODULE_CHARS = @MODULE_CHARS@;
+const MODULE_SHA256 = '@MODULE_HASH@';
+const FUNC_AT = @FUNC_AT@;
+const FUNC_CHARS = @FUNC_CHARS@;
+const FUNC_SHA256 = '@FUNC_HASH@';
+const STATE_AT = @STATE_AT@;
+const STATE_CHARS = @STATE_CHARS@;
+const STATE_SHA256 = '@STATE_HASH@';
+const FUNC_CUT_SUFFIX = '\n\n';
+const JOINER = '\n\n';
+const TAG = '<script src="./js/services/mcx-backend-candles.js"></script>\n';
+
+function digest(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
+function assertEq(actual, expected, msg) {
+  if (actual !== expected) throw new Error('mcx-pr3-undo: ' + msg + ' expected=' + expected + ' actual=' + actual);
+}
+function splitModule(moduleSrc) {
+  assertEq(moduleSrc.length, MODULE_CHARS, 'module length');
+  assertEq(digest(moduleSrc), MODULE_SHA256, 'module SHA-256');
+  const fn = moduleSrc.slice(0, FUNC_CHARS);
+  const join = moduleSrc.slice(FUNC_CHARS, FUNC_CHARS + JOINER.length);
+  const state = moduleSrc.slice(FUNC_CHARS + JOINER.length);
+  assertEq(digest(fn), FUNC_SHA256, 'function slice SHA-256');
+  assertEq(join, JOINER, 'module joiner');
+  assertEq(state.length, STATE_CHARS, 'state slice length');
+  assertEq(digest(state), STATE_SHA256, 'state slice SHA-256');
+  return { fn, state };
+}
+function isApplied(index) {
+  return index.indexOf(TAG) >= 0;
+}
+function undo(index, moduleSrc) {
+  const parts = splitModule(moduleSrc);
+  const tagAt = index.indexOf(TAG);
+  assertEq(tagAt >= 0, true, 'module tag exists');
+  assertEq(index.indexOf(TAG, tagAt + TAG.length), -1, 'module tag is unique');
+  let out = index.slice(0, tagAt) + index.slice(tagAt + TAG.length);
+  out = out.slice(0, FUNC_AT) + parts.fn + FUNC_CUT_SUFFIX + out.slice(FUNC_AT);
+  out = out.slice(0, STATE_AT) + parts.state + out.slice(STATE_AT);
+  assertEq(out.length, BASE_CHARS, 'reconstructed base length');
+  assertEq(digest(out), BASE_SHA256, 'reconstructed base SHA-256');
+  return out;
+}
+module.exports = {
+  BASE_SHA, BASE_CHARS, BASE_SHA256, MODULE_CHARS, MODULE_SHA256,
+  FUNC_AT, FUNC_CHARS, FUNC_SHA256, STATE_AT, STATE_CHARS, STATE_SHA256,
+  FUNC_CUT_SUFFIX, JOINER, TAG, digest, splitModule, isApplied, undo,
+};
+'''
+          for k,v in values.items(): undo = undo.replace(k,v)
+          Path('tests/lib/mcx-pr3-undo.js').write_text(undo)
+
+          contract = r'''\
+#!/usr/bin/env node
+'use strict';
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { execFileSync } = require('child_process');
+const crypto = require('crypto');
+const UNDO = require('./lib/mcx-pr3-undo.js');
+const loader = require('./lib/load-app-source.js');
+
+const ROOT = path.resolve(__dirname, '..');
+const MODULE_PATH = path.join(ROOT, 'js/services/mcx-backend-candles.js');
+const INDEX_PATH = path.join(ROOT, 'index.html');
+const OWNERS = [
+  '_mcxBackendCandleCache', '_MCX_BACKEND_CACHE_TTL',
+  '_mcxGetBackendCandleEntry', '_mcxGetCachedBackendCandles', '_mcxNewestBarTime',
+  '_mcxStoreBackendCandleEntry', '_mcxCandlesLookStale', '_mcxFetchBackendCandlesForChart',
+];
+const FUNCTION_OWNERS = OWNERS.slice(2);
+let pass = 0, fail = 0;
+function ok(v, msg) { if (v) pass++; else { fail++; console.log('  FAIL ' + msg); } }
+function eq(a,b,msg) { ok(a === b, msg + (a === b ? '' : ' expected=' + JSON.stringify(b) + ' actual=' + JSON.stringify(a))); }
+function digest(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
+function count(s, needle) { return s.split(needle).length - 1; }
+function section(s) { console.log('\n' + s); }
+
+const base = execFileSync('git', ['show', UNDO.BASE_SHA + ':index.html'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+const index = fs.readFileSync(INDEX_PATH, 'utf8');
+const moduleSrc = fs.readFileSync(MODULE_PATH, 'utf8');
+
+section('1. pinned base and exact two-slice relocation');
+eq(base.length, UNDO.BASE_CHARS, 'base length');
+eq(digest(base), UNDO.BASE_SHA256, 'base SHA-256');
+eq(moduleSrc.length, UNDO.MODULE_CHARS, 'module length');
+eq(digest(moduleSrc), UNDO.MODULE_SHA256, 'module SHA-256');
+const parts = UNDO.splitModule(moduleSrc);
+eq(parts.fn.length, UNDO.FUNC_CHARS, 'function slice length');
+eq(digest(parts.fn), UNDO.FUNC_SHA256, 'function slice SHA-256');
+eq(parts.state.length, UNDO.STATE_CHARS, 'state slice length');
+eq(digest(parts.state), UNDO.STATE_SHA256, 'state slice SHA-256');
+ok(UNDO.FUNC_AT < UNDO.STATE_AT, 'function slice precedes state slice at the base');
+
+function transformBase(s) {
+  let out = s.slice(0, UNDO.STATE_AT) + s.slice(UNDO.STATE_AT + UNDO.STATE_CHARS);
+  out = out.slice(0, UNDO.FUNC_AT) + out.slice(UNDO.FUNC_AT + UNDO.FUNC_CHARS + UNDO.FUNC_CUT_SUFFIX.length);
+  const anchor = '<script src="./js/services/mcx-vix-market-context.js"></script>\n';
+  const at = out.indexOf(anchor);
+  if (at < 0 || out.indexOf(anchor, at + 1) >= 0) throw new Error('MCX3 anchor shape changed');
+  const p = at + anchor.length;
+  return out.slice(0, p) + UNDO.TAG + out.slice(p);
+}
+eq(index, transformBase(base), 'current index is exactly the mechanical two-cut + one-tag transform of the pinned base');
+eq(UNDO.undo(index, moduleSrc), base, 'newest-first undo reconstructs the pinned base byte-for-byte');
+
+section('2. exact owner manifest and no inline residue');
+for (const n of FUNCTION_OWNERS) {
+  eq((moduleSrc.match(new RegExp('(?:^|\\n)(?:async\\s+)?function\\s+' + n.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\(', 'g')) || []).length, 1, n + ' is declared exactly once in the owner');
+  eq((index.match(new RegExp('(?:^|\\n)(?:async\\s+)?function\\s+' + n.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\(', 'g')) || []).length, 0, n + ' has no inline declaration residue');
+}
+for (const n of OWNERS.slice(0,2)) {
+  eq((moduleSrc.match(new RegExp('(?:^|\\n)var\\s+' + n.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\s*=', 'g')) || []).length, 1, n + ' is declared exactly once in the owner');
+  eq((index.match(new RegExp('(?:^|\\n)var\\s+' + n.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&') + '\\s*=', 'g')) || []).length, 0, n + ' has no inline declaration residue');
+}
+
+section('3. classic load order and evaluation-time safety');
+eq(count(index, UNDO.TAG), 1, 'owner tag occurs exactly once');
+const vixTag = '<script src="./js/services/mcx-vix-market-context.js"></script>\n';
+const ownerAt = index.indexOf(UNDO.TAG), inlineAt = index.indexOf('<script>', ownerAt + UNDO.TAG.length);
+ok(index.indexOf(vixTag) < ownerAt && ownerAt < inlineAt, 'load order is MCX VIX -> MCX backend candles -> inline monolith');
+ok(!/<script[^>]*mcx-backend-candles[^>]*(?:defer|async|type=)/.test(index), 'owner tag is classic synchronous JS');
+for (const token of ['import ', 'export ', 'require(', 'module.exports', 'document.', 'localStorage', 'sessionStorage', 'setTimeout(', 'setInterval(', 'requestAnimationFrame(']) {
+  eq(count(moduleSrc, token), 0, 'owner has no evaluation/bundler token ' + token);
+}
+const probe = {};
+vm.createContext(probe);
+vm.runInContext(moduleSrc, probe, { filename: 'mcx-backend-candles.js' });
+const exposed = Object.keys(probe).sort();
+eq(exposed.join(','), OWNERS.slice().sort().join(','), 'evaluating the owner exposes exactly its eight declarations and touches no dependency');
+
+section('4. boundary stays narrow');
+ok(!/var\s+_mcxBackendFetchInFlight\s*=/.test(moduleSrc), '_mcxBackendFetchInFlight stays with renderer orchestration');
+ok(!/function\s+ffBackendCandlesMcxCharts\s*\(/.test(moduleSrc), 'feature flag owner stays inline');
+ok(moduleSrc.includes('ffBackendCandlesMcxCharts()'), 'cache reader keeps its call-time feature-flag dependency');
+ok(moduleSrc.includes("'/dev/market/candles-dxlink/'"), 'fetcher keeps the backend DXLink candle route');
+ok(moduleSrc.includes("'/dev/market/candles-dxlink/warmup'"), 'fetcher keeps the bounded warmup route');
+ok(!moduleSrc.includes("BACKEND + '/market/candles"), 'fetcher does not reintroduce legacy /market/candles');
+ok(!/Yahoo|yahoo/.test(moduleSrc), 'fetcher does not introduce Yahoo');
+ok(!moduleSrc.includes('_ensureCandleSubscription('), 'fetcher does not open frontend Candle subscriptions');
+ok(!moduleSrc.includes('_pfBackendCandleCache'), 'MCX owner does not cross into portfolio candle cache');
+
+section('5. reconstructed application source remains discoverable');
+const appSrc = loader.loadAppJavaScriptSource();
+for (const n of FUNCTION_OWNERS) {
+  const extracted = loader.extractFunctionSource(n, { source: appSrc });
+  ok(extracted.indexOf(n + '(') >= 0, 'central loader resolves moved function ' + n);
+}
+
+section('6. focused behavior transcript');
+const sb = { Date, Math, JSON, isFinite, console: { log() {}, warn() {} }, ffBackendCandlesMcxCharts: () => true };
+vm.createContext(sb);
+vm.runInContext(moduleSrc, sb);
+const now = Date.now();
+const newer = Array.from({length:25}, (_,i) => ({time:1700000000000 + i*86400000, close:400+i}));
+const older = Array.from({length:25}, (_,i) => ({time:1600000000000 + i*86400000, close:300+i}));
+sb._mcxStoreBackendCandleEntry('SPY', { candles1d:newer, candles4h:[], source:'NEW', fetchedAt:now });
+const kept = sb._mcxStoreBackendCandleEntry('SPY', { candles1d:older, candles4h:[], source:'OLD', fetchedAt:now+1 });
+eq(kept.source, 'NEW', 'older 1D series cannot overwrite newer cached candles');
+eq(sb._mcxGetCachedBackendCandles('SPY','1D').length, 25, 'fresh cached 1D series remains readable');
+
+console.log('\nMCX backend-candle boundary contract: ' + pass + ' passed, ' + fail + ' failed');
+if (fail) process.exit(1);
+console.log('ALL TESTS PASSED');
+'''
+          Path('tests/mcx-backend-candle-boundary-contract.test.js').write_text(contract)
+
+          print('BASE index chars', len(src), 'sha256', digest(src))
+          print('FUNCTION slice', func_start, len(func_slice), digest(func_slice))
+          print('STATE slice', state_start, len(state_slice), digest(state_slice))
+          print('MODULE', len(module), digest(module))
+          print('HEAD index chars', len(out), 'sha256', digest(out))
           PY
+
+          node --check js/services/mcx-backend-candles.js
+          node --check tests/lib/mcx-pr3-undo.js
+          node --check tests/mcx-backend-candle-boundary-contract.test.js
+          node tests/mcx-backend-candle-boundary-contract.test.js
+          node tests/mcx-backend-candles.test.js
+          node tests/mcx-refresh-on-open-freshness.test.js
+          node tests/load-app-source.test.js
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html js/services/mcx-backend-candles.js tests/lib/mcx-pr3-undo.js tests/mcx-backend-candle-boundary-contract.test.js
+          git commit -m "refactor(mcx): extract backend-candle cache service"
+          git push origin "HEAD:$BRANCH"
