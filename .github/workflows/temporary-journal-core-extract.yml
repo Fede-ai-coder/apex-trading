@@ -6,10 +6,10 @@ on:
       - agent/extract-journal-core-service
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  extract:
+  verify:
     if: github.ref == 'refs/heads/agent/extract-journal-core-service'
     runs-on: ubuntu-latest
     steps:
@@ -24,17 +24,15 @@ jobs:
         with:
           node-version: 22
 
-      - name: Prove base ancestry and untouched production input
+      - name: Prove branch/base and extracted artifacts
         shell: bash
         run: |
           set -euo pipefail
           BASE=dfb8433e8e7b0403fca5a23874dfbc600f5069c4
           git merge-base --is-ancestor "$BASE" HEAD
-          git diff --exit-code "$BASE" HEAD -- index.html
-          test ! -e js/services/journal-core.js
-
-      - name: Extract Journal core exactly
-        run: python3 tests/tools/journal-core-extract.py
+          test -f js/services/journal-core.js
+          test -f tests/tools/journal-core-extraction-pins.json
+          grep -Fq '<script src="./js/services/journal-core.js"></script>' index.html
 
       - name: Syntax and loader checks
         shell: bash
@@ -42,8 +40,9 @@ jobs:
           set -euo pipefail
           node --check js/services/journal-core.js
           node --check tests/lib/load-app-source.js
+          node --check tests/journal-core-boundary-contract.test.js
 
-      - name: Existing Journal suites
+      - name: Journal suites including extraction boundary
         shell: bash
         run: |
           set -euo pipefail
@@ -52,15 +51,8 @@ jobs:
             node "$f"
           done
 
-      - name: Diff hygiene
-        run: git diff --check
-
-      - name: Commit extraction result to feature branch
+      - name: Diff hygiene against pinned base
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "Fede-ai-coder"
-          git config user.email "federicograssettig@gmail.com"
-          git add index.html js/services/journal-core.js tests/tools/journal-core-extraction-pins.json
-          git commit -m "refactor(journal): extract core service"
-          git push origin HEAD:agent/extract-journal-core-service
+          git diff --check dfb8433e8e7b0403fca5a23874dfbc600f5069c4 HEAD
