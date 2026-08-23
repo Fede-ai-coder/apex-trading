@@ -4,13 +4,17 @@ on:
   push:
     branches:
       - agent/extract-journal-core-service
+  pull_request:
+    branches:
+      - dev-clean
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   verify:
-    if: github.ref == 'refs/heads/agent/extract-journal-core-service'
+    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/extract-journal-core-service'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact feature branch
@@ -110,4 +114,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: 2026-08-23T20:57+02:00
+# repair-trigger: pull_request-enabled
