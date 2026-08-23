@@ -70,6 +70,39 @@ jobs:
           p.write_text(s, encoding='utf-8')
           PY
           python3 tests/tools/journal-core-repair-historical.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/backend-directional-snapshot-boundary-contract.test.js')
+          s = p.read_text(encoding='utf-8')
+          pairs = [
+              (
+                  "eq(deps.length, 9, 'the real document has exactly 9 cross-script LOAD-TIME dependencies (6 + the 2 W2 exposures + the SFS debug exposure)');",
+                  "eq(deps.length, 12, 'the real document has exactly 12 cross-script LOAD-TIME dependencies (9 historical + 3 Journal CRUD bindings)');",
+                  'DSB load-time dependency count',
+              ),
+              (
+                  "     'apexDebugSfsDetailChart'],\n    'the 9 identifiers the inline monolith evaluates at load time from earlier modules');",
+                  "     'apexDebugSfsDetailChart', 'jAddTrade', 'jDeleteTrade', 'jUpdateTrade'],\n    'the 12 identifiers the inline monolith evaluates at load time from earlier modules');",
+                  'DSB load-time dependency names',
+              ),
+              (
+                  "     './js/services/candle-normalization.js', './js/services/sfs-scan-service.js',\n     './js/ui/backend-directional-preview.js'],\n    'those 9 come from exactly 5 provider modules');",
+                  "     './js/services/candle-normalization.js', './js/services/journal-core.js', './js/services/sfs-scan-service.js',\n     './js/ui/backend-directional-preview.js'],\n    'those 12 come from exactly 6 provider modules');",
+                  'DSB provider modules',
+              ),
+              (
+                  "    && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;\n});\neq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');",
+                  "    && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0\n    && JOURNAL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;\n});\neq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');",
+                  'DSB audit-time baseline exclusion',
+              ),
+          ]
+          for old, new, label in pairs:
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'REFUSE DSB metric repair {label}: expected 1 exact match, got {n}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
 
       - name: Syntax-check repaired contracts
         shell: bash
@@ -161,4 +194,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: dsb-fail-expected-got
+# repair-trigger: measured-dsb-metrics
