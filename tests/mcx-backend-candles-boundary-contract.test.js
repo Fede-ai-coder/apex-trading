@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/mcx-pr3-undo.js');
+const POST_JOURNAL_MCX3_UNDO = require('./lib/post-journal-mcx-pr3-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '2b61bbd1ed11f227032529e9147c82434b5720b2';
@@ -41,6 +42,7 @@ const OUTSIDE_INLINE = ['_mcxBackendFetchInFlight', 'ffBackendCandlesMcxCharts']
 const MCX1_TAG = '<script src="./js/services/mcx-market-context.js"></script>';
 const MCX2_TAG = '<script src="./js/services/mcx-vix-market-context.js"></script>';
 const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
+const JOURNAL_TAG = '<script src="./js/services/journal-core.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -107,10 +109,11 @@ eq(count(INDEX, MCX2_TAG), 1, 'exactly one MCX2 tag');
 eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
-eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n',
-  'MCX tail is contiguous and ordered MCX1 -> MCX2 -> MCX3 -> inline');
-ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && inlineAt > mcx3At,
-  'MCX3 loads synchronously after its predecessors and before residual inline code');
+eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> inline');
+const journalAt = INDEX.indexOf(JOURNAL_TAG);
+ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
+  'MCX3 loads synchronously after its predecessors and immediately before Journal Core');
 ok(!/\b(?:async|defer|type)\s*=/.test(MCX3_TAG), 'MCX3 tag is classic synchronous src-only form');
 eq(varDeclCount(INDEX, '_mcxBackendFetchInFlight'), 1, '_mcxBackendFetchInFlight remains inline exactly once');
 eq(varDeclCount(MODULE, '_mcxBackendFetchInFlight'), 0, '_mcxBackendFetchInFlight is not pulled into MCX3');
@@ -172,13 +175,13 @@ section('6. cache freshness / staleness semantics are preserved by execution');
 }
 
 section('7. byte-exact newest-first undo and mutation-sensitive guards');
-const rebuilt = U.undoMcxPr3(INDEX, MODULE);
+const rebuilt = POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(INDEX, MODULE);
 eq(rebuilt, BASE, 'PR3 undo reconstructs audited base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
-throws(() => U.undoMcxPr3(INDEX, MODULE + ' '), 'module-byte mutant is rejected by identity guard');
-throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, MCX3_TAG + '\n' + MCX3_TAG), MODULE),
+throws(() => POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(INDEX, MODULE + ' '), 'module-byte mutant is rejected by identity guard');
+throws(() => POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(INDEX.replace(MCX3_TAG, MCX3_TAG + '\n' + MCX3_TAG), MODULE),
   'duplicate-tag mutant is rejected');
-throws(() => U.undoMcxPr3(INDEX.replace(MCX3_TAG, ''), MODULE), 'missing-tag mutant is rejected');
+throws(() => POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(INDEX.replace(MCX3_TAG, ''), MODULE), 'missing-tag mutant is rejected');
 same(topLevelNames(MODULE + '\nfunction foreignMcx3Owner(){}'), MANIFEST.concat(['foreignMcx3Owner']),
   'manifest scanner exposes a foreign top-level owner mutant');
 ok(fnCount(INDEX + '\n' + baseFuncSlice, '_mcxGetBackendCandleEntry') > 0,

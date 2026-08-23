@@ -233,10 +233,11 @@ const base = execFileSync('git', ['show', BASE_SHA + ':index.html'], { cwd: ROOT
 // rather than assumed, and the assertions below keep meaning exactly what they
 // meant before PR #389 existed: this stays a proof of PR #386.
 const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
+const POST_JOURNAL_MCX3_UNDO = require('./lib/post-journal-mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 const at392 = MCX_UNDO3.isApplied(liveIndex)
-  ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+  ? POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
   : liveIndex;
 const index = MCX_UNDO2.isApplied(at392)
   ? MCX_UNDO2.undoMcxPr2(at392, fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8'))
@@ -870,7 +871,8 @@ async function main() {
   // an unplanned production file still fails here.
   const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
   const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';
-  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL].sort(), 'production footprint is exactly index.html + all three MCX owners');
+  const JOURNAL_CORE_REL = 'js/services/journal-core.js';
+  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL].sort(), 'production footprint is exactly index.html + all three MCX owners + Journal Core');
   const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', '9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');
 
