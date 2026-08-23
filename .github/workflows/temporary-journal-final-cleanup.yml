@@ -1,0 +1,189 @@
+name: temporary-journal-final-cleanup
+
+on:
+  pull_request:
+    branches:
+      - dev-clean
+    types: [synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.event.pull_request.head.ref == 'agent/extract-journal-core-service'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/extract-journal-core-service
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prove starting state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test "$(git rev-parse --abbrev-ref HEAD)" = "agent/extract-journal-core-service"
+          test "$(git rev-parse origin/dev-clean)" = "dfb8433e8e7b0403fca5a23874dfbc600f5069c4"
+          test -f js/services/journal-core.js
+          test -f tests/lib/journal-core-undo.js
+          for f in \
+            tests/tools/journal-core-extract.py \
+            tests/tools/journal-core-extraction-pins.json \
+            tests/tools/journal-core-historical-diagnostic.py \
+            tests/tools/journal-core-historical-report.txt; do
+            test -f "$f"
+          done
+
+      - name: Repin exact Journal slice without separator newline
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          'use strict';
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const { execFileSync } = require('child_process');
+          const BASE_SHA = 'dfb8433e8e7b0403fca5a23874dfbc600f5069c4';
+          const BASE_CHARS = 2044679;
+          const BASE_HASH = '2ed09ffa631c3ed3c7c99316c2159809af01e8d0c476c888d39b84573f64b80e';
+          const AT = 1939622;
+          const OLD_CHARS = 6524;
+          const NEW_CHARS = 6523;
+          const OLD_HASH = '06b504736e028cca2f29b4df7ebe99d37913c41c4a24af3fa222058537bee5ba';
+          const TAG = '<script src="./js/services/journal-core.js"></script>\n';
+          const digest = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');
+          const count = (s, n) => s.split(n).length - 1;
+          const base = execFileSync('git', ['show', `${BASE_SHA}:index.html`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+          const index = fs.readFileSync('index.html', 'utf8');
+          const module = fs.readFileSync('js/services/journal-core.js', 'utf8');
+          if (base.length !== BASE_CHARS || digest(base) !== BASE_HASH) throw new Error('BASE_IDENTITY');
+          if (module.length !== OLD_CHARS || digest(module) !== OLD_HASH) throw new Error('OLD_MODULE_IDENTITY');
+          const oldSlice = base.slice(AT, AT + OLD_CHARS);
+          if (oldSlice !== module) throw new Error('OLD_SLICE_IDENTITY');
+          if (!module.endsWith('\n\n')) throw new Error('EXPECTED_SEPARATOR_SHAPE');
+          const trimmed = module.slice(0, -1);
+          const retained = oldSlice.slice(-1);
+          if (trimmed.length !== NEW_CHARS || retained !== '\n') throw new Error('TRIM_SHAPE');
+          if (count(index, TAG) !== 1) throw new Error('TAG_IDENTITY');
+          const tagAt = index.indexOf(TAG);
+          if (!(tagAt >= 0 && tagAt < AT)) throw new Error('TAG_POSITION');
+          const residual = index.slice(0, tagAt) + index.slice(tagAt + TAG.length);
+          const expectedResidual = base.slice(0, AT) + base.slice(AT + OLD_CHARS);
+          if (residual !== expectedResidual) throw new Error('CURRENT_TRANSFORM_IDENTITY');
+          const desiredResidual = base.slice(0, AT) + retained + base.slice(AT + OLD_CHARS);
+          const desiredIndex = desiredResidual.slice(0, tagAt) + TAG + desiredResidual.slice(tagAt);
+          const newHash = digest(trimmed);
+          fs.writeFileSync('js/services/journal-core.js', trimmed, 'utf8');
+          fs.writeFileSync('index.html', desiredIndex, 'utf8');
+
+          const helperPath = 'tests/lib/journal-core-undo.js';
+          let helper = fs.readFileSync(helperPath, 'utf8');
+          const replacements = [
+            ['const MODULE_CHARS = 6524;', 'const MODULE_CHARS = 6523;'],
+            [`const MODULE_SHA256 = '${OLD_HASH}';`, `const MODULE_SHA256 = '${newHash}';`],
+            ['const SLICE_CHARS = 6524;', 'const SLICE_CHARS = 6523;'],
+          ];
+          for (const [oldText, newText] of replacements) {
+            const n = count(helper, oldText);
+            if (n !== 1) throw new Error(`HELPER_PIN_${oldText}_${n}`);
+            helper = helper.replace(oldText, newText);
+          }
+          fs.writeFileSync(helperPath, helper, 'utf8');
+
+          const rebuiltResidual = desiredIndex.slice(0, tagAt) + desiredIndex.slice(tagAt + TAG.length);
+          const rebuilt = rebuiltResidual.slice(0, AT) + trimmed + rebuiltResidual.slice(AT);
+          if (rebuilt !== base || rebuilt.length !== BASE_CHARS || digest(rebuilt) !== BASE_HASH) {
+            throw new Error('NEW_ROUND_TRIP_IDENTITY');
+          }
+          console.log(`NEW_MODULE_CHARS=${trimmed.length}`);
+          console.log(`NEW_MODULE_SHA256=${newHash}`);
+          NODE
+
+      - name: Prove transient tools have no consumers and remove them
+        shell: bash
+        run: |
+          set -euo pipefail
+          refs="$(git grep -nE 'journal-core-(extract\.py|extraction-pins\.json|historical-diagnostic\.py|historical-report\.txt)' -- . ':!tests/tools/*' || true)"
+          if [ -n "$refs" ]; then
+            echo "$refs"
+            echo 'REFUSE: transient Journal tooling is referenced outside tests/tools/' >&2
+            exit 1
+          fi
+          git rm \
+            tests/tools/journal-core-extract.py \
+            tests/tools/journal-core-extraction-pins.json \
+            tests/tools/journal-core-historical-diagnostic.py \
+            tests/tools/journal-core-historical-report.txt \
+            .github/workflows/temporary-journal-final-cleanup.yml
+
+      - name: Stage and validate final tree hygiene
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add index.html js/services/journal-core.js tests/lib/journal-core-undo.js
+          git diff --cached --check
+          git config user.name "Fede-ai-coder"
+          git config user.email "federicograssettig@gmail.com"
+          git commit -m "test(journal): clean extraction packaging and pins"
+          git diff --check dfb8433e8e7b0403fca5a23874dfbc600f5069c4...HEAD
+          test ! -e .github/workflows/temporary-journal-final-cleanup.yml
+          for f in \
+            tests/tools/journal-core-extract.py \
+            tests/tools/journal-core-extraction-pins.json \
+            tests/tools/journal-core-historical-diagnostic.py \
+            tests/tools/journal-core-historical-report.txt; do
+            test ! -e "$f"
+          done
+
+      - name: Focused final-tree reconstruction proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in \
+            tests/journal-core-boundary-contract.test.js \
+            tests/backend-directional-adapter-boundary-contract.test.js \
+            tests/backend-directional-preview-boundary-contract.test.js \
+            tests/backend-directional-snapshot-boundary-contract.test.js \
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
+            tests/eic-extraction-boundary-contract.test.js \
+            tests/mcx-backend-candles-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
+            tests/mcx-vix-market-context-boundary-contract.test.js \
+            tests/pess-extraction-boundary-contract.test.js \
+            tests/pretrade-risk-modal-boundary-contract.test.js \
+            tests/pretrade-risk-rules-boundary-contract.test.js \
+            tests/pretrade-technicals-boundary-contract.test.js \
+            tests/sfs-extraction-boundary-contract.test.js; do
+            echo "=== $f ==="
+            node "$f"
+          done
+
+      - name: Full Node 22 frontend suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in tests/*.test.js; do
+            if ! node "$f" > /tmp/out.log 2>&1; then
+              echo "::error file=$f::suite failed"
+              tail -60 /tmp/out.log
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: Final diff proof and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check dfb8433e8e7b0403fca5a23874dfbc600f5069c4...HEAD
+          test -z "$(git status --porcelain)"
+          git push origin HEAD:agent/extract-journal-core-service
