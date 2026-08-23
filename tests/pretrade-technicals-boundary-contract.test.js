@@ -243,7 +243,15 @@ const MCX_MODULE_REL='js/services/mcx-market-context.js';
 // PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
 const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
 same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + both MCX owners');
-ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
+// The ONE permitted .github/ entry is the companion workflow itself, which the
+// repository owner tightened on this branch (the whitespace step now diffs the
+// committed change instead of a always-clean worktree). Naming it EXACTLY keeps
+// this a scaffolding guard: any OTHER workflow, any scripts/ file — including
+// every one of the bootstrap artefacts this list exists to keep out — still
+// fails here.
+const PERMITTED_CI='.github/workflows/portfolio-stress-companion.yml';
+same(changed.filter(p=>p.startsWith('.github/')),[PERMITTED_CI],'the only .github/ file touched is the companion workflow itself');
+ok(!changed.some(p=>p.startsWith('scripts/')),'no bootstrap workflow/script remains in final tree');
 
 console.log('\nPRETRADE technical boundary contract: '+pass+' passed, '+fail+' failed; mutants '+killed+'/'+mutants.length);
 if (fail) process.exit(1);

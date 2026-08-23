@@ -866,7 +866,15 @@ async function main() {
   // an unplanned production file still fails here.
   const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
   same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL].sort(), 'production footprint is exactly index.html + the market-context owner + the MCX VIX owner');
-  ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file was touched');
+  // The ONE permitted .github/ entry is the companion workflow itself, which the
+  // repository owner tightened on this branch (the whitespace step now diffs the
+  // committed change instead of a always-clean worktree). Naming it EXACTLY keeps
+  // this a scaffolding guard: any OTHER workflow, any scripts/ file — including
+  // every one of the bootstrap artefacts this list exists to keep out — still
+  // fails here.
+  const PERMITTED_CI = '.github/workflows/portfolio-stress-companion.yml';
+  same(changed.filter((p) => p.startsWith('.github/')), [PERMITTED_CI], 'the only .github/ file touched is the companion workflow itself');
+  ok(!changed.some((p) => p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no bootstrap script, config or manifest file was touched');
 
   console.log('\nMCX market-context boundary contract: ' + pass + ' passed, ' + fail + ' failed; mutants ' + killed + '/' + total);
   if (fail) process.exit(1);
