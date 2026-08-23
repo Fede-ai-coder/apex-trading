@@ -4,17 +4,12 @@ on:
   push:
     branches:
       - agent/extract-journal-core-service
-  pull_request:
-    branches:
-      - dev-clean
-    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
 
 jobs:
   verify:
-    if: github.event_name == 'push' || github.event.pull_request.head.ref == 'agent/extract-journal-core-service'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact feature branch
@@ -36,16 +31,13 @@ jobs:
           BASE=dfb8433e8e7b0403fca5a23874dfbc600f5069c4
           git merge-base --is-ancestor "$BASE" HEAD
           test -f js/services/journal-core.js
+          test -f tests/tools/journal-core-repair-historical.py
           grep -Fq '<script src="./js/services/journal-core.js"></script>' index.html
 
-      - name: Apply historical repair once
+      - name: Apply fail-closed historical repair
         shell: bash
         run: |
           set -euo pipefail
-          if test -f tests/tools/journal-core-historical-repair.done; then
-            echo 'historical repair already committed; verification-only run'
-            exit 0
-          fi
           python3 - <<'PY'
           from pathlib import Path
           p = Path('tests/tools/journal-core-repair-historical.py')
@@ -129,7 +121,21 @@ jobs:
             node --check "$f"
           done
 
-      - name: Focused historical and Journal proof
+      - name: Build final-tree candidate locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/temporary-journal-core-extract.yml
+          git rm tests/tools/journal-core-repair-historical.py
+          git add tests/*.test.js
+          git diff --cached --check
+          git config user.name "Fede-ai-coder"
+          git config user.email "federicograssettig@gmail.com"
+          git commit -m "test(journal): preserve historical reconstruction after core extraction"
+          test ! -e .github/workflows/temporary-journal-core-extract.yml
+          test ! -e tests/tools/journal-core-repair-historical.py
+
+      - name: Focused final-tree Journal and historical proof
         shell: bash
         run: |
           set -uo pipefail
@@ -142,6 +148,7 @@ jobs:
             tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
             tests/eic-extraction-boundary-contract.test.js \
             tests/mcx-backend-candles-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
             tests/mcx-vix-market-context-boundary-contract.test.js \
             tests/pess-extraction-boundary-contract.test.js \
             tests/pretrade-risk-modal-boundary-contract.test.js \
@@ -159,7 +166,7 @@ jobs:
                 echo "--- FAILURES WITH EXPECTED/GOT CONTEXT ---"
                 grep -n -B2 -A5 'FAIL  ' /tmp/focused-current.log || true
                 echo "--- SUMMARY FAILURE LIST ---"
-                grep -n -A20 '^FAILURES:' /tmp/focused-current.log || true
+                grep -n -A30 '^FAILURES:' /tmp/focused-current.log || true
               } > /tmp/focused-failure.txt
               cat /tmp/focused-failure.txt
               exit "$rc"
@@ -175,23 +182,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Diff hygiene
-        run: git diff --check
-
-      - name: Commit successful one-shot repair
+      - name: Final-tree hygiene and push
         shell: bash
         run: |
           set -euo pipefail
-          if test -f tests/tools/journal-core-historical-repair.done; then
-            echo 'already committed; no-op'
-            exit 0
-          fi
-          printf '%s\n' 'focused Journal + historical contracts passed before this marker was committed' > tests/tools/journal-core-historical-repair.done
-          git config user.name "Fede-ai-coder"
-          git config user.email "federicograssettig@gmail.com"
-          git add tests/*.test.js tests/tools/journal-core-historical-repair.done
-          git commit -m "test(journal): preserve historical reconstruction after core extraction"
+          git diff --check HEAD^ HEAD
+          git status --porcelain
           git push origin HEAD:agent/extract-journal-core-service
-
-# MCX1 is intentionally omitted from this temporary focused loop only: run 32660815273 proved 328/329 guards pass and the sole red guard is the temporary workflow itself. The permanent strict contract is not modified and will run after cleanup.
-# repair-trigger: focused-with-strict-mcx1-deferred
