@@ -34,6 +34,19 @@ jobs:
           test -f tests/tools/journal-core-extraction-pins.json
           grep -Fq '<script src="./js/services/journal-core.js"></script>' index.html
 
+      - name: Historical reconstruction diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== mcx-pr3-undo consumers ==='
+          grep -RIl --include='*.test.js' "mcx-pr3-undo" tests | sort || true
+          echo '=== direct undoMcxPr3 call sites ==='
+          grep -RIn --include='*.test.js' "undoMcxPr3" tests | sort || true
+          echo '=== MCX3 last-before-inline assertions ==='
+          grep -RIn --include='*.test.js' -E "mcxBackend.*inline|MCX backend-candle.*LAST|mcx-backend-candles.*inline|three MCX owners|MCX owners" tests | sort || true
+          echo '=== exact local-script counts near 43/44 ==='
+          grep -RIn --include='*.test.js' -E "(43|44).*local|local.*(43|44)|length.*, *(43|44)|eq\([^,]*length, *(43|44)" tests | sort || true
+
       - name: Syntax and loader checks
         shell: bash
         run: |
