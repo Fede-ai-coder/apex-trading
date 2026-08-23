@@ -106,6 +106,12 @@ const EIC_UNDO5 = require('./lib/eic-pr5-undo.js');
 // intermediate by length and SHA-256, so a wrong order cannot pass quietly.
 // The MCX market-context extraction is NEWER than every PRETRADE link, so it is
 // the new entry point of this chain.
+// The MCX VIX extraction (PR #389) is NEWER than every link below, so it is
+// undone FIRST — newest-first, the rule the existing links already follow.
+// Each helper re-verifies the document it hands back by length and SHA-256,
+// so every offset below still addresses exactly the document it was written
+// against.
+const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
 const PRETRADE_UNDO2 = require('./lib/pretrade-pr2-undo.js');
@@ -140,9 +146,13 @@ const PRETRADE_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade
 const PRETRADE_TECH_SRC = fs.readFileSync(path.join(ROOT, 'js', 'services', 'pretrade-technicals.js'), 'utf8');
 const PRETRADE_MODAL_SRC = fs.readFileSync(path.join(ROOT, 'js', 'ui', 'pretrade-risk-modal.js'), 'utf8');
 const MCX_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-market-context.js'), 'utf8');
-const POST_MCX_HTML = MCX_UNDO.isApplied(LIVE_HTML)
-  ? MCX_UNDO.undoMcxPr1(LIVE_HTML, MCX_SRC)
+const MCX2_SRC = fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8');
+const POST_MCX2_HTML = MCX_UNDO2.isApplied(LIVE_HTML)
+  ? MCX_UNDO2.undoMcxPr2(LIVE_HTML, MCX2_SRC)
   : LIVE_HTML;
+const POST_MCX_HTML = MCX_UNDO.isApplied(POST_MCX2_HTML)
+  ? MCX_UNDO.undoMcxPr1(POST_MCX2_HTML, MCX_SRC)
+  : POST_MCX2_HTML;
 const POST_PR3_HTML = PRETRADE_UNDO3.isApplied(POST_MCX_HTML)
   ? PRETRADE_UNDO3.undoPretradePr3(POST_MCX_HTML, PRETRADE_MODAL_SRC)
   : POST_MCX_HTML;

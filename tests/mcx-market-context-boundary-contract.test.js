@@ -225,7 +225,18 @@ function transformFromBase(base) {
 }
 
 const base = execFileSync('git', ['show', BASE_SHA + ':index.html'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-const index = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+// THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it.
+// The MCX VIX extraction (PR #389) has since been cut against that document,
+// so it is undone first — newest-first — restoring the exact post-#386 index
+// that every offset, hash, slice and mutant below addresses. The helper
+// re-verifies what it hands back by length and SHA-256, so this hop is proved
+// rather than assumed, and the assertions below keep meaning exactly what they
+// meant before PR #389 existed: this stays a proof of PR #386.
+const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
+const liveIndex = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+const index = MCX_UNDO2.isApplied(liveIndex)
+  ? MCX_UNDO2.undoMcxPr2(liveIndex, fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8'))
+  : liveIndex;
 const moduleSrc = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const modalSrc = fs.readFileSync(path.join(ROOT, MODAL_REL), 'utf8');
 const baseModal = execFileSync('git', ['show', BASE_SHA + ':' + MODAL_REL], { cwd: ROOT, encoding: 'utf8', maxBuffer: 2 * 1024 * 1024 });
@@ -850,7 +861,11 @@ async function main() {
   section('12. production scope');
   const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
-  same(changedProduction, ['index.html', MODULE_REL].sort(), 'production footprint is exactly index.html + the market-context owner');
+  // The diff is measured from THIS extraction's base, so it now also spans the
+  // MCX VIX owner extracted on top by PR #389. The list stays EXACT and named —
+  // an unplanned production file still fails here.
+  const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
+  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL].sort(), 'production footprint is exactly index.html + the market-context owner + the MCX VIX owner');
   ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file was touched');
 
   console.log('\nMCX market-context boundary contract: ' + pass + ' passed, ' + fail + ' failed; mutants ' + killed + '/' + total);

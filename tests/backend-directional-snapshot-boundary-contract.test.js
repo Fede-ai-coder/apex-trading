@@ -215,6 +215,7 @@ const PRETRADE_EXTRACTION_SCRIPTS = [
 // MCX owner cannot appear without an exact reviewed entry.
 const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-market-context.js',
+  './js/services/mcx-vix-market-context.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -1117,9 +1118,17 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const MCX_UNDO_SPANS = require('./lib/mcx-pr1-undo.js');
   const MCX_RELOCATED_ABOVE = (MCX_UNDO_SPANS.A_CHARS + 2) + (1 + MCX_UNDO_SPANS.B_CHARS + 2);
   eq(MCX_RELOCATED_ABOVE, 14216, 'the MCX relocation removed exactly 14,216 chars from the monolith');
+  // PR #389 relocated a SECOND contiguous span, also ABOVE both declarations, into
+  // js/services/mcx-vix-market-context.js. Same reasoning, same treatment: the size
+  // is DERIVED from that extraction's own undo helper rather than restated here, so
+  // the pins stay exact and only a genuine edit changes the delta.
+  const MCX2_UNDO_SPANS = require('./lib/mcx-pr2-undo.js');
+  const MCX2_RELOCATED_ABOVE = MCX2_UNDO_SPANS.CUT_CHARS;
+  eq(MCX2_RELOCATED_ABOVE, 24690, 'the MCX VIX relocation removed exactly 24,690 chars from the monolith');
+  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
-  eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - MCX_RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
-  eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - MCX_RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
+  eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
+  eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
   eq(rlpd.start - drp.start, RLPD_PRE_MCX - DRP_PRE_MCX,
      'the gap between the two declarations is unchanged — nothing was inserted between them');
   // The relocation really happened: none of the MCX owner's declarations is left
@@ -2702,7 +2711,7 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 42,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 43,
    'index.html loads 26 local application scripts plus the 3 Stress companion modules, the 4 shipped PESS extraction modules, the 5 shipped EIC extraction modules and the 3 PRETRADE extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
@@ -3685,14 +3694,27 @@ eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308
   const modulesAssigningWindowAtAll = localParts
     .filter(function (p) { return WINDOW_ASSIGN.test(maskSource(p.code)); })
     .map(function (p) { return p.src; });
-  deepEq(modulesAssigningWindowAtAll, ['./js/ui/pretrade-risk-modal.js'],
-    'exactly ONE shipped module assigns to window anywhere — the PRETRADE risk modal, and only from a function body');
+  deepEq(modulesAssigningWindowAtAll, ['./js/ui/pretrade-risk-modal.js', './js/services/mcx-vix-market-context.js'],
+    'exactly TWO shipped modules assign to window anywhere — the PRETRADE risk modal and the MCX VIX owner, and both only from function bodies');
   {
     const modal = localParts.filter(function (p) { return p.src === './js/ui/pretrade-risk-modal.js'; })[0];
     ok(!!modal, 'the PRETRADE risk-modal module is part of the measured local set');
     deepEq((maskSource(modal.code).match(new RegExp(WINDOW_ASSIGN.source, 'g')) || []).sort(),
       ['window._ptCancel =', 'window._ptForceSave ='],
       '…and its window assignments are exactly the two pre-existing pre-trade modal callbacks');
+  }
+  {
+    // The MCX VIX owner's five writes are DIAGNOSTIC globals that already existed
+    // inline before PR #389 relocated them verbatim; the W1 question this section
+    // actually asks is answered by the evaluation-time scan above, which still
+    // reports zero. Pinning them by module AND by content keeps this sharper than
+    // a bare exemption: a third module, or a sixth write, or a renamed one, fails.
+    const vix = localParts.filter(function (p) { return p.src === './js/services/mcx-vix-market-context.js'; })[0];
+    ok(!!vix, 'the MCX VIX owner is part of the measured local set');
+    deepEq((maskSource(vix.code).match(new RegExp(WINDOW_ASSIGN.source, 'g')) || []).sort(),
+      ['window._vixFamilyLastDiag =', 'window._vixFamilyLastSource =', 'window._vixFamilyLastSource =',
+       'window._vixFamilyLastSource =', 'window._vixFamilySnapshotDiag ='],
+      '…and the MCX VIX owner writes exactly the five pre-existing VIX diagnostic globals');
   }
   // And a sibling boundary contract already ENFORCES that convention.
   const adapterContract = fs.readFileSync(

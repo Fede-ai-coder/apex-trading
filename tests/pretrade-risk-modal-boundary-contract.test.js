@@ -159,11 +159,20 @@ const base=execFileSync('git',['show',BASE_SHA+':index.html'],{cwd:ROOT,encoding
 // the document it hands back by length and SHA-256, so this hop is proved rather
 // than assumed and every offset, hash and ratchet below still addresses exactly
 // the document it was written against.
+// The MCX VIX extraction (PR #389) is NEWER than every link below, so it is
+// undone FIRST — newest-first, the rule the existing links already follow.
+// Each helper re-verifies the document it hands back by length and SHA-256,
+// so every offset below still addresses exactly the document it was written
+// against.
+const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex=fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
-const index = MCX_UNDO.isApplied(liveIndex)
-  ? MCX_UNDO.undoMcxPr1(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
+const at386 = MCX_UNDO2.isApplied(liveIndex)
+  ? MCX_UNDO2.undoMcxPr2(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-vix-market-context.js'),'utf8'))
   : liveIndex;
+const index = MCX_UNDO.isApplied(at386)
+  ? MCX_UNDO.undoMcxPr1(at386, fs.readFileSync(path.join(ROOT,'js/services/mcx-market-context.js'),'utf8'))
+  : at386;
 const moduleSrc=fs.readFileSync(path.join(ROOT,MODULE_REL),'utf8');
 const rulesSrc=fs.readFileSync(path.join(ROOT,RULES_REL),'utf8');
 const techSrc=fs.readFileSync(path.join(ROOT,TECH_REL),'utf8');
@@ -522,7 +531,9 @@ const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/'))
 // market-context owner extracted on top. The list stays EXACT and named — an
 // unplanned production file still fails here.
 const MCX_MODULE_REL='js/services/mcx-market-context.js';
-same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL].sort(),'production footprint is exactly index.html + the modal owner + the MCX owner');
+// PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
+const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
+same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL].sort(),'production footprint is exactly index.html + the modal owner + both MCX owners');
 ok(!changed.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no workflow or bootstrap script was touched');
 ok(!changed.some(p=>p===RULES_REL||p===TECH_REL),'neither earlier PRETRADE owner was modified');
 
