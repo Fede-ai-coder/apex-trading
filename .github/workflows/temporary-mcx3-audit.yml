@@ -1,11 +1,14 @@
-name: temporary-mcx3-final-diagnostic
+name: temporary-mcx3-final-repair
 
 on:
   pull_request:
     branches: [dev-clean]
 
+permissions:
+  contents: write
+
 jobs:
-  diagnose:
+  repair:
     if: github.head_ref == 'agent/extract-mcx-backend-candle-service'
     runs-on: ubuntu-latest
     steps:
@@ -17,37 +20,168 @@ jobs:
         with:
           node-version: '22'
 
-      - name: MCX3 boundary contract
+      - name: apply exact historical-consumer repairs
         run: |
-          node --check tests/mcx-backend-candles-boundary-contract.test.js
-          node tests/mcx-backend-candles-boundary-contract.test.js
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: full-suite diagnostic
-        run: |
-          set +e
-          fail=0
-          : > /tmp/failures.txt
-          total=0
-          green=0
-          for f in tests/*.test.js; do
-            total=$((total+1))
-            out="/tmp/$(basename "$f").log"
-            node "$f" >"$out" 2>&1
-            rc=$?
-            if [ "$rc" -eq 0 ]; then
-              green=$((green+1))
-              continue
-            fi
-            fail=1
-            echo "$f" >> /tmp/failures.txt
-            echo "=== FAIL $f ==="
-            grep -E '(^|  )(FAIL|FAILURES:|FAILED|✗|• |AssertionError|Error:|expected .*got|suite failed)' "$out" | tail -n 80 || tail -n 50 "$out"
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text()
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'{path}: expected exactly 1 match, found {n}: {old[:120]!r}')
+              p.write_text(s.replace(old, new, 1))
+
+          # 1) Backend Directional Adapter: MCX3 is now the exact newest external tail.
+          p='tests/backend-directional-adapter-boundary-contract.test.js'
+          replace_once(p,
+            "  eq(mcxVixTagIdx, inlineTagIdx - 1, 'tag order: the MCX VIX owner is now the LAST external classic script before the inline monolith');",
+            "  const mcxBackendTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-backend-candles\\.js$/.test(String(t.src || '')); });\n"
+            "  ok(mcxBackendTagIdx >= 0, 'tag order: the MCX backend-candle owner is present');\n"
+            "  eq(mcxVixTagIdx, mcxBackendTagIdx - 1, 'tag order: the MCX VIX owner is immediately before the MCX backend-candle owner');\n"
+            "  eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is now the LAST external classic script before the inline monolith');")
+          replace_once(p,
+            "eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 11,\n   'ORDER: the adapter is the application script immediately before the preview module');",
+            "eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 12,\n   'ORDER: the adapter is the application script immediately before the preview module');")
+          replace_once(p,
+            "eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 10,\n   'ORDER: the preview module is the application script immediately before the DSB pure adapter');",
+            "eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 11,\n   'ORDER: the preview module is the application script immediately before the DSB pure adapter');")
+          replace_once(p,
+            "  const mcxVixPart = PART_RANGES.filter(function (r) { return /mcx-vix-market-context\\.js$/.test(r.src); });",
+            "  const mcxVixPart = PART_RANGES.filter(function (r) { return /mcx-vix-market-context\\.js$/.test(r.src); });\n"
+            "  const mcxBackendPart = PART_RANGES.filter(function (r) { return /mcx-backend-candles\\.js$/.test(r.src); });")
+          replace_once(p,
+            "  eq(PART_RANGES.indexOf(mcxVixPart[0]), PART_RANGES.length - 2,\n     'ORDER: the MCX VIX owner is the last application script before the inline monolith');",
+            "  eq(mcxBackendPart.length, 1, 'ORDER: the MCX backend-candle owner is present exactly once');\n"
+            "  eq(PART_RANGES.indexOf(mcxVixPart[0]), PART_RANGES.indexOf(mcxBackendPart[0]) - 1,\n"
+            "     'ORDER: the MCX VIX owner is immediately before the MCX backend-candle owner');\n"
+            "  eq(PART_RANGES.indexOf(mcxBackendPart[0]), PART_RANGES.length - 2,\n"
+            "     'ORDER: the MCX backend-candle owner is the last application script before the inline monolith');")
+
+          # 2) Backend Directional Preview: same exact MCX tail at source and tag level.
+          p='tests/backend-directional-preview-boundary-contract.test.js'
+          replace_once(p,
+            "  const iMcxVix = srcs.indexOf('./js/services/mcx-vix-market-context.js');",
+            "  const iMcxVix = srcs.indexOf('./js/services/mcx-vix-market-context.js');\n"
+            "  const iMcxBackend = srcs.indexOf('./js/services/mcx-backend-candles.js');")
+          replace_once(p,
+            "  eq(iMcxVix, srcs.length - 2, 'ORDER: the MCX VIX owner is the LAST external script before the inline monolith');",
+            "  eq(iMcxVix, iMcxBackend - 1, 'ORDER: the MCX VIX owner is immediately before the MCX backend-candle owner');\n"
+            "  eq(iMcxBackend, srcs.length - 2, 'ORDER: the MCX backend-candle owner is the LAST external script before the inline monolith');")
+          replace_once(p,
+            "  const mcxVixTagIdx = TAGS.findIndex(function (t) { return /mcx-vix-market-context\\.js$/.test(clean(t.src)); });",
+            "  const mcxVixTagIdx = TAGS.findIndex(function (t) { return /mcx-vix-market-context\\.js$/.test(clean(t.src)); });\n"
+            "  const mcxBackendTagIdx = TAGS.findIndex(function (t) { return /mcx-backend-candles\\.js$/.test(clean(t.src)); });")
+          replace_once(p,
+            "  eq(mcxVixTagIdx, inlineTagIdx - 1, 'tag order: the MCX VIX owner is the LAST script tag before the inline monolith');",
+            "  ok(mcxBackendTagIdx >= 0, 'tag order: the MCX backend-candle owner is present');\n"
+            "  eq(mcxVixTagIdx, mcxBackendTagIdx - 1, 'tag order: the MCX VIX owner remains immediately before the MCX backend-candle owner');\n"
+            "  eq(mcxBackendTagIdx, inlineTagIdx - 1, 'tag order: the MCX backend-candle owner is the LAST script tag before the inline monolith');")
+
+          # 3) BSS UI: exact named MCX inventory grows from two owners to three.
+          p='tests/backend-scanner-snapshot-ui-boundary-contract.test.js'
+          replace_once(p,
+            "  const MCX_VIX_REL = './js/services/mcx-vix-market-context.js';",
+            "  const MCX_VIX_REL = './js/services/mcx-vix-market-context.js';\n"
+            "  const MCX_BACKEND_REL = './js/services/mcx-backend-candles.js';")
+          replace_once(p,
+            "  eq(idx(MCX_VIX_REL), SCRIPT_ORDER.length - 2, 'the MCX VIX owner is the last external script before the monolith');",
+            "  eq(idx(MCX_VIX_REL), idx(MCX_BACKEND_REL) - 1, 'the MCX VIX owner is immediately before the MCX backend-candle owner');\n"
+            "  eq(idx(MCX_BACKEND_REL), SCRIPT_ORDER.length - 2, 'the MCX backend-candle owner is the last external script before the monolith');")
+          replace_once(p,
+            "         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, '(inline)'],",
+            "         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, '(inline)'],")
+          replace_once(p,
+            "    './js/services/mcx-vix-market-context.js',\n  ];",
+            "    './js/services/mcx-vix-market-context.js',\n    './js/services/mcx-backend-candles.js',\n  ];")
+
+          # 4) Candle read-adapter contract: MCX feature adapter now has an explicit external owner.
+          p='tests/candle-read-adapters-contract.test.js'
+          replace_once(p,
+            "    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';",
+            "    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';\n"
+            "    const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');\n"
+            "    const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';")
+          replace_once(p,
+            "    ['READ_ORCHESTRATOR', 'FEATURE_ADAPTER'].forEach((cat) => {",
+            "    ['READ_ORCHESTRATOR'].forEach((cat) => {")
+          replace_once(p,
+            "    // 0-EXTRACTION-PRETRADE-TECHNICALS.",
+            "    {\n"
+            "      const name = '_mcxFetchBackendCandlesForChart';\n"
+            "      const reDef = new RegExp('(?:async\\\\s+)?function\\\\s+' + name + '\\\\s*\\\\(');\n"
+            "      ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);\n"
+            "      ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);\n"
+            "      ok(STORE_SRC.indexOf(name) === -1, '0: [FEATURE_ADAPTER] NOT present in candle-store-client.js: ' + name);\n"
+            "      ok(DX_SRC.indexOf(name) === -1, '0: [FEATURE_ADAPTER] NOT present in candle-dxlink-client.js: ' + name);\n"
+            "    }\n"
+            "    // 0-EXTRACTION-PRETRADE-TECHNICALS.")
+          replace_once(p,
+            "      ok(reDef.test(inlineMonolith), '0: orchestrator/adapter stays in the monolith: ' + n);",
+            "      ok(reDef.test(MCX3_SRC), '0: MCX adapter is owned by mcx-backend-candles.js: ' + n);\n"
+            "      ok(!reDef.test(inlineMonolith), '0: MCX adapter has zero residual inline declaration: ' + n);")
+
+          # 5) Candle service contract: preserve the FEATURE_ADAPTER category but pin MCX to MCX3 two-sided.
+          p='tests/candle-service-contract.test.js'
+          replace_once(p,
+            "    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';",
+            "    const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';\n"
+            "    const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');\n"
+            "    const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';")
+          replace_once(p,
+            "      ok(reDef.test(inlineMonolith), '0: feature adapter stays in the monolith: ' + n);",
+            "      ok(reDef.test(MCX3_SRC), '0: MCX feature adapter is owned by mcx-backend-candles.js: ' + n);\n"
+            "      ok(!reDef.test(inlineMonolith), '0: MCX feature adapter has zero residual inline declaration: ' + n);")
+          replace_once(p,
+            "        ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);",
+            "        if (name === '_mcxFetchBackendCandlesForChart') {\n"
+            "          ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);\n"
+            "          ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);\n"
+            "        } else {\n"
+            "          ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);\n"
+            "        }")
+
+          print('final MCX3 historical-consumer repair prepared')
+          PY
+          for f in \
+            tests/backend-directional-adapter-boundary-contract.test.js \
+            tests/backend-directional-preview-boundary-contract.test.js \
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
+            tests/candle-read-adapters-contract.test.js \
+            tests/candle-service-contract.test.js; do
+            node --check "$f"
           done
-          echo "FULL_SUITE total=$total green=$green red=$((total-green))"
-          if [ -s /tmp/failures.txt ]; then
-            echo 'FAILING_FILES_BEGIN'
-            cat /tmp/failures.txt
-            echo 'FAILING_FILES_END'
-          fi
-          set -e
-          exit "$fail"
+          git diff --check
+
+      - name: prove MCX3 and all five repaired consumers
+        run: |
+          for f in \
+            tests/mcx-backend-candles-boundary-contract.test.js \
+            tests/backend-directional-adapter-boundary-contract.test.js \
+            tests/backend-directional-preview-boundary-contract.test.js \
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
+            tests/candle-read-adapters-contract.test.js \
+            tests/candle-service-contract.test.js \
+            tests/mcx-backend-candles.test.js \
+            tests/mcx-refresh-on-open-freshness.test.js \
+            tests/load-app-source.test.js; do
+            echo "=== $f ==="
+            node "$f"
+          done
+          git diff --check
+
+      - name: commit only the five historical consumer repairs
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            tests/backend-directional-adapter-boundary-contract.test.js \
+            tests/backend-directional-preview-boundary-contract.test.js \
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
+            tests/candle-read-adapters-contract.test.js \
+            tests/candle-service-contract.test.js
+          git diff --cached --check
+          git diff --cached --stat
+          git commit -m 'test(mcx): align final consumers with MCX3 owner'
+          git push origin HEAD:agent/extract-mcx-backend-candle-service
