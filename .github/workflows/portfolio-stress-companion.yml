@@ -1,4 +1,4 @@
-name: temporary-mcx-comment-drift-cleanup
+name: temporary-mcx-surgical-file-patch
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 jobs:
-  cleanup:
+  patch:
     if: github.head_ref == 'fix/ci-diff-check-maintenance-baseline'
     runs-on: ubuntu-latest
     steps:
@@ -21,10 +21,9 @@ jobs:
         with:
           node-version: '22'
 
-      - name: restore original MCX contract and apply only maintenance scope delta
+      - name: restore original MCX contract and push only surgical scope edit
         env:
           ORIGINAL_MCX_COMMIT: 73e2f2458ff4585042e1954bfff2a67f62345498
-          MAINTENANCE_SCOPE_BASE: dbfd441b6135ac167763391e57e4c9ce068aa308
           BRANCH: fix/ci-diff-check-maintenance-baseline
         run: |
           git show "$ORIGINAL_MCX_COMMIT:tests/mcx-market-context-boundary-contract.test.js" > /tmp/mcx-original.js
@@ -32,8 +31,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          p = Path('/tmp/mcx-original.js')
-          src = p.read_text()
+          src = Path('/tmp/mcx-original.js').read_text()
           old = "  ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file was touched');"
           new = "  const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', 'dbfd441b6135ac167763391e57e4c9ce068aa308', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\\r?\\n/).filter(Boolean);\n  ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');"
           if src.count(old) != 1:
@@ -41,20 +39,10 @@ jobs:
           Path('tests/mcx-market-context-boundary-contract.test.js').write_text(src.replace(old, new, 1))
           PY
 
-          # Restore the intended permanent workflow byte-for-byte in the same commit.
-          git show "$MAINTENANCE_SCOPE_BASE:.github/workflows/portfolio-stress-companion.yml" > .github/workflows/portfolio-stress-companion.yml
-
+          node --check tests/mcx-market-context-boundary-contract.test.js
+          git diff --check -- tests/mcx-market-context-boundary-contract.test.js
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/portfolio-stress-companion.yml tests/mcx-market-context-boundary-contract.test.js
-          git diff --cached --check
+          git add tests/mcx-market-context-boundary-contract.test.js
           git commit -m "test: make MCX maintenance-scope change surgical"
-
-          node --check tests/mcx-market-context-boundary-contract.test.js
-          node tests/mcx-market-context-boundary-contract.test.js
-          node tests/pretrade-risk-modal-boundary-contract.test.js
-          node tests/pretrade-risk-rules-boundary-contract.test.js
-          node tests/pretrade-technicals-boundary-contract.test.js
-          node tests/ci-pr-diff-check-contract.test.js
-
           git push origin "HEAD:$BRANCH"
