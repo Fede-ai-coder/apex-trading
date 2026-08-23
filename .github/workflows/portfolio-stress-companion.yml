@@ -124,7 +124,7 @@ jobs:
         run: node tests/lib/node20-known-failures.js --run
 
       - name: git diff --check
-        run: git diff --check HEAD
+        run: git diff --check HEAD^1 HEAD
 
   # Cross-repo, so it needs a token that can read apex-backend. The default
   # GITHUB_TOKEN is scoped to THIS repository and returns "Repository not found"
