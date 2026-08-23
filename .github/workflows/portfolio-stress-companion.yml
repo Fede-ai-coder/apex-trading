@@ -24,7 +24,7 @@ on:
   pull_request:
     branches: [dev-clean]
   push:
-    branches: [claude/portfolio-stress-backend-parity-v1]
+    branches: [dev-clean, claude/portfolio-stress-backend-parity-v1]
   workflow_dispatch:
 
 # The backend commit this companion is audited against. A PIN, not a branch:
