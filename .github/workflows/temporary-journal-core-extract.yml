@@ -46,6 +46,29 @@ jobs:
             echo 'historical repair already committed; verification-only run'
             exit 0
           fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/tools/journal-core-repair-historical.py')
+          s = p.read_text(encoding='utf-8')
+          pairs = [
+              (
+                  r'''"const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';\nsame(changedProduction''',
+                  r'''"  const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';\n  same(changedProduction''',
+                  'MCX1 old-footprint indentation',
+              ),
+              (
+                  r'''"const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';\nconst JOURNAL_CORE_REL = 'js/services/journal-core.js';\nsame(changedProduction''',
+                  r'''"  const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';\n  const JOURNAL_CORE_REL = 'js/services/journal-core.js';\n  same(changedProduction''',
+                  'MCX1 new-footprint indentation',
+              ),
+          ]
+          for old, new, label in pairs:
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f'REFUSE workflow normalization {label}: expected 1 exact match, got {n}')
+              s = s.replace(old, new, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
           python3 tests/tools/journal-core-repair-historical.py
 
       - name: Syntax-check repaired contracts
@@ -114,4 +137,4 @@ jobs:
           git commit -m "test(journal): preserve historical reconstruction after core extraction"
           git push origin HEAD:agent/extract-journal-core-service
 
-# repair-trigger: pull_request-enabled
+# repair-trigger: exact-mcx1-indent-normalization
