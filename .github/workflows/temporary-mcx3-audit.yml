@@ -37,12 +37,10 @@ jobs:
           def line_of(pos): return src.count('\n', 0, pos) + 1
 
           def fn_span(name):
-              starts = []
-              for sig in ('async function ' + name + '(', 'function ' + name + '('):
-                  p = src.find(sig)
-                  if p >= 0: starts.append(p)
-              if len(starts) != 1: raise SystemExit(f'{name}: expected one declaration start, got {starts}')
-              start = starts[0]; open_at = src.find('{', start)
+              pat = re.compile(r'(?m)^(?:async\s+)?function\s+' + re.escape(name) + r'\(')
+              ms = list(pat.finditer(src))
+              if len(ms) != 1: raise SystemExit(f'{name}: expected one top-level declaration, got {len(ms)}')
+              start = ms[0].start(); open_at = src.find('{', start)
               depth = 0; quote = None; esc = False; line = False; block = False; i = open_at
               while i < len(src):
                   c = src[i]; n = src[i+1] if i+1 < len(src) else ''
