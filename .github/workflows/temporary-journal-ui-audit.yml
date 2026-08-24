@@ -1,0 +1,21 @@
+name: temporary-journal-ui-audit
+
+on:
+  push:
+    branches:
+      - agent/extract-journal-ui-service
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Journal UI extraction audit
+        run: node tests/tools/journal-ui-audit.js
