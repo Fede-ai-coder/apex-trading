@@ -39,27 +39,39 @@ jobs:
       - name: Apply fail-closed historical contract repair
         run: node tests/tools/temporary-mcx-regime-policy-repair-v3.js
 
-      - name: Run repaired consumers
+      - name: Repair check — backend directional adapter
+        run: node tests/backend-directional-adapter-boundary-contract.test.js
+      - name: Repair check — backend directional preview
+        run: node tests/backend-directional-preview-boundary-contract.test.js
+      - name: Repair check — backend directional snapshot
+        run: node tests/backend-directional-snapshot-boundary-contract.test.js
+      - name: Repair check — backend scanner snapshot UI
+        run: node tests/backend-scanner-snapshot-ui-boundary-contract.test.js
+      - name: Repair check — Journal Core
+        run: node tests/journal-core-boundary-contract.test.js
+      - name: Repair check — MCX backend candles
+        run: node tests/mcx-backend-candles-boundary-contract.test.js
+      - name: Repair check — MCX market context
+        run: node tests/mcx-market-context-boundary-contract.test.js
+      - name: Repair check — MCX VIX market context
+        run: node tests/mcx-vix-market-context-boundary-contract.test.js
+      - name: Repair check — PESS
+        run: node tests/pess-extraction-boundary-contract.test.js
+      - name: Repair check — PRETRADE risk modal
+        run: node tests/pretrade-risk-modal-boundary-contract.test.js
+      - name: Repair check — PRETRADE risk rules
+        run: node tests/pretrade-risk-rules-boundary-contract.test.js
+      - name: Repair check — PRETRADE technicals
+        run: node tests/pretrade-technicals-boundary-contract.test.js
+      - name: Repair check — regime naked calls
+        run: node tests/regime-naked-calls.test.js
+      - name: Repair check — SFS
+        run: node tests/sfs-extraction-boundary-contract.test.js
+
+      - name: Verify repaired tree
         shell: bash
         run: |
           set -euo pipefail
-          for f in \
-            tests/backend-directional-adapter-boundary-contract.test.js \
-            tests/backend-directional-preview-boundary-contract.test.js \
-            tests/backend-directional-snapshot-boundary-contract.test.js \
-            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
-            tests/journal-core-boundary-contract.test.js \
-            tests/mcx-backend-candles-boundary-contract.test.js \
-            tests/mcx-market-context-boundary-contract.test.js \
-            tests/mcx-vix-market-context-boundary-contract.test.js \
-            tests/pess-extraction-boundary-contract.test.js \
-            tests/pretrade-risk-modal-boundary-contract.test.js \
-            tests/pretrade-risk-rules-boundary-contract.test.js \
-            tests/pretrade-technicals-boundary-contract.test.js \
-            tests/regime-naked-calls.test.js \
-            tests/sfs-extraction-boundary-contract.test.js; do
-            node "$f"
-          done
           git diff --check
           test -z "$(git diff --name-only -- index.html js/)"
 
