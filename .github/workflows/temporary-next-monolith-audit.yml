@@ -1,0 +1,51 @@
+name: temporary-next-monolith-audit
+
+on:
+  push:
+    branches:
+      - agent/audit-next-monolith-family
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prove audit is read-only against exact merged base
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse --abbrev-ref HEAD)" = "agent/audit-next-monolith-family"
+          git fetch origin dev-clean --quiet
+          test "$(git rev-parse origin/dev-clean)" = "72a2c5759e17a3fd0477f62724d6fd4490be1c8f"
+          test -z "$(git diff 72a2c5759e17a3fd0477f62724d6fd4490be1c8f...HEAD -- index.html js/)"
+
+      - name: Measure candidate ownership boundaries
+        run: node tests/tools/temporary-next-monolith-audit.js
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-monolith-family-audit
+          path: /tmp/next-monolith-audit.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Prove no runtime mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test -z "$(git diff 72a2c5759e17a3fd0477f62724d6fd4490be1c8f...HEAD -- index.html js/)"
