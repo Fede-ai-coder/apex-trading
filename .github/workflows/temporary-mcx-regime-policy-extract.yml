@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - agent/extract-mcx-regime-policy-core
+  pull_request:
+    branches:
+      - dev-clean
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: write
