@@ -67,8 +67,8 @@ fs.writeFileSync(out, src);
 require(out);
 
 // The DSB load-time profiler intentionally keeps complex literal initialisers in
-// its visible residue.  Regime Policy therefore belongs in that exact visible
-// set, but unlike backend-config it performs no call at load time.  Preserve the
+// its visible residue. Regime Policy therefore belongs in that exact visible
+// set, but unlike backend-config it performs no call at load time. Preserve the
 // profiler's sensitivity and prove this newly visible owner is declaration-only
 // rather than broadening the exemption threshold.
 {
@@ -94,4 +94,18 @@ require(out);
   if (hits !== 1) throw new Error('REPAIR_V3_DSB_TOP_LEVEL_CLASSIFICATION: expected 1 exact match, got ' + hits);
   dsb = dsb.replace(oldBlock, newBlock);
   fs.writeFileSync(file, dsb);
+}
+
+// Journal Core is older than this extraction, so reconstruction must undo the
+// newest Regime Policy layer first. The helper's exported name is intentionally
+// explicit; keep the repair fail-closed on that exact API rather than aliasing it.
+{
+  const file = path.resolve('tests/journal-core-boundary-contract.test.js');
+  let journal = fs.readFileSync(file, 'utf8');
+  const oldCall = 'const preRegime = REGIME_U.undoRegimePolicy(INDEX, REGIME_MODULE);';
+  const newCall = 'const preRegime = REGIME_U.undoMcxRegimePolicy(INDEX, REGIME_MODULE);';
+  const hits = journal.split(oldCall).length - 1;
+  if (hits !== 1) throw new Error('REPAIR_V3_JOURNAL_UNDO_SYMBOL: expected 1 exact match, got ' + hits);
+  journal = journal.replace(oldCall, newCall);
+  fs.writeFileSync(file, journal);
 }
