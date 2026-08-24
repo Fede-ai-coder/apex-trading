@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   audit:
@@ -16,6 +16,7 @@ jobs:
       - name: Checkout audit branch
         uses: actions/checkout@v4
         with:
+          ref: agent/audit-next-monolith-family
           fetch-depth: 0
 
       - name: Set up Node 22
@@ -23,7 +24,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Prove audit is read-only against exact merged base
+      - name: Prove audit is isolated from exact merged base
         shell: bash
         run: |
           set -euo pipefail
@@ -49,3 +50,20 @@ jobs:
           set -euo pipefail
           test -z "$(git status --porcelain)"
           test -z "$(git diff 72a2c5759e17a3fd0477f62724d6fd4490be1c8f...HEAD -- index.html js/)"
+
+      - name: Publish temporary report on audit branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/next-monolith-audit.json tests/tools/temporary-next-monolith-audit-report.json
+          if git diff --quiet -- tests/tools/temporary-next-monolith-audit-report.json && git ls-files --error-unmatch tests/tools/temporary-next-monolith-audit-report.json >/dev/null 2>&1; then
+            echo 'report already current'
+            exit 0
+          fi
+          git add tests/tools/temporary-next-monolith-audit-report.json
+          test -z "$(git diff --cached --name-only | grep -Ev '^tests/tools/temporary-next-monolith-audit-report.json$' || true)"
+          git diff --cached --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test(audit): publish next-family ownership report"
+          git push origin HEAD:agent/audit-next-monolith-family
