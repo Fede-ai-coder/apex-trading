@@ -484,6 +484,257 @@
         "  jSaveRemote(Object.assign({}, jLoad().find(function(t){return t.id===id;})));"
       ]
     },
+    "regimePolicyCore": {
+      "name": "regimePolicyCore",
+      "start": 1895031,
+      "end": 1902329,
+      "startLine": 33319,
+      "endLine": 33483,
+      "chars": 7298,
+      "ownerCount": 10,
+      "missingOwners": [],
+      "foreignDeclarationsInsideSpan": [],
+      "sideEffects": {},
+      "owners": [
+        {
+          "name": "_REGIME_ADJ_RULES",
+          "kind": "var",
+          "line": 33319,
+          "start": 1895031,
+          "end": 1895865,
+          "chars": 834,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 33373,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            },
+            {
+              "line": 33400,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            },
+            {
+              "line": 33427,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_REGIME_CONTENT",
+          "kind": "var",
+          "line": 33331,
+          "start": 1895866,
+          "end": 1899437,
+          "chars": 3571,
+          "totalRefs": 6,
+          "externalRefs": 5,
+          "externalContexts": [
+            {
+              "line": 33441,
+              "text": "// _REGIME_CONTENT.forbidden lists AT RENDER TIME — they are intentionally not"
+            },
+            {
+              "line": 33442,
+              "text": "// baked into _REGIME_CONTENT so the regime data stays a pure description of each"
+            },
+            {
+              "line": 33568,
+              "text": "var c=_REGIME_CONTENT[regime];"
+            },
+            {
+              "line": 33570,
+              "text": "// regime content without mutating _REGIME_CONTENT (shallow copy + new array)."
+            },
+            {
+              "line": 33598,
+              "text": "var c=_REGIME_CONTENT[regime];"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_mcxRegimeOf",
+          "kind": "function",
+          "line": 33430,
+          "start": 1899438,
+          "end": 1899579,
+          "chars": 141,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 33467,
+              "text": "// regime bucket edges in _mcxRegimeOf. Centralised here so the notes are not"
+            },
+            {
+              "line": 33643,
+              "text": "var regime=_mcxRegimeOf(vix);"
+            },
+            {
+              "line": 33896,
+              "text": "_regimeRenderCompact(_vxPoll,_mcxRegimeOf(_vxPoll));"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_REGIME_LABEL",
+          "kind": "var",
+          "line": 33436,
+          "start": 1899580,
+          "end": 1899644,
+          "chars": 64,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 33609,
+              "text": "'<div class=\"regime-compact-title\">'+(_REGIME_LABEL[regime]||regime)+'</div>'+"
+            },
+            {
+              "line": 33622,
+              "text": "var prev=_REGIME_LABEL[t.prev]||t.prev, cur=_REGIME_LABEL[t.cur]||t.cur;"
+            },
+            {
+              "line": 33622,
+              "text": "var prev=_REGIME_LABEL[t.prev]||t.prev, cur=_REGIME_LABEL[t.cur]||t.cur;"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_NAKED_CALL_MAX",
+          "kind": "var",
+          "line": 33445,
+          "start": 1900175,
+          "end": 1900204,
+          "chars": 29,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33457,
+              "text": "if(vix!=null && !isNaN(vix) && vix<_VIX_NAKED_CALL_MAX){"
+            },
+            {
+              "line": 33474,
+              "text": "if(vix<_VIX_NAKED_CALL_MAX)      notes.push('VIX &lt; 20 — avoid naked calls');"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_REGIME_OVEREXT_FORBIDDEN",
+          "kind": "var",
+          "line": 33449,
+          "start": 1900498,
+          "end": 1900820,
+          "chars": 322,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33460,
+              "text": "extra.push(_REGIME_OVEREXT_FORBIDDEN);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeDynForbidden",
+          "kind": "function",
+          "line": 33455,
+          "start": 1900976,
+          "end": 1901229,
+          "chars": 253,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33571,
+              "text": "var extraForb=_regimeDynForbidden(vix);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_AVOID_NAKED_PUT_MAX",
+          "kind": "var",
+          "line": 33469,
+          "start": 1901597,
+          "end": 1901631,
+          "chars": 34,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33475,
+              "text": "if(vix<_VIX_AVOID_NAKED_PUT_MAX) notes.push('VIX &lt; 19 — avoid naked puts');"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_LOW_IV_STRATEGY_MAX",
+          "kind": "var",
+          "line": 33470,
+          "start": 1901667,
+          "end": 1901703,
+          "chars": 36,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33476,
+              "text": "if(vix<_VIX_LOW_IV_STRATEGY_MAX){"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeCompactVixNotes",
+          "kind": "function",
+          "line": 33471,
+          "start": 1901751,
+          "end": 1902329,
+          "chars": 578,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33600,
+              "text": "var vixNotes=_regimeCompactVixNotes(vix);"
+            }
+          ],
+          "sideEffects": {}
+        }
+      ],
+      "leadingContext": [
+        "  });",
+        "  el.innerHTML=html+'</tbody></table>';",
+        "}",
+        "",
+        "// Draw VIX term structure as a canvas sparkline",
+        "// ── MARKET REGIME ALERT — content + renderer ────────────────────",
+        "// Behavioral / risk-control layer. Reads live S.vixFamily.vix ONLY.",
+        "// Renders guidance for the CURRENT regime exclusively (never all regimes).",
+        "// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL → ADJUSTMENT RULES.",
+        ""
+      ],
+      "trailingContext": [
+        "",
+        "",
+        "// ── Regime transition tracking — persistent 5-day alert ─────────",
+        "// State persists across reloads in localStorage. A transition is recorded",
+        "// ONLY when the volatility bucket (LOW/MID/HIGH) actually changes — small",
+        "// intra-regime VIX movements never retrigger the alert.",
+        "var _REGIME_LS_KEY='apex_regime_transition_v1';",
+        "function _regimeReadState(){ try{ return JSON.parse(localStorage.getItem(_REGIME_LS_KEY)||'null'); }catch(e){ return null; } }",
+        "function _regimeWriteState(st){ try{ localStorag"
+      ]
+    },
     "regime": {
       "name": "regime",
       "start": 1895031,
