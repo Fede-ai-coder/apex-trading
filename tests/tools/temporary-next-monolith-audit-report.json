@@ -1,0 +1,4949 @@
+{
+  "base": "72a2c5759e17a3fd0477f62724d6fd4490be1c8f",
+  "indexChars": 2038210,
+  "declarationCount": 1264,
+  "families": {
+    "journalUI": {
+      "name": "journalUI",
+      "start": 1940020,
+      "end": 1992894,
+      "startLine": 34195,
+      "endLine": 35264,
+      "chars": 52874,
+      "ownerCount": 5,
+      "missingOwners": [],
+      "foreignDeclarationsInsideSpan": [
+        {
+          "name": "jStat",
+          "kind": "function",
+          "line": 34224
+        },
+        {
+          "name": "jTradeCard",
+          "kind": "function",
+          "line": 34231
+        },
+        {
+          "name": "jSelectFilter",
+          "kind": "function",
+          "line": 34262
+        },
+        {
+          "name": "showJournalExportModal",
+          "kind": "function",
+          "line": 34367
+        },
+        {
+          "name": "runJournalExport",
+          "kind": "function",
+          "line": 34425
+        },
+        {
+          "name": "_loadSheetJS",
+          "kind": "function",
+          "line": 34504
+        },
+        {
+          "name": "_jexNum",
+          "kind": "function",
+          "line": 34514
+        },
+        {
+          "name": "_jexStr",
+          "kind": "function",
+          "line": 34521
+        },
+        {
+          "name": "_jexBool",
+          "kind": "function",
+          "line": 34522
+        },
+        {
+          "name": "_jexTradesSummary",
+          "kind": "function",
+          "line": 34525
+        },
+        {
+          "name": "_jexLegs",
+          "kind": "function",
+          "line": 34579
+        },
+        {
+          "name": "_jexAdjustments",
+          "kind": "function",
+          "line": 34613
+        },
+        {
+          "name": "_jexSnapshots",
+          "kind": "function",
+          "line": 34641
+        },
+        {
+          "name": "_jexDataQuality",
+          "kind": "function",
+          "line": 34771
+        },
+        {
+          "name": "_doJournalExcelExport",
+          "kind": "function",
+          "line": 34817
+        },
+        {
+          "name": "_doJournalCSVFallback",
+          "kind": "function",
+          "line": 34828
+        },
+        {
+          "name": "jField",
+          "kind": "function",
+          "line": 34855
+        },
+        {
+          "name": "jFieldSelect",
+          "kind": "function",
+          "line": 34863
+        },
+        {
+          "name": "jFieldArea",
+          "kind": "function",
+          "line": 34872
+        },
+        {
+          "name": "jSelect",
+          "kind": "function",
+          "line": 34880
+        },
+        {
+          "name": "jInput",
+          "kind": "function",
+          "line": 34887
+        },
+        {
+          "name": "jPill",
+          "kind": "function",
+          "line": 34893
+        },
+        {
+          "name": "jAnalyticCard",
+          "kind": "function",
+          "line": 34899
+        },
+        {
+          "name": "J_LEG_TEMPLATES",
+          "kind": "var",
+          "line": 34906
+        },
+        {
+          "name": "jOnStrategyChange",
+          "kind": "function",
+          "line": 34917
+        },
+        {
+          "name": "renderJournalAdd",
+          "kind": "function",
+          "line": 34931
+        },
+        {
+          "name": "jSubmitAdd",
+          "kind": "function",
+          "line": 34987
+        },
+        {
+          "name": "renderJournalEdit",
+          "kind": "function",
+          "line": 35021
+        },
+        {
+          "name": "jSubmitEdit",
+          "kind": "function",
+          "line": 35071
+        },
+        {
+          "name": "jCloseTrade",
+          "kind": "function",
+          "line": 35196
+        }
+      ],
+      "sideEffects": {
+        "document": 52,
+        "setTimeout": 6,
+        "addEventListener": 6
+      },
+      "owners": [
+        {
+          "name": "runJournalPanel",
+          "kind": "function",
+          "line": 34195,
+          "start": 1940020,
+          "end": 1940735,
+          "chars": 715,
+          "totalRefs": 1,
+          "externalRefs": 0,
+          "externalContexts": [],
+          "sideEffects": {
+            "setTimeout": 1
+          }
+        },
+        {
+          "name": "renderJournalView",
+          "kind": "function",
+          "line": 34215,
+          "start": 1940737,
+          "end": 1941058,
+          "chars": 321,
+          "totalRefs": 19,
+          "externalRefs": 18,
+          "externalContexts": [
+            {
+              "line": 34199,
+              "text": "renderJournalView();"
+            },
+            {
+              "line": 34206,
+              "text": "renderJournalView();  // re-render with merged data"
+            },
+            {
+              "line": 34321,
+              "text": "'<button onclick=\"jView=\\'add\\';renderJournalView()\" style=\"margin-left:auto;'+"
+            },
+            {
+              "line": 34324,
+              "text": "'<button onclick=\"jView=\\'analytics\\';renderJournalView()\" style=\"'+"
+            },
+            {
+              "line": 34336,
+              "text": "'No trades match filters. <span onclick=\"jView=\\'add\\';renderJournalView()\" style=\"cursor:pointer;color:#06b6d4\">+ Add first trade</span></div>';"
+            },
+            {
+              "line": 34346,
+              "text": "setTimeout(function(){ var sb=document.getElementById('jSyncBtn'); if(sb) sb.addEventListener('click',function(){ jSyncToBackend().then(function(){ showToast('Sync completato','ok'); renderJournalView(); }); }); }, 50);"
+            },
+            {
+              "line": 34351,
+              "text": "renderJournalView();"
+            },
+            {
+              "line": 34360,
+              "text": "renderJournalView();"
+            },
+            {
+              "line": 34979,
+              "text": "'<button onclick=\"jView=\\'list\\';renderJournalView()\" style=\"background:var(--bg2);color:var(--tx2);' +"
+            },
+            {
+              "line": 35017,
+              "text": "jView = 'detail'; jDetailId = id; renderJournalView();"
+            },
+            {
+              "line": 35024,
+              "text": "if (!t) { jView = 'list'; renderJournalView(); return; }"
+            },
+            {
+              "line": 35063,
+              "text": "'<button onclick=\"jView=\\'detail\\';jDetailId=\\'' + id + '\\';renderJournalView()\" style=\"background:var(--bg2);color:var(--tx2);' +"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "renderJournalList",
+          "kind": "function",
+          "line": 34273,
+          "start": 1943678,
+          "end": 1948425,
+          "chars": 4747,
+          "totalRefs": 3,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 34220,
+              "text": "else                          renderJournalList();"
+            }
+          ],
+          "sideEffects": {
+            "document": 3,
+            "setTimeout": 3,
+            "addEventListener": 3
+          }
+        },
+        {
+          "name": "renderJournalDetail",
+          "kind": "function",
+          "line": 35104,
+          "start": 1983300,
+          "end": 1989152,
+          "chars": 5852,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 34218,
+              "text": "else if (jView==='detail')    renderJournalDetail(jDetailId);"
+            },
+            {
+              "line": 35208,
+              "text": "renderJournalDetail(id);"
+            }
+          ],
+          "sideEffects": {
+            "document": 3,
+            "setTimeout": 1,
+            "addEventListener": 3
+          }
+        },
+        {
+          "name": "renderJournalAnalytics",
+          "kind": "function",
+          "line": 35212,
+          "start": 1989861,
+          "end": 1992894,
+          "chars": 3033,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 34219,
+              "text": "else if (jView==='analytics') renderJournalAnalytics();"
+            }
+          ],
+          "sideEffects": {}
+        }
+      ],
+      "leadingContext": [
+        "// ══════════════════════════════════════════════════════════════",
+        "// JOURNAL UI",
+        "// ══════════════════════════════════════════════════════════════",
+        "",
+        "var jView = 'list';    // 'list' | 'add' | 'edit' | 'detail' | 'analytics'",
+        "var jFilter = { strategy:'all', status:'all', decision:'all', grade:'all' };",
+        "var jDetailId = null;",
+        "var jEditLeg = null;",
+        "",
+        ""
+      ],
+      "trailingContext": [
+        "",
+        "",
+        "// ── Quick capture: pre-fill ADD form from current EIC analysis ──────",
+        "function jQuickCapture(ticker) {",
+        "  var d = S.scanData.find(function(x){ return x.ticker === ticker; });",
+        "  if (!d) { showToast('Ticker not in scan data', 'warn'); return; }",
+        "  var prefill = {",
+        "    ticker,",
+        "    strategyType: d.eicFinalDecision ? 'EIC' : 'Custom',",
+        "    legs: [],"
+      ]
+    },
+    "journalSync": {
+      "name": "journalSync",
+      "start": 1995376,
+      "end": 2006486,
+      "startLine": 35328,
+      "endLine": 35549,
+      "chars": 11110,
+      "ownerCount": 3,
+      "missingOwners": [],
+      "foreignDeclarationsInsideSpan": [
+        {
+          "name": "jEnrichedDryRun",
+          "kind": "async function",
+          "line": 35363
+        },
+        {
+          "name": "jUpdateRemote",
+          "kind": "async function",
+          "line": 35423
+        },
+        {
+          "name": "jDeleteRemote",
+          "kind": "async function",
+          "line": 35446
+        }
+      ],
+      "sideEffects": {
+        "fetch": 1,
+        "ttCall": 5
+      },
+      "owners": [
+        {
+          "name": "jLoadFromBackend",
+          "kind": "async function",
+          "line": 35511,
+          "start": 2005239,
+          "end": 2006486,
+          "chars": 1247,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 34203,
+              "text": "jLoadFromBackend().then(function(synced) {"
+            },
+            {
+              "line": 35764,
+              "text": "// from a preview). Read/pull paths (_jSyncJournalFromBackend / jLoadFromBackend)"
+            }
+          ],
+          "sideEffects": {
+            "ttCall": 1
+          }
+        },
+        {
+          "name": "jSyncToBackend",
+          "kind": "async function",
+          "line": 35489,
+          "start": 2004575,
+          "end": 2005111,
+          "chars": 536,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 34346,
+              "text": "setTimeout(function(){ var sb=document.getElementById('jSyncBtn'); if(sb) sb.addEventListener('click',function(){ jSyncToBackend().then(function(){ showToast('Sync completato','ok'); renderJournalView(); }); }); }, 50);"
+            }
+          ],
+          "sideEffects": {
+            "ttCall": 1
+          }
+        },
+        {
+          "name": "jSaveRemote",
+          "kind": "async function",
+          "line": 35328,
+          "start": 1995376,
+          "end": 1997358,
+          "chars": 1982,
+          "totalRefs": 10,
+          "externalRefs": 9,
+          "externalContexts": [
+            {
+              "line": 32445,
+              "text": "// the sync layer (jSaveRemote / jUpdateRemote). Returns the structured outcome, or"
+            },
+            {
+              "line": 32447,
+              "text": "// jSaveRemote/jUpdateRemote already resolve (not reject), but a rejected promise is"
+            },
+            {
+              "line": 35420,
+              "text": "// Structured outcome, same contract as jSaveRemote. Used by the portfolio"
+            },
+            {
+              "line": 35558,
+              "text": "jSaveRemote(Object.assign({}, jLoad().find(function(t){return t.id===id;})));"
+            },
+            {
+              "line": 35656,
+              "text": "jm._lastBackendWrite = jSaveRemote(_tradeForBackend(result));"
+            },
+            {
+              "line": 35818,
+              "text": "var sent = await jSaveRemote(_tradeForBackend(pending[i]));"
+            },
+            {
+              "line": 35819,
+              "text": "// jSaveRemote now returns a structured {ok,...} outcome (older mocks may"
+            },
+            {
+              "line": 35841,
+              "text": "// Reuses the existing Journal backend path (jSaveRemote + _tradeForBackend), which"
+            },
+            {
+              "line": 35945,
+              "text": "var sent = await jSaveRemote(_journalImportPayload(t));"
+            }
+          ],
+          "sideEffects": {
+            "ttCall": 1
+          }
+        }
+      ],
+      "leadingContext": [
+        "d by journalManager before this runs.",
+        "//",
+        "//   backend confirmed → { ok:true,  source:'backend', configured:true,  trade }",
+        "//   backend failed     → { ok:false, source:'local',   configured:true,  error, status, trade }",
+        "//   not configured     → { ok:false, source:'local',   configured:false, trade }",
+        "//",
+        "// The local trade is ALWAYS preserved regardless of backend outcome (req: never",
+        "// break local/cache use). Logs with explicit tags so the console shows exactly",
+        "// whether the row reached the DB.",
+        ""
+      ],
+      "trailingContext": [
+        "",
+        "",
+        "// ── Patched wrappers: extend existing functions with remote calls ──",
+        "",
+        "// Override jAddTrade to also push to backend",
+        "var _jAddTradeOrig = jAddTrade;",
+        "jAddTrade = function(trade) {",
+        "  var id = _jAddTradeOrig(trade);",
+        "  // Fire-and-forget remote save",
+        "  jSaveRemote(Object.assign({}, jLoad().find(function(t){return t.id===id;})));"
+      ]
+    },
+    "regime": {
+      "name": "regime",
+      "start": 1895031,
+      "end": 1911895,
+      "startLine": 33319,
+      "endLine": 33650,
+      "chars": 16864,
+      "ownerCount": 15,
+      "missingOwners": [],
+      "foreignDeclarationsInsideSpan": [
+        {
+          "name": "_REGIME_LABEL",
+          "kind": "var",
+          "line": 33436
+        },
+        {
+          "name": "_REGIME_LS_KEY",
+          "kind": "var",
+          "line": 33489
+        },
+        {
+          "name": "_regimeReadState",
+          "kind": "function",
+          "line": 33490
+        },
+        {
+          "name": "_regimeWriteState",
+          "kind": "function",
+          "line": 33491
+        },
+        {
+          "name": "_regimeDayStart",
+          "kind": "function",
+          "line": 33492
+        },
+        {
+          "name": "_regimeUpdateTransition",
+          "kind": "function",
+          "line": 33494
+        },
+        {
+          "name": "_regimeTransitionStatus",
+          "kind": "function",
+          "line": 33507
+        },
+        {
+          "name": "_mcxSpySqzBadgeHtml",
+          "kind": "function",
+          "line": 33541
+        },
+        {
+          "name": "_mcxRenderSpySqzBadge",
+          "kind": "function",
+          "line": 33548
+        },
+        {
+          "name": "_VIX_CTX_BADGE",
+          "kind": "var",
+          "line": 33583
+        },
+        {
+          "name": "_regimeTransKey",
+          "kind": "var",
+          "line": 33613
+        },
+        {
+          "name": "_regimeRenderTransition",
+          "kind": "function",
+          "line": 33614
+        }
+      ],
+      "sideEffects": {
+        "document": 4,
+        "localStorage": 3
+      },
+      "owners": [
+        {
+          "name": "_REGIME_ADJ_RULES",
+          "kind": "var",
+          "line": 33319,
+          "start": 1895031,
+          "end": 1895865,
+          "chars": 834,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 33373,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            },
+            {
+              "line": 33400,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            },
+            {
+              "line": 33427,
+              "text": "adj: _REGIME_ADJ_RULES,"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_NAKED_CALL_MAX",
+          "kind": "var",
+          "line": 33445,
+          "start": 1900175,
+          "end": 1900204,
+          "chars": 29,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33457,
+              "text": "if(vix!=null && !isNaN(vix) && vix<_VIX_NAKED_CALL_MAX){"
+            },
+            {
+              "line": 33474,
+              "text": "if(vix<_VIX_NAKED_CALL_MAX)      notes.push('VIX &lt; 20 — avoid naked calls');"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_AVOID_NAKED_PUT_MAX",
+          "kind": "var",
+          "line": 33469,
+          "start": 1901597,
+          "end": 1901631,
+          "chars": 34,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33475,
+              "text": "if(vix<_VIX_AVOID_NAKED_PUT_MAX) notes.push('VIX &lt; 19 — avoid naked puts');"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_VIX_LOW_IV_STRATEGY_MAX",
+          "kind": "var",
+          "line": 33470,
+          "start": 1901667,
+          "end": 1901703,
+          "chars": 36,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33476,
+              "text": "if(vix<_VIX_LOW_IV_STRATEGY_MAX){"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_REGIME_OVEREXT_FORBIDDEN",
+          "kind": "var",
+          "line": 33449,
+          "start": 1900498,
+          "end": 1900820,
+          "chars": 322,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33460,
+              "text": "extra.push(_REGIME_OVEREXT_FORBIDDEN);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_REGIME_CONTENT",
+          "kind": "var",
+          "line": 33331,
+          "start": 1895866,
+          "end": 1899437,
+          "chars": 3571,
+          "totalRefs": 6,
+          "externalRefs": 5,
+          "externalContexts": [
+            {
+              "line": 33441,
+              "text": "// _REGIME_CONTENT.forbidden lists AT RENDER TIME — they are intentionally not"
+            },
+            {
+              "line": 33442,
+              "text": "// baked into _REGIME_CONTENT so the regime data stays a pure description of each"
+            },
+            {
+              "line": 33568,
+              "text": "var c=_REGIME_CONTENT[regime];"
+            },
+            {
+              "line": 33570,
+              "text": "// regime content without mutating _REGIME_CONTENT (shallow copy + new array)."
+            },
+            {
+              "line": 33598,
+              "text": "var c=_REGIME_CONTENT[regime];"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeDynForbidden",
+          "kind": "function",
+          "line": 33455,
+          "start": 1900976,
+          "end": 1901229,
+          "chars": 253,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33571,
+              "text": "var extraForb=_regimeDynForbidden(vix);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeCompactVixNotes",
+          "kind": "function",
+          "line": 33471,
+          "start": 1901751,
+          "end": 1902329,
+          "chars": 578,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33600,
+              "text": "var vixNotes=_regimeCompactVixNotes(vix);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_mcxRegimeOf",
+          "kind": "function",
+          "line": 33430,
+          "start": 1899438,
+          "end": 1899579,
+          "chars": 141,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 33467,
+              "text": "// regime bucket edges in _mcxRegimeOf. Centralised here so the notes are not"
+            },
+            {
+              "line": 33643,
+              "text": "var regime=_mcxRegimeOf(vix);"
+            },
+            {
+              "line": 33896,
+              "text": "_regimeRenderCompact(_vxPoll,_mcxRegimeOf(_vxPoll));"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeSections",
+          "kind": "function",
+          "line": 33516,
+          "start": 1904131,
+          "end": 1905136,
+          "chars": 1005,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33577,
+              "text": "el.querySelector('.regime-sections').innerHTML=_regimeSections(cc);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeRenderCompact",
+          "kind": "function",
+          "line": 33585,
+          "start": 1907983,
+          "end": 1909668,
+          "chars": 1685,
+          "totalRefs": 5,
+          "externalRefs": 4,
+          "externalContexts": [
+            {
+              "line": 33468,
+              "text": "// hardcoded inside _regimeRenderCompact and stay easy to extend."
+            },
+            {
+              "line": 33646,
+              "text": "_regimeRenderCompact(vix,regime);           // Dashboard (no-op if element absent)"
+            },
+            {
+              "line": 33896,
+              "text": "_regimeRenderCompact(_vxPoll,_mcxRegimeOf(_vxPoll));"
+            },
+            {
+              "line": 33959,
+              "text": "// _regimeRenderCompact (called via _mcxDrawVixCurve → _regimeRefresh) uses this cache."
+            }
+          ],
+          "sideEffects": {
+            "document": 1
+          }
+        },
+        {
+          "name": "_regimeRenderMain",
+          "kind": "function",
+          "line": 33554,
+          "start": 1905854,
+          "end": 1907191,
+          "chars": 1337,
+          "totalRefs": 2,
+          "externalRefs": 1,
+          "externalContexts": [
+            {
+              "line": 33645,
+              "text": "_regimeRenderMain(vix,regime);              // MCX (no-op if element absent)"
+            }
+          ],
+          "sideEffects": {
+            "document": 1
+          }
+        },
+        {
+          "name": "_regimeRefresh",
+          "kind": "function",
+          "line": 33641,
+          "start": 1911296,
+          "end": 1911895,
+          "chars": 599,
+          "totalRefs": 11,
+          "externalRefs": 10,
+          "externalContexts": [
+            {
+              "line": 2752,
+              "text": "if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }"
+            },
+            {
+              "line": 2752,
+              "text": "if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }"
+            },
+            {
+              "line": 2786,
+              "text": "if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }"
+            },
+            {
+              "line": 2786,
+              "text": "if (typeof _regimeRefresh === 'function') { try { _regimeRefresh(); } catch(e){} }"
+            },
+            {
+              "line": 2917,
+              "text": "if(typeof _regimeRefresh==='function')_regimeRefresh(); // keep dashboard regime alert live on each refresh"
+            },
+            {
+              "line": 2917,
+              "text": "if(typeof _regimeRefresh==='function')_regimeRefresh(); // keep dashboard regime alert live on each refresh"
+            },
+            {
+              "line": 15153,
+              "text": "if (typeof _regimeRefresh === 'function') _regimeRefresh();"
+            },
+            {
+              "line": 15153,
+              "text": "if (typeof _regimeRefresh === 'function') _regimeRefresh();"
+            },
+            {
+              "line": 33726,
+              "text": "_regimeRefresh();"
+            },
+            {
+              "line": 33959,
+              "text": "// _regimeRenderCompact (called via _mcxDrawVixCurve → _regimeRefresh) uses this cache."
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeCompactKey",
+          "kind": "var",
+          "line": 33584,
+          "start": 1907955,
+          "end": 1907982,
+          "chars": 27,
+          "totalRefs": 5,
+          "externalRefs": 4,
+          "externalContexts": [
+            {
+              "line": 33590,
+              "text": "if(key===_regimeCompactKey)return;"
+            },
+            {
+              "line": 33591,
+              "text": "_regimeCompactKey=key;"
+            },
+            {
+              "line": 33894,
+              "text": "_regimeCompactKey=null;"
+            },
+            {
+              "line": 33962,
+              "text": "_regimeCompactKey = null; // force re-render with updated squeeze state"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_regimeMainKey",
+          "kind": "var",
+          "line": 33553,
+          "start": 1905829,
+          "end": 1905853,
+          "chars": 24,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33558,
+              "text": "if(key===_regimeMainKey)return;            // skip rebuild when nothing changed"
+            },
+            {
+              "line": 33559,
+              "text": "_regimeMainKey=key;"
+            }
+          ],
+          "sideEffects": {}
+        }
+      ],
+      "leadingContext": [
+        "  });",
+        "  el.innerHTML=html+'</tbody></table>';",
+        "}",
+        "",
+        "// Draw VIX term structure as a canvas sparkline",
+        "// ── MARKET REGIME ALERT — content + renderer ────────────────────",
+        "// Behavioral / risk-control layer. Reads live S.vixFamily.vix ONLY.",
+        "// Renders guidance for the CURRENT regime exclusively (never all regimes).",
+        "// Section order per regime: FORBIDDEN → EXPERIMENTAL/CAUTION → FAVORED → TECHNICAL → ADJUSTMENT RULES.",
+        ""
+      ],
+      "trailingContext": [
+        "",
+        "",
+        "// ── SMA20 Rising Defense Rule ──────────────────────────────────────────────",
+        "// Determines whether SPY's 1D SMA20 is rising (sma20_current > sma20_previous).",
+        "// Reuses SPY 1D candle data already loaded for the MCX charts — prefers the",
+        "// backend candle cache, then the shared daily-candle source. Never triggers a",
+        "// new fetch. Returns { rising, current, previous } or null when data is",
+        "// unavailable / insufficient (caller fails silently).",
+        "function _mcxSpy1dSma20Rising(){",
+        "  try {"
+      ]
+    },
+    "mcxChartLifecycle": {
+      "name": "mcxChartLifecycle",
+      "start": 902479,
+      "end": 1933551,
+      "startLine": 14640,
+      "endLine": 34066,
+      "chars": 1031072,
+      "ownerCount": 8,
+      "missingOwners": [],
+      "foreignDeclarationsInsideSpan": [
+        {
+          "name": "ffBackendCandlesScannerCharts",
+          "kind": "function",
+          "line": 14659
+        },
+        {
+          "name": "ffPreferBackendCandlesForCharts",
+          "kind": "function",
+          "line": 14685
+        },
+        {
+          "name": "ffSqueezeFireScanner",
+          "kind": "function",
+          "line": 14695
+        },
+        {
+          "name": "_apexBackendOffloadDiag",
+          "kind": "var",
+          "line": 14707
+        },
+        {
+          "name": "_ensurePerfDiag",
+          "kind": "function",
+          "line": 14750
+        },
+        {
+          "name": "isPortfolioViewActive",
+          "kind": "function",
+          "line": 14849
+        },
+        {
+          "name": "_startPortfolioAutoRefresh",
+          "kind": "function",
+          "line": 14857
+        },
+        {
+          "name": "_stopPortfolioAutoRefresh",
+          "kind": "function",
+          "line": 14871
+        },
+        {
+          "name": "showView",
+          "kind": "function",
+          "line": 15125
+        },
+        {
+          "name": "_journalMapAuditEnabled",
+          "kind": "function",
+          "line": 15249
+        },
+        {
+          "name": "_journalMapAuditSummarize",
+          "kind": "function",
+          "line": 15258
+        },
+        {
+          "name": "_journalMapAudit",
+          "kind": "function",
+          "line": 15304
+        },
+        {
+          "name": "_snapshotSqueezeState",
+          "kind": "function",
+          "line": 15332
+        },
+        {
+          "name": "_positionFieldsFromSnapshot",
+          "kind": "function",
+          "line": 15362
+        },
+        {
+          "name": "positionManager",
+          "kind": "var",
+          "line": 15381
+        },
+        {
+          "name": "apexStorageKey",
+          "kind": "function",
+          "line": 15469
+        },
+        {
+          "name": "isApexPreviewOrLocalEnv",
+          "kind": "function",
+          "line": 15476
+        },
+        {
+          "name": "isApexLocalDevEnv",
+          "kind": "function",
+          "line": 15486
+        },
+        {
+          "name": "apexStorageKeyVariants",
+          "kind": "function",
+          "line": 15516
+        },
+        {
+          "name": "_apexReadArray",
+          "kind": "function",
+          "line": 15532
+        },
+        {
+          "name": "apexNonDestructiveLoadArray",
+          "kind": "function",
+          "line": 15545
+        },
+        {
+          "name": "apexBackupKey",
+          "kind": "function",
+          "line": 15569
+        },
+        {
+          "name": "apexCreateBackup",
+          "kind": "function",
+          "line": 15579
+        },
+        {
+          "name": "portfolioManager",
+          "kind": "var",
+          "line": 15600
+        },
+        {
+          "name": "backendListPortfolios",
+          "kind": "async function",
+          "line": 15675
+        },
+        {
+          "name": "backendGetPortfolio",
+          "kind": "async function",
+          "line": 15679
+        },
+        {
+          "name": "backendCreatePortfolio",
+          "kind": "async function",
+          "line": 15683
+        },
+        {
+          "name": "backendUpdatePortfolio",
+          "kind": "async function",
+          "line": 15687
+        },
+        {
+          "name": "backendDeletePortfolio",
+          "kind": "async function",
+          "line": 15691
+        },
+        {
+          "name": "_portfolioBackendUsable",
+          "kind": "function",
+          "line": 15705
+        },
+        {
+          "name": "_portfolioBackendSyncInFlight",
+          "kind": "var",
+          "line": 15715
+        },
+        {
+          "name": "_syncPortfoliosFromBackend",
+          "kind": "async function",
+          "line": 15724
+        },
+        {
+          "name": "_portfolioOpenBackendLoad",
+          "kind": "function",
+          "line": 15768
+        },
+        {
+          "name": "portfolioApplyUpdate",
+          "kind": "async function",
+          "line": 15782
+        },
+        {
+          "name": "showNewPortfolioForm",
+          "kind": "function",
+          "line": 15802
+        },
+        {
+          "name": "createPortfolio",
+          "kind": "async function",
+          "line": 15807
+        },
+        {
+          "name": "deletePortfolio",
+          "kind": "async function",
+          "line": 15852
+        },
+        {
+          "name": "renderPortfolioView",
+          "kind": "function",
+          "line": 15890
+        },
+        {
+          "name": "getPortfolioJournalReconciliation",
+          "kind": "function",
+          "line": 16025
+        },
+        {
+          "name": "viewLinkedTradesInJournal",
+          "kind": "function",
+          "line": 16062
+        },
+        {
+          "name": "apexDumpStorageKeys",
+          "kind": "function",
+          "line": 16103
+        },
+        {
+          "name": "apexDebugPortfolioState",
+          "kind": "async function",
+          "line": 16130
+        },
+        {
+          "name": "viewUnassignedTradesInJournal",
+          "kind": "function",
+          "line": 16254
+        },
+        {
+          "name": "portStat",
+          "kind": "function",
+          "line": 16269
+        },
+        {
+          "name": "greekStat",
+          "kind": "function",
+          "line": 16274
+        },
+        {
+          "name": "computeDTE",
+          "kind": "function",
+          "line": 16284
+        },
+        {
+          "name": "computeMoneyness",
+          "kind": "function",
+          "line": 16294
+        },
+        {
+          "name": "ivrColor",
+          "kind": "function",
+          "line": 16304
+        },
+        {
+          "name": "_portfolioTradeIsOpenForRisk",
+          "kind": "function",
+          "line": 16312
+        },
+        {
+          "name": "_portfolioIdEq",
+          "kind": "function",
+          "line": 16335
+        },
+        {
+          "name": "_portfolioPositionBelongsToPortfolio",
+          "kind": "function",
+          "line": 16341
+        },
+        {
+          "name": "getOpenPortfolioRiskPositions",
+          "kind": "function",
+          "line": 16346
+        },
+        {
+          "name": "_portfolioLegStatusForRisk",
+          "kind": "function",
+          "line": 16353
+        },
+        {
+          "name": "_portfolioResidualQuantityFields",
+          "kind": "function",
+          "line": 16378
+        },
+        {
+          "name": "_portfolioGrossQuantityFields",
+          "kind": "function",
+          "line": 16387
+        },
+        {
+          "name": "_portfolioQuantityFieldPresent",
+          "kind": "function",
+          "line": 16395
+        },
+        {
+          "name": "_portfolioStrictQuantity",
+          "kind": "function",
+          "line": 16405
+        },
+        {
+          "name": "_portfolioReadQuantityField",
+          "kind": "function",
+          "line": 16419
+        },
+        {
+          "name": "_portfolioResolveLegQuantity",
+          "kind": "function",
+          "line": 16430
+        },
+        {
+          "name": "_portfolioLegExplicitOpenQty",
+          "kind": "function",
+          "line": 16439
+        },
+        {
+          "name": "_portfolioLegHasExplicitOpenQty",
+          "kind": "function",
+          "line": 16444
+        },
+        {
+          "name": "_portfolioLegEffectiveQty",
+          "kind": "function",
+          "line": 16449
+        },
+        {
+          "name": "_portfolioLegCloseMarkerFields",
+          "kind": "function",
+          "line": 16458
+        },
+        {
+          "name": "_portfolioLegHasCloseMarker",
+          "kind": "function",
+          "line": 16462
+        },
+        {
+          "name": "_isTerminalPortfolioLeg",
+          "kind": "function",
+          "line": 16478
+        },
+        {
+          "name": "isActivePortfolioLeg",
+          "kind": "function",
+          "line": 16491
+        },
+        {
+          "name": "_isActivePortfolioLeg",
+          "kind": "function",
+          "line": 16501
+        },
+        {
+          "name": "getActivePortfolioLegs",
+          "kind": "function",
+          "line": 16505
+        },
+        {
+          "name": "_terminalPortfolioLegPlaceholder",
+          "kind": "function",
+          "line": 16510
+        },
+        {
+          "name": "_portfolioNetGreekFromActiveLegs",
+          "kind": "function",
+          "line": 16518
+        },
+        {
+          "name": "_legUnrealizedPnL",
+          "kind": "function",
+          "line": 16549
+        },
+        {
+          "name": "computePositionUnrealizedPnL",
+          "kind": "function",
+          "line": 16568
+        },
+        {
+          "name": "computePortfolioUnrealizedPnL",
+          "kind": "function",
+          "line": 16591
+        },
+        {
+          "name": "computeEarningsDte",
+          "kind": "function",
+          "line": 16606
+        },
+        {
+          "name": "_backendCacheStaleMark",
+          "kind": "function",
+          "line": 16619
+        },
+        {
+          "name": "_squeezeToState",
+          "kind": "function",
+          "line": 16637
+        },
+        {
+          "name": "_technicalTfSqueezeState",
+          "kind": "function",
+          "line": 16650
+        },
+        {
+          "name": "aggregateGreeks",
+          "kind": "function",
+          "line": 16660
+        },
+        {
+          "name": "_lastPortfolioMetricsSig",
+          "kind": "var",
+          "line": 16820
+        },
+        {
+          "name": "_apexPortfolioGreeksRefreshDiag",
+          "kind": "var",
+          "line": 16822
+        },
+        {
+          "name": "_portfolioTotalsSnapshot",
+          "kind": "function",
+          "line": 16827
+        },
+        {
+          "name": "_resolveSpyPrice",
+          "kind": "function",
+          "line": 16870
+        },
+        {
+          "name": "_scanDataField",
+          "kind": "function",
+          "line": 16889
+        },
+        {
+          "name": "computeRowBetaWeightedDelta",
+          "kind": "function",
+          "line": 16914
+        },
+        {
+          "name": "computePortfolioRiskMetrics",
+          "kind": "function",
+          "line": 16996
+        },
+        {
+          "name": "_betaMissingReasonLabel",
+          "kind": "function",
+          "line": 17091
+        },
+        {
+          "name": "_aggregateBetaWtdMissingReason",
+          "kind": "function",
+          "line": 17107
+        },
+        {
+          "name": "_deltaThetaRatioMissingReason",
+          "kind": "function",
+          "line": 17125
+        },
+        {
+          "name": "_portfolioGreeksFreshness",
+          "kind": "function",
+          "line": 17148
+        },
+        {
+          "name": "_portfolioPriceFreshness",
+          "kind": "function",
+          "line": 17173
+        },
+        {
+          "name": "_spyFreshNum",
+          "kind": "function",
+          "line": 17211
+        },
+        {
+          "name": "_spyContextPrice",
+          "kind": "function",
+          "line": 17218
+        },
+        {
+          "name": "_spyContextAvailableKeys",
+          "kind": "function",
+          "line": 17247
+        },
+        {
+          "name": "resolveFreshSpyPrice",
+          "kind": "async function",
+          "line": 17283
+        },
+        {
+          "name": "_portfolioRowUnderlyingPrice",
+          "kind": "function",
+          "line": 17383
+        },
+        {
+          "name": "resolvePortfolioLivePrice",
+          "kind": "async function",
+          "line": 17417
+        },
+        {
+          "name": "_apexLatestBetaBySymbol",
+          "kind": "var",
+          "line": 17555
+        },
+        {
+          "name": "_portfolioLatestBackendBetaEntry",
+          "kind": "function",
+          "line": 17559
+        },
+        {
+          "name": "_apexPortfolioBetaDiag",
+          "kind": "var",
+          "line": 17569
+        },
+        {
+          "name": "refreshPortfolioBetas",
+          "kind": "async function",
+          "line": 17587
+        },
+        {
+          "name": "_apexLatestEarningsBySymbol",
+          "kind": "var",
+          "line": 17820
+        },
+        {
+          "name": "_apexPortfolioEarningsReasonBySymbol",
+          "kind": "var",
+          "line": 17830
+        },
+        {
+          "name": "_apexPortfolioSqueezeReasonBySymbol",
+          "kind": "var",
+          "line": 17831
+        },
+        {
+          "name": "_apexPortfolioEarningsDiag",
+          "kind": "var",
+          "line": 17835
+        },
+        {
+          "name": "_normalizeEarningsDate",
+          "kind": "function",
+          "line": 17843
+        },
+        {
+          "name": "refreshPortfolioEarnings",
+          "kind": "async function",
+          "line": 17871
+        },
+        {
+          "name": "computeVegaMonitorRatios",
+          "kind": "function",
+          "line": 18088
+        },
+        {
+          "name": "_activePanelPortfolioId",
+          "kind": "var",
+          "line": 18114
+        },
+        {
+          "name": "_spyPrice",
+          "kind": "var",
+          "line": 18116
+        },
+        {
+          "name": "_spyPriceSource",
+          "kind": "var",
+          "line": 18120
+        },
+        {
+          "name": "_spyPriceUpdatedAt",
+          "kind": "var",
+          "line": 18121
+        },
+        {
+          "name": "_spyPriceIsLive",
+          "kind": "var",
+          "line": 18122
+        },
+        {
+          "name": "_spyPriceStaleReason",
+          "kind": "var",
+          "line": 18123
+        },
+        {
+          "name": "_spyPriceResolution",
+          "kind": "var",
+          "line": 18124
+        },
+        {
+          "name": "_apexPortfolioPriceRefreshDiag",
+          "kind": "var",
+          "line": 18126
+        },
+        {
+          "name": "_pfExpandedPosId",
+          "kind": "var",
+          "line": 18129
+        },
+        {
+          "name": "_pfExpandedTicker",
+          "kind": "var",
+          "line": 18130
+        },
+        {
+          "name": "_pfThrottle1d",
+          "kind": "var",
+          "line": 18131
+        },
+        {
+          "name": "_pfThrottle4h",
+          "kind": "var",
+          "line": 18132
+        },
+        {
+          "name": "_pfDeltaLongThreshold",
+          "kind": "var",
+          "line": 18133
+        },
+        {
+          "name": "_pfDeltaShortThreshold",
+          "kind": "var",
+          "line": 18134
+        },
+        {
+          "name": "_pfAlignmentCache",
+          "kind": "var",
+          "line": 18135
+        },
+        {
+          "name": "_pfBackendCandleCache",
+          "kind": "var",
+          "line": 18136
+        },
+        {
+          "name": "_pfBackendSpyCache",
+          "kind": "var",
+          "line": 18137
+        },
+        {
+          "name": "_pfNormalizeChartUnderlyingSymbol",
+          "kind": "function",
+          "line": 18142
+        },
+        {
+          "name": "_scannerBackendCandleCache",
+          "kind": "var",
+          "line": 18157
+        },
+        {
+          "name": "_pfTlRefreshTimer",
+          "kind": "var",
+          "line": 18158
+        },
+        {
+          "name": "_pfTlLastRefreshAt",
+          "kind": "var",
+          "line": 18159
+        },
+        {
+          "name": "_pfPanelIsActive",
+          "kind": "function",
+          "line": 18171
+        },
+        {
+          "name": "_pfScheduleRowTrafficLightRefresh",
+          "kind": "function",
+          "line": 18177
+        },
+        {
+          "name": "_pfEnsureTrafficLightCandleDataForPositions",
+          "kind": "function",
+          "line": 18206
+        },
+        {
+          "name": "showPositionsPanel",
+          "kind": "function",
+          "line": 18236
+        },
+        {
+          "name": "renderPositionsPanel",
+          "kind": "function",
+          "line": 18263
+        },
+        {
+          "name": "_pfStopChart",
+          "kind": "function",
+          "line": 18777
+        },
+        {
+          "name": "_pfToggleChart",
+          "kind": "function",
+          "line": 18784
+        },
+        {
+          "name": "_pfOnCandleTick",
+          "kind": "function",
+          "line": 18833
+        },
+        {
+          "name": "_pfDrawChart",
+          "kind": "async function",
+          "line": 18870
+        },
+        {
+          "name": "_pfDrawTf",
+          "kind": "function",
+          "line": 18936
+        },
+        {
+          "name": "_pfDrawRsPanel",
+          "kind": "function",
+          "line": 19039
+        },
+        {
+          "name": "computePortfolioDirectionalBias",
+          "kind": "function",
+          "line": 19139
+        },
+        {
+          "name": "classifyPortfolioDeltaExposure",
+          "kind": "function",
+          "line": 19271
+        },
+        {
+          "name": "evaluatePortfolioDirectionalAlignment",
+          "kind": "function",
+          "line": 19279
+        },
+        {
+          "name": "_pfGetAlignmentCandleInputs",
+          "kind": "function",
+          "line": 19301
+        },
+        {
+          "name": "_pfUpdateAlignment",
+          "kind": "function",
+          "line": 19336
+        },
+        {
+          "name": "getStructureScaledDeltaRanges",
+          "kind": "function",
+          "line": 19494
+        },
+        {
+          "name": "evaluateDeltaRangeForBias",
+          "kind": "function",
+          "line": 19509
+        },
+        {
+          "name": "inferStructureCountForPosition",
+          "kind": "function",
+          "line": 19535
+        },
+        {
+          "name": "getIvrDeltaRange",
+          "kind": "function",
+          "line": 19549
+        },
+        {
+          "name": "getVix3mDeltaRange",
+          "kind": "function",
+          "line": 19558
+        },
+        {
+          "name": "_fmtVix3mRangeDisplay",
+          "kind": "function",
+          "line": 19572
+        },
+        {
+          "name": "VOL_DELTA_TOLERANCE",
+          "kind": "var",
+          "line": 19582
+        },
+        {
+          "name": "selectConservativeVolDeltaRange",
+          "kind": "function",
+          "line": 19586
+        },
+        {
+          "name": "getWorstShortLegDelta",
+          "kind": "function",
+          "line": 19600
+        },
+        {
+          "name": "evaluateVolatilityDeltaConsistency",
+          "kind": "function",
+          "line": 19639
+        },
+        {
+          "name": "evaluateShortPremiumExitAlert",
+          "kind": "function",
+          "line": 19693
+        },
+        {
+          "name": "computePortfolioRowTrafficLight",
+          "kind": "function",
+          "line": 19761
+        },
+        {
+          "name": "_pfBuildTrafficLightTooltip",
+          "kind": "function",
+          "line": 19849
+        },
+        {
+          "name": "_pfUpdateRowTrafficLight",
+          "kind": "function",
+          "line": 19949
+        },
+        {
+          "name": "_pfBuildTlReasonSentence",
+          "kind": "function",
+          "line": 19967
+        },
+        {
+          "name": "_pfBuildAlignmentRiskPanel",
+          "kind": "function",
+          "line": 20021
+        },
+        {
+          "name": "_pfRefreshAllRowTrafficLights",
+          "kind": "function",
+          "line": 20153
+        },
+        {
+          "name": "_pfBuildTechnicalSnapshotFromBackend",
+          "kind": "function",
+          "line": 20166
+        },
+        {
+          "name": "_pfGetTrafficLightTechnicalInputs",
+          "kind": "function",
+          "line": 20307
+        },
+        {
+          "name": "_pfBuildTrafficLightInputAudit",
+          "kind": "function",
+          "line": 20325
+        },
+        {
+          "name": "_pfComputeAndRenderRowTrafficLight",
+          "kind": "function",
+          "line": 20411
+        },
+        {
+          "name": "_addPosFormOpen",
+          "kind": "var",
+          "line": 20532
+        },
+        {
+          "name": "_addPosFormPortfolioId",
+          "kind": "var",
+          "line": 20533
+        },
+        {
+          "name": "_formLegs",
+          "kind": "var",
+          "line": 20534
+        },
+        {
+          "name": "_formStrategy",
+          "kind": "var",
+          "line": 20535
+        },
+        {
+          "name": "_optChainCache",
+          "kind": "var",
+          "line": 20536
+        },
+        {
+          "name": "showAddPositionForm",
+          "kind": "function",
+          "line": 20538
+        },
+        {
+          "name": "getPreferredOptionDxlinkSymbol",
+          "kind": "function",
+          "line": 20544
+        },
+        {
+          "name": "normalizeOptionLegSymbolAliases",
+          "kind": "function",
+          "line": 20591
+        },
+        {
+          "name": "normalizeTradeOptionLegAliases",
+          "kind": "function",
+          "line": 20650
+        },
+        {
+          "name": "_journalExpiryAuditEnabled",
+          "kind": "function",
+          "line": 20675
+        },
+        {
+          "name": "journalTradeLegExpiryAudit",
+          "kind": "function",
+          "line": 20681
+        },
+        {
+          "name": "optionLegScalarDiagnostics",
+          "kind": "function",
+          "line": 20706
+        },
+        {
+          "name": "subscribeBackendOptionLive",
+          "kind": "async function",
+          "line": 20732
+        },
+        {
+          "name": "fetchBackendOptionLive",
+          "kind": "async function",
+          "line": 20760
+        },
+        {
+          "name": "_portfolioRefreshPayloadDebugEnabled",
+          "kind": "function",
+          "line": 20878
+        },
+        {
+          "name": "_portfolioRiskDebugEnabled",
+          "kind": "function",
+          "line": 20889
+        },
+        {
+          "name": "_portfolioTechnicalDebugEnabled",
+          "kind": "function",
+          "line": 20899
+        },
+        {
+          "name": "buildPortfolioLiveRefreshPayload",
+          "kind": "function",
+          "line": 20905
+        },
+        {
+          "name": "fetchBackendPortfolioPositionsEnriched",
+          "kind": "async function",
+          "line": 20974
+        },
+        {
+          "name": "_backendEnrichedPositionsToAggregatedOptions",
+          "kind": "function",
+          "line": 21008
+        },
+        {
+          "name": "_resolveLegGreeksDisplay",
+          "kind": "function",
+          "line": 21107
+        },
+        {
+          "name": "_validateBackendFullRefreshPayload",
+          "kind": "function",
+          "line": 21150
+        },
+        {
+          "name": "fetchPortfolioFullRefresh",
+          "kind": "async function",
+          "line": 21207
+        },
+        {
+          "name": "fetchPortfolioLiveRefresh",
+          "kind": "async function",
+          "line": 21473
+        },
+        {
+          "name": "PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES",
+          "kind": "var",
+          "line": 21604
+        },
+        {
+          "name": "_resolvePortfolioTechnicalParityKey",
+          "kind": "function",
+          "line": 21615
+        },
+        {
+          "name": "buildFormulaParityGate",
+          "kind": "function",
+          "line": 21629
+        },
+        {
+          "name": "buildBackendTechnicalByTickerFromResponse",
+          "kind": "function",
+          "line": 21679
+        },
+        {
+          "name": "_mergePreviousPortfolioTechnicalsForPartialRefresh",
+          "kind": "function",
+          "line": 21792
+        },
+        {
+          "name": "_portfolioTechnicalRowMapFromResponse",
+          "kind": "function",
+          "line": 21823
+        },
+        {
+          "name": "_extractBackendSqueezeByTicker",
+          "kind": "function",
+          "line": 21851
+        },
+        {
+          "name": "_applyTechnicalRefreshEarnings",
+          "kind": "function",
+          "line": 21904
+        },
+        {
+          "name": "_fetchPortfolioTechnicalBatch",
+          "kind": "async function",
+          "line": 21952
+        },
+        {
+          "name": "_mergeBatchInto",
+          "kind": "function",
+          "line": 21984
+        },
+        {
+          "name": "fetchPortfolioTechnicalRefresh",
+          "kind": "async function",
+          "line": 22100
+        },
+        {
+          "name": "buildPortfolioTechnicalAlignmentDebug",
+          "kind": "function",
+          "line": 22322
+        },
+        {
+          "name": "mapLimit",
+          "kind": "async function",
+          "line": 22367
+        },
+        {
+          "name": "getOptionStreamerDiagnosticsForPosition",
+          "kind": "function",
+          "line": 22391
+        },
+        {
+          "name": "logOptionStreamerDiagnostics",
+          "kind": "function",
+          "line": 22425
+        },
+        {
+          "name": "updateStreamerPreview",
+          "kind": "function",
+          "line": 22435
+        },
+        {
+          "name": "renderAddPositionForm",
+          "kind": "function",
+          "line": 22448
+        },
+        {
+          "name": "renderLegsTable",
+          "kind": "function",
+          "line": 22494
+        },
+        {
+          "name": "onStrategyChange",
+          "kind": "function",
+          "line": 22588
+        },
+        {
+          "name": "updateLegField",
+          "kind": "function",
+          "line": 22598
+        },
+        {
+          "name": "addCustomLeg",
+          "kind": "function",
+          "line": 22602
+        },
+        {
+          "name": "removeLeg",
+          "kind": "function",
+          "line": 22607
+        },
+        {
+          "name": "_deriveLegStreamer",
+          "kind": "function",
+          "line": 22613
+        },
+        {
+          "name": "updateLegStreamer",
+          "kind": "function",
+          "line": 22621
+        },
+        {
+          "name": "refreshAllLegStreamers",
+          "kind": "function",
+          "line": 22644
+        },
+        {
+          "name": "_optChainLastError",
+          "kind": "var",
+          "line": 22654
+        },
+        {
+          "name": "_optionChainPriorityActive",
+          "kind": "function",
+          "line": 22663
+        },
+        {
+          "name": "_setOptionChainPriorityPending",
+          "kind": "function",
+          "line": 22669
+        },
+        {
+          "name": "_notePortfolioFallbackDeferred",
+          "kind": "function",
+          "line": 22678
+        },
+        {
+          "name": "_pausePortfolioFallbackForOptionChain",
+          "kind": "function",
+          "line": 22687
+        },
+        {
+          "name": "_runTrailingPortfolioRefreshIfPending",
+          "kind": "function",
+          "line": 22696
+        },
+        {
+          "name": "_optionChainStructuredTimeout",
+          "kind": "function",
+          "line": 22710
+        },
+        {
+          "name": "_optionChainErrorText",
+          "kind": "function",
+          "line": 22725
+        },
+        {
+          "name": "_fetchOptionChain",
+          "kind": "async function",
+          "line": 22743
+        },
+        {
+          "name": "_chainDebounceTimers",
+          "kind": "var",
+          "line": 22846
+        },
+        {
+          "name": "_chainRequestId",
+          "kind": "var",
+          "line": 22847
+        },
+        {
+          "name": "_chainLatestTicker",
+          "kind": "var",
+          "line": 22848
+        },
+        {
+          "name": "_chainError",
+          "kind": "var",
+          "line": 22851
+        },
+        {
+          "name": "_CHAIN_DEBOUNCE_MS",
+          "kind": "var",
+          "line": 22852
+        },
+        {
+          "name": "_CHAIN_MIN_TICKER_LEN",
+          "kind": "var",
+          "line": 22853
+        },
+        {
+          "name": "_CHAIN_TIMEOUT_RETRY_DELAY_MS",
+          "kind": "var",
+          "line": 22860
+        },
+        {
+          "name": "_chainRetryPending",
+          "kind": "var",
+          "line": 22866
+        },
+        {
+          "name": "_chainRetryDone",
+          "kind": "var",
+          "line": 22867
+        },
+        {
+          "name": "_chainRetryTimers",
+          "kind": "var",
+          "line": 22868
+        },
+        {
+          "name": "_isChainTimeoutShape",
+          "kind": "function",
+          "line": 22873
+        },
+        {
+          "name": "_scheduleChainTimeoutRetry",
+          "kind": "function",
+          "line": 22882
+        },
+        {
+          "name": "_currentChainTicker",
+          "kind": "function",
+          "line": 22901
+        },
+        {
+          "name": "_fetchAndRenderChain",
+          "kind": "function",
+          "line": 22918
+        },
+        {
+          "name": "_setLegStreamerFromChain",
+          "kind": "function",
+          "line": 23000
+        },
+        {
+          "name": "_onLegExpChange",
+          "kind": "function",
+          "line": 23019
+        },
+        {
+          "name": "_onLegStrikeChange",
+          "kind": "function",
+          "line": 23029
+        },
+        {
+          "name": "_onJtLegExpChange",
+          "kind": "function",
+          "line": 23047
+        },
+        {
+          "name": "_onJtLegStrikeChange",
+          "kind": "function",
+          "line": 23063
+        },
+        {
+          "name": "field",
+          "kind": "function",
+          "line": 23083
+        },
+        {
+          "name": "fieldWithChange",
+          "kind": "function",
+          "line": 23089
+        },
+        {
+          "name": "fieldSelect",
+          "kind": "function",
+          "line": 23096
+        },
+        {
+          "name": "fieldSelectChange",
+          "kind": "function",
+          "line": 23103
+        },
+        {
+          "name": "cancelAddPositionForm",
+          "kind": "function",
+          "line": 23111
+        },
+        {
+          "name": "submitPosition",
+          "kind": "async function",
+          "line": 23119
+        },
+        {
+          "name": "deletePosition",
+          "kind": "function",
+          "line": 23175
+        },
+        {
+          "name": "fetchDXLinkGreeks",
+          "kind": "async function",
+          "line": 23187
+        },
+        {
+          "name": "getPortfolioUnderlyingIvr",
+          "kind": "function",
+          "line": 23278
+        },
+        {
+          "name": "_fmtShortLegDelta",
+          "kind": "function",
+          "line": 23308
+        },
+        {
+          "name": "_portfolioRefreshHash",
+          "kind": "function",
+          "line": 23315
+        },
+        {
+          "name": "_portfolioRefreshDedupeKey",
+          "kind": "function",
+          "line": 23322
+        },
+        {
+          "name": "refreshPositionsLive",
+          "kind": "async function",
+          "line": 23346
+        },
+        {
+          "name": "_closingPositionId",
+          "kind": "var",
+          "line": 25638
+        },
+        {
+          "name": "openCloseModal",
+          "kind": "function",
+          "line": 25640
+        },
+        {
+          "name": "cancelCloseModal",
+          "kind": "function",
+          "line": 25660
+        },
+        {
+          "name": "submitClosePosition",
+          "kind": "async function",
+          "line": 25665
+        },
+        {
+          "name": "_buildSnapshot",
+          "kind": "function",
+          "line": 25746
+        },
+        {
+          "name": "_logSnapshot",
+          "kind": "function",
+          "line": 25879
+        },
+        {
+          "name": "_greeksMergeFromCache",
+          "kind": "function",
+          "line": 25901
+        },
+        {
+          "name": "_GREEKS_CACHE_LS_KEY",
+          "kind": "var",
+          "line": 25975
+        },
+        {
+          "name": "_GREEKS_CACHE_TTL",
+          "kind": "var",
+          "line": 25976
+        },
+        {
+          "name": "_saveGreeksCache",
+          "kind": "function",
+          "line": 25978
+        },
+        {
+          "name": "_loadGreeksCache",
+          "kind": "function",
+          "line": 25988
+        },
+        {
+          "name": "_prefetchDXLinkForSnapshot",
+          "kind": "async function",
+          "line": 26038
+        },
+        {
+          "name": "prefetchJournalSnapshotFromBackendDxlink",
+          "kind": "async function",
+          "line": 26155
+        },
+        {
+          "name": "_journalSnapshotPrefetch",
+          "kind": "async function",
+          "line": 26298
+        },
+        {
+          "name": "_calcTechnicalsFromCandles",
+          "kind": "function",
+          "line": 26466
+        },
+        {
+          "name": "_ivrCache",
+          "kind": "var",
+          "line": 26579
+        },
+        {
+          "name": "_lastKnownUnderlyingPrice",
+          "kind": "var",
+          "line": 26585
+        },
+        {
+          "name": "PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP",
+          "kind": "var",
+          "line": 26590
+        },
+        {
+          "name": "_portfolioAggregatedMissingUnderlyings",
+          "kind": "function",
+          "line": 26597
+        },
+        {
+          "name": "_planPortfolioUnderlyingFallback",
+          "kind": "function",
+          "line": 26621
+        },
+        {
+          "name": "_portfolioIvrFallbackBudget",
+          "kind": "function",
+          "line": 26642
+        },
+        {
+          "name": "getCanonicalIvr",
+          "kind": "function",
+          "line": 26650
+        },
+        {
+          "name": "_earningsCache",
+          "kind": "var",
+          "line": 26665
+        },
+        {
+          "name": "_candleBuffer",
+          "kind": "var",
+          "line": 26671
+        },
+        {
+          "name": "_candleWs",
+          "kind": "var",
+          "line": 26672
+        },
+        {
+          "name": "_candleWsState",
+          "kind": "var",
+          "line": 26673
+        },
+        {
+          "name": "_candleSubscribed",
+          "kind": "var",
+          "line": 26674
+        },
+        {
+          "name": "_candleQueue",
+          "kind": "var",
+          "line": 26675
+        },
+        {
+          "name": "_candleReconnDelay",
+          "kind": "var",
+          "line": 26676
+        },
+        {
+          "name": "_candleReconnTimer",
+          "kind": "var",
+          "line": 26677
+        },
+        {
+          "name": "_candleSubDiagLog",
+          "kind": "var",
+          "line": 26679
+        },
+        {
+          "name": "_CANDLE_SUB_DIAG_MAX",
+          "kind": "var",
+          "line": 26680
+        },
+        {
+          "name": "_candleProvenanceStats",
+          "kind": "var",
+          "line": 26689
+        },
+        {
+          "name": "_candleSubscriptionLimitHit",
+          "kind": "var",
+          "line": 26700
+        },
+        {
+          "name": "_candleProvenanceLog",
+          "kind": "var",
+          "line": 26701
+        },
+        {
+          "name": "_CANDLE_PROVENANCE_MAX",
+          "kind": "var",
+          "line": 26702
+        },
+        {
+          "name": "_rsBenchmarkDiagLog",
+          "kind": "var",
+          "line": 26703
+        },
+        {
+          "name": "_RS_BENCHMARK_DIAG_MAX",
+          "kind": "var",
+          "line": 26704
+        },
+        {
+          "name": "_rsSpy4hBenchmarkSessionCache",
+          "kind": "var",
+          "line": 26705
+        },
+        {
+          "name": "RS_SPY_4H_MISSING_DIAG_COOLDOWN_MS",
+          "kind": "var",
+          "line": 26706
+        },
+        {
+          "name": "_rsSpy1dBenchmarkSessionCache",
+          "kind": "var",
+          "line": 26707
+        },
+        {
+          "name": "RS_SPY_1D_MISSING_DIAG_COOLDOWN_MS",
+          "kind": "var",
+          "line": 26708
+        },
+        {
+          "name": "_CANDLE_USABLE_MIN",
+          "kind": "var",
+          "line": 26709
+        },
+        {
+          "name": "_recordRsBenchmarkDiag",
+          "kind": "function",
+          "line": 26711
+        },
+        {
+          "name": "_rsBenchmarkDiagFrom4h",
+          "kind": "function",
+          "line": 26740
+        },
+        {
+          "name": "_rsSpy1dBenchmarkUsable",
+          "kind": "function",
+          "line": 26748
+        },
+        {
+          "name": "_recordRs1dBenchmarkMissingOnce",
+          "kind": "function",
+          "line": 26751
+        },
+        {
+          "name": "_cacheRsSpy1dBenchmark",
+          "kind": "function",
+          "line": 26765
+        },
+        {
+          "name": "_rsSpy1dBenchmarkMissingCooldownActive",
+          "kind": "function",
+          "line": 26770
+        },
+        {
+          "name": "_rsResolveBackendSpy1dFromCache",
+          "kind": "function",
+          "line": 26776
+        },
+        {
+          "name": "_fetchBackendSpy1dBenchmark",
+          "kind": "async function",
+          "line": 26790
+        },
+        {
+          "name": "_rsSpy4hBenchmarkUsable",
+          "kind": "function",
+          "line": 26869
+        },
+        {
+          "name": "_recordRsBenchmarkMissingOnce",
+          "kind": "function",
+          "line": 26872
+        },
+        {
+          "name": "_cacheRsSpy4hBenchmark",
+          "kind": "function",
+          "line": 26886
+        },
+        {
+          "name": "_fetchBackendSpy4hBenchmark",
+          "kind": "async function",
+          "line": 26898
+        },
+        {
+          "name": "_rsResolveBackendSpy4hFromCache",
+          "kind": "function",
+          "line": 26977
+        },
+        {
+          "name": "_browserCandleBackoffActive",
+          "kind": "function",
+          "line": 26995
+        },
+        {
+          "name": "_browser4hFallbackIsWaiting",
+          "kind": "function",
+          "line": 26998
+        },
+        {
+          "name": "_browser4hFallbackMessage",
+          "kind": "function",
+          "line": 27007
+        },
+        {
+          "name": "_browser4hFallbackState",
+          "kind": "var",
+          "line": 27031
+        },
+        {
+          "name": "_BROWSER_4H_FALLBACK_DEDUP_MS",
+          "kind": "var",
+          "line": 27032
+        },
+        {
+          "name": "_startBrowser4hFallbackIfAllowed",
+          "kind": "function",
+          "line": 27033
+        },
+        {
+          "name": "_noteCandleSubscriptionLimitHit",
+          "kind": "function",
+          "line": 27087
+        },
+        {
+          "name": "_backendCandleAuth",
+          "kind": "var",
+          "line": 27106
+        },
+        {
+          "name": "_BACKEND_CANDLE_BACKOFF_MS",
+          "kind": "var",
+          "line": 27113
+        },
+        {
+          "name": "_BACKEND_CANDLE_FAIL_MAX",
+          "kind": "var",
+          "line": 27114
+        },
+        {
+          "name": "_backendApiAuthState",
+          "kind": "var",
+          "line": 27123
+        },
+        {
+          "name": "_apexAuthSkipLogged",
+          "kind": "var",
+          "line": 27133
+        },
+        {
+          "name": "_candleDiagNowIso",
+          "kind": "function",
+          "line": 27136
+        },
+        {
+          "name": "_candleDiagSymbolsPreview",
+          "kind": "function",
+          "line": 27139
+        },
+        {
+          "name": "_candleDiagSubscriptionState",
+          "kind": "function",
+          "line": 27151
+        },
+        {
+          "name": "_recordCandleSubscriptionRequest",
+          "kind": "function",
+          "line": 27167
+        },
+        {
+          "name": "_logRecentCandleDiagnosticsForFeedError",
+          "kind": "function",
+          "line": 27193
+        },
+        {
+          "name": "apexDebugCandleSubscriptions",
+          "kind": "function",
+          "line": 27201
+        },
+        {
+          "name": "_candleCtxLog",
+          "kind": "var",
+          "line": 27259
+        },
+        {
+          "name": "_CANDLE_CTX_LOG_MAX",
+          "kind": "var",
+          "line": 27260
+        },
+        {
+          "name": "_CANDLE_CTX_DEBOUNCE_MS",
+          "kind": "var",
+          "line": 27261
+        },
+        {
+          "name": "_CANDLE_CTX_MAX_WAIT_MS",
+          "kind": "var",
+          "line": 27262
+        },
+        {
+          "name": "_CANDLE_CTX_SYMBOL_CAP",
+          "kind": "var",
+          "line": 27263
+        },
+        {
+          "name": "_CANDLE_CTX_PORTFOLIO_CAP",
+          "kind": "var",
+          "line": 27264
+        },
+        {
+          "name": "_CANDLE_CTX_BENCHMARK",
+          "kind": "var",
+          "line": 27265
+        },
+        {
+          "name": "_candleCtxDebounceTimer",
+          "kind": "var",
+          "line": 27266
+        },
+        {
+          "name": "_candleCtxFirstPendingAt",
+          "kind": "var",
+          "line": 27267
+        },
+        {
+          "name": "_candleCtxPending",
+          "kind": "var",
+          "line": 27268
+        },
+        {
+          "name": "_candleCtxLastSentSig",
+          "kind": "var",
+          "line": 27269
+        },
+        {
+          "name": "_candleCtxLast",
+          "kind": "var",
+          "line": 27270
+        },
+        {
+          "name": "_CANDLE_CTX_PRIORITY_REASONS",
+          "kind": "var",
+          "line": 27282
+        },
+        {
+          "name": "_CANDLE_CTX_COOLDOWNS",
+          "kind": "var",
+          "line": 27283
+        },
+        {
+          "name": "_candleCtxCooldownState",
+          "kind": "var",
+          "line": 27288
+        },
+        {
+          "name": "_candleCtxSkippedLog",
+          "kind": "var",
+          "line": 27289
+        },
+        {
+          "name": "_CANDLE_CTX_SKIPPED_MAX",
+          "kind": "var",
+          "line": 27290
+        },
+        {
+          "name": "_candleCtxCounts",
+          "kind": "var",
+          "line": 27291
+        },
+        {
+          "name": "_CANDLE_CTX_CHART_OPEN_DEDUP_MS",
+          "kind": "var",
+          "line": 27297
+        },
+        {
+          "name": "_candleCtxChartOpenLast",
+          "kind": "var",
+          "line": 27298
+        },
+        {
+          "name": "_candleCtxNormSym",
+          "kind": "function",
+          "line": 27300
+        },
+        {
+          "name": "_candleCtxDedupe",
+          "kind": "function",
+          "line": 27303
+        },
+        {
+          "name": "_candleCtxVisibleScannerSymbols",
+          "kind": "function",
+          "line": 27316
+        },
+        {
+          "name": "_candleCtxPortfolioSymbols",
+          "kind": "function",
+          "line": 27328
+        },
+        {
+          "name": "_candleCtxBuildSymbols",
+          "kind": "function",
+          "line": 27342
+        },
+        {
+          "name": "_candleCtxNormTimeframes",
+          "kind": "function",
+          "line": 27351
+        },
+        {
+          "name": "_candleCtxDiag",
+          "kind": "function",
+          "line": 27357
+        },
+        {
+          "name": "_candleCtxMergePayload",
+          "kind": "function",
+          "line": 27369
+        },
+        {
+          "name": "postCandleContext",
+          "kind": "function",
+          "line": 27398
+        },
+        {
+          "name": "_candleCtxMaterialSig",
+          "kind": "function",
+          "line": 27470
+        },
+        {
+          "name": "_candleCtxRecordSkipped",
+          "kind": "function",
+          "line": 27478
+        },
+        {
+          "name": "_candleCtxFlush",
+          "kind": "function",
+          "line": 27493
+        },
+        {
+          "name": "_candleCtxRecord",
+          "kind": "function",
+          "line": 27582
+        },
+        {
+          "name": "apexDebugCandleContext",
+          "kind": "function",
+          "line": 27602
+        },
+        {
+          "name": "_CANDLE_TF",
+          "kind": "var",
+          "line": 27626
+        },
+        {
+          "name": "_CANDLE_MAX",
+          "kind": "var",
+          "line": 27633
+        },
+        {
+          "name": "_cSym",
+          "kind": "function",
+          "line": 27636
+        },
+        {
+          "name": "_cSubEntry",
+          "kind": "function",
+          "line": 27639
+        },
+        {
+          "name": "_pushCandle",
+          "kind": "function",
+          "line": 27645
+        },
+        {
+          "name": "_candleRawLoggedKeys",
+          "kind": "var",
+          "line": 27662
+        },
+        {
+          "name": "DEBUG_CANDLE_STREAM",
+          "kind": "var",
+          "line": 27663
+        },
+        {
+          "name": "_onCandleData",
+          "kind": "function",
+          "line": 27664
+        },
+        {
+          "name": "_candleScheduleReconnect",
+          "kind": "function",
+          "line": 27735
+        },
+        {
+          "name": "_initCandleStream",
+          "kind": "async function",
+          "line": 27747
+        },
+        {
+          "name": "APEX_PARITY_TOL",
+          "kind": "var",
+          "line": 27852
+        },
+        {
+          "name": "_apexParityNormSymbol",
+          "kind": "function",
+          "line": 27854
+        },
+        {
+          "name": "_apexParityNormTimeframe",
+          "kind": "function",
+          "line": 27858
+        },
+        {
+          "name": "_apexCompareCandleArrays",
+          "kind": "function",
+          "line": 27868
+        },
+        {
+          "name": "_apexParityFrontendCandles",
+          "kind": "function",
+          "line": 27940
+        },
+        {
+          "name": "_apexParityWarmupTimeframes",
+          "kind": "function",
+          "line": 27969
+        },
+        {
+          "name": "_apexParityWarmupBackend",
+          "kind": "async function",
+          "line": 27975
+        },
+        {
+          "name": "_apexParityFetchBackend",
+          "kind": "async function",
+          "line": 27994
+        },
+        {
+          "name": "apexDebugCompareCandles",
+          "kind": "async function",
+          "line": 28006
+        },
+        {
+          "name": "_ensureCandleSubscription",
+          "kind": "function",
+          "line": 28107
+        },
+        {
+          "name": "_ensure30MSubscription",
+          "kind": "function",
+          "line": 28166
+        },
+        {
+          "name": "_getIntradayTech",
+          "kind": "function",
+          "line": 28212
+        },
+        {
+          "name": "_getTechForTF",
+          "kind": "function",
+          "line": 28242
+        },
+        {
+          "name": "_scheduleSnapshotTechRetry",
+          "kind": "function",
+          "line": 28256
+        },
+        {
+          "name": "_buildRichSnapshot",
+          "kind": "async function",
+          "line": 28284
+        },
+        {
+          "name": "legStatusOf",
+          "kind": "function",
+          "line": 28595
+        },
+        {
+          "name": "legIsOpen",
+          "kind": "function",
+          "line": 28598
+        },
+        {
+          "name": "_LEG_TERMINAL_STATUSES",
+          "kind": "var",
+          "line": 28602
+        },
+        {
+          "name": "legIsTerminal",
+          "kind": "function",
+          "line": 28610
+        },
+        {
+          "name": "journalManager",
+          "kind": "var",
+          "line": 28612
+        },
+        {
+          "name": "portfolioExpiry",
+          "kind": "var",
+          "line": 29149
+        },
+        {
+          "name": "_pfExpiryApply",
+          "kind": "function",
+          "line": 29645
+        },
+        {
+          "name": "_pfExpiryReview",
+          "kind": "function",
+          "line": 29666
+        },
+        {
+          "name": "_pfExpirySkip",
+          "kind": "function",
+          "line": 29686
+        },
+        {
+          "name": "_manualExpiryPortfolioId",
+          "kind": "var",
+          "line": 29694
+        },
+        {
+          "name": "_pfExpiryManualClose",
+          "kind": "function",
+          "line": 29695
+        },
+        {
+          "name": "_pfExpiryResolveManual",
+          "kind": "function",
+          "line": 29700
+        },
+        {
+          "name": "_pfExpiryManualSubmit",
+          "kind": "function",
+          "line": 29796
+        },
+        {
+          "name": "_resolveTradePortfolioId",
+          "kind": "function",
+          "line": 29861
+        },
+        {
+          "name": "_normalizeBackendTradePortfolioId",
+          "kind": "function",
+          "line": 29868
+        },
+        {
+          "name": "_jLastKnownGoodTrades",
+          "kind": "var",
+          "line": 29887
+        },
+        {
+          "name": "_jLastKnownGoodCount",
+          "kind": "var",
+          "line": 29888
+        },
+        {
+          "name": "_journalSyncFailed",
+          "kind": "var",
+          "line": 29889
+        },
+        {
+          "name": "_journalLastBackendSaveStatus",
+          "kind": "var",
+          "line": 29899
+        },
+        {
+          "name": "_recordJournalBackendSave",
+          "kind": "function",
+          "line": 29900
+        },
+        {
+          "name": "_jRecordBackendSnapshot",
+          "kind": "function",
+          "line": 29908
+        },
+        {
+          "name": "_jSyncJournalFromBackend",
+          "kind": "async function",
+          "line": 29922
+        },
+        {
+          "name": "_jtFormLegs",
+          "kind": "var",
+          "line": 29998
+        },
+        {
+          "name": "_jtFormStrategy",
+          "kind": "var",
+          "line": 29999
+        },
+        {
+          "name": "_jtFormStatus",
+          "kind": "var",
+          "line": 30000
+        },
+        {
+          "name": "_jtEditId",
+          "kind": "var",
+          "line": 30001
+        },
+        {
+          "name": "_jtPreselectPfId",
+          "kind": "var",
+          "line": 30002
+        },
+        {
+          "name": "_adjFormTradeId",
+          "kind": "var",
+          "line": 30005
+        },
+        {
+          "name": "_adjFormNewLegs",
+          "kind": "var",
+          "line": 30006
+        },
+        {
+          "name": "_adjFormNewStrategy",
+          "kind": "var",
+          "line": 30007
+        },
+        {
+          "name": "_adjFormLegsToRoll",
+          "kind": "var",
+          "line": 30008
+        },
+        {
+          "name": "_adjFormRollClosePrices",
+          "kind": "var",
+          "line": 30009
+        },
+        {
+          "name": "showAddTradeForm",
+          "kind": "function",
+          "line": 30011
+        },
+        {
+          "name": "showEditTradeForm",
+          "kind": "function",
+          "line": 30029
+        },
+        {
+          "name": "_renderJtForm",
+          "kind": "function",
+          "line": 30041
+        },
+        {
+          "name": "onJtStrategyChange",
+          "kind": "function",
+          "line": 30127
+        },
+        {
+          "name": "onJtStatusChange",
+          "kind": "function",
+          "line": 30137
+        },
+        {
+          "name": "_renderJtLegsTable",
+          "kind": "function",
+          "line": 30156
+        },
+        {
+          "name": "updateJtLegField",
+          "kind": "function",
+          "line": 30283
+        },
+        {
+          "name": "_syncJtFormLegsFromDom",
+          "kind": "function",
+          "line": 30298
+        },
+        {
+          "name": "addJtCustomLeg",
+          "kind": "function",
+          "line": 30340
+        },
+        {
+          "name": "removeJtLeg",
+          "kind": "function",
+          "line": 30345
+        },
+        {
+          "name": "_deriveJtLegStreamer",
+          "kind": "function",
+          "line": 30351
+        },
+        {
+          "name": "updateJtLegStreamer",
+          "kind": "function",
+          "line": 30359
+        },
+        {
+          "name": "_validateJtSymbol",
+          "kind": "function",
+          "line": 30393
+        },
+        {
+          "name": "refreshAllJtLegStreamers",
+          "kind": "function",
+          "line": 30407
+        },
+        {
+          "name": "cancelJtForm",
+          "kind": "function",
+          "line": 30411
+        },
+        {
+          "name": "_closeLegsTradeId",
+          "kind": "var",
+          "line": 30421
+        },
+        {
+          "name": "showCloseLegsModal",
+          "kind": "function",
+          "line": 30423
+        },
+        {
+          "name": "closeLegsModal",
+          "kind": "function",
+          "line": 30431
+        },
+        {
+          "name": "_renderCloseLegsForm",
+          "kind": "function",
+          "line": 30436
+        },
+        {
+          "name": "_clPnlPreview",
+          "kind": "function",
+          "line": 30535
+        },
+        {
+          "name": "submitCloseLegs",
+          "kind": "async function",
+          "line": 30564
+        },
+        {
+          "name": "showAddAdjustmentForm",
+          "kind": "function",
+          "line": 30652
+        },
+        {
+          "name": "closeAdjustmentModal",
+          "kind": "function",
+          "line": 30664
+        },
+        {
+          "name": "_adjTypeNeedsLegs",
+          "kind": "function",
+          "line": 30673
+        },
+        {
+          "name": "_renderAdjustmentForm",
+          "kind": "function",
+          "line": 30677
+        },
+        {
+          "name": "_onAdjTypeChange",
+          "kind": "function",
+          "line": 30767
+        },
+        {
+          "name": "_onAdjStrategyChange",
+          "kind": "function",
+          "line": 30784
+        },
+        {
+          "name": "_renderAdjNewLegsTable",
+          "kind": "function",
+          "line": 30796
+        },
+        {
+          "name": "_adjUpdateLegField",
+          "kind": "function",
+          "line": 30931
+        },
+        {
+          "name": "_adjAddLeg",
+          "kind": "function",
+          "line": 30935
+        },
+        {
+          "name": "_adjRemoveLeg",
+          "kind": "function",
+          "line": 30941
+        },
+        {
+          "name": "_adjUpdateRollClosePrice",
+          "kind": "function",
+          "line": 30946
+        },
+        {
+          "name": "_rollLegPnlPreview",
+          "kind": "function",
+          "line": 30952
+        },
+        {
+          "name": "_onAdjRollLegToggle",
+          "kind": "function",
+          "line": 30969
+        },
+        {
+          "name": "_autoPopulateRollLegs",
+          "kind": "function",
+          "line": 30981
+        },
+        {
+          "name": "_validateRollTypeMatch",
+          "kind": "function",
+          "line": 31016
+        },
+        {
+          "name": "submitAdjustment",
+          "kind": "async function",
+          "line": 31032
+        },
+        {
+          "name": "closeTradeDetail",
+          "kind": "function",
+          "line": 31178
+        },
+        {
+          "name": "_tradeMetrics",
+          "kind": "function",
+          "line": 31183
+        },
+        {
+          "name": "showTradeDetails",
+          "kind": "function",
+          "line": 31245
+        },
+        {
+          "name": "_renderAdjustmentTimeline",
+          "kind": "function",
+          "line": 31904
+        },
+        {
+          "name": "_priceCellHtml",
+          "kind": "function",
+          "line": 32014
+        },
+        {
+          "name": "_detailCell",
+          "kind": "function",
+          "line": 32039
+        },
+        {
+          "name": "_portfolioFetchBackendCandlesForChart",
+          "kind": "async function",
+          "line": 32086
+        },
+        {
+          "name": "_loadBackendChartCandles",
+          "kind": "function",
+          "line": 32252
+        },
+        {
+          "name": "_scannerFetchBackendCandlesForChart",
+          "kind": "async function",
+          "line": 32272
+        },
+        {
+          "name": "_awaitJournalBackendWrite",
+          "kind": "async function",
+          "line": 32449
+        },
+        {
+          "name": "_journalOutcomeToast",
+          "kind": "function",
+          "line": 32459
+        },
+        {
+          "name": "submitTrade",
+          "kind": "async function",
+          "line": 32472
+        },
+        {
+          "name": "deleteTrade",
+          "kind": "function",
+          "line": 32722
+        },
+        {
+          "name": "renderPortfolioJournalView",
+          "kind": "function",
+          "line": 32736
+        },
+        {
+          "name": "_jtStatusBadge",
+          "kind": "function",
+          "line": 32867
+        },
+        {
+          "name": "jStatBox",
+          "kind": "function",
+          "line": 32874
+        },
+        {
+          "name": "escHtml",
+          "kind": "function",
+          "line": 32880
+        },
+        {
+          "name": "showReconnectPanel",
+          "kind": "function",
+          "line": 32887
+        },
+        {
+          "name": "_apexPostAuthInit",
+          "kind": "function",
+          "line": 32930
+        },
+        {
+          "name": "doReconnectTT",
+          "kind": "async function",
+          "line": 32983
+        },
+        {
+          "name": "_mcxOverlay",
+          "kind": "var",
+          "line": 33038
+        },
+        {
+          "name": "_mcxResizeTimer",
+          "kind": "var",
+          "line": 33039
+        },
+        {
+          "name": "_mcxSqzState",
+          "kind": "var",
+          "line": 33040
+        },
+        {
+          "name": "_mcxSpy4hTimer",
+          "kind": "var",
+          "line": 33041
+        },
+        {
+          "name": "_mcxVi3m4hTimer",
+          "kind": "var",
+          "line": 33042
+        },
+        {
+          "name": "_mcxAutoRefreshTimer",
+          "kind": "var",
+          "line": 33043
+        },
+        {
+          "name": "_mcxRefreshBusy",
+          "kind": "var",
+          "line": 33044
+        },
+        {
+          "name": "_mcxResizeObs",
+          "kind": "var",
+          "line": 33045
+        },
+        {
+          "name": "_mcxLiveCache",
+          "kind": "var",
+          "line": 33046
+        },
+        {
+          "name": "_mcxLiveThrottle",
+          "kind": "var",
+          "line": 33047
+        },
+        {
+          "name": "_mcxOnCandleTick",
+          "kind": "function",
+          "line": 33062
+        },
+        {
+          "name": "_mcxLiveDrawOne",
+          "kind": "function",
+          "line": 33081
+        },
+        {
+          "name": "_mcxStopLiveUpdates",
+          "kind": "function",
+          "line": 33097
+        },
+        {
+          "name": "_mcxAttachResizeObserver",
+          "kind": "function",
+          "line": 33107
+        },
+        {
+          "name": "_mcxVi3mSym",
+          "kind": "function",
+          "line": 33126
+        },
+        {
+          "name": "_mcxTechCtx",
+          "kind": "function",
+          "line": 33133
+        },
+        {
+          "name": "_mcxSqzToast",
+          "kind": "function",
+          "line": 33155
+        },
+        {
+          "name": "_mcxCheckSqz",
+          "kind": "function",
+          "line": 33181
+        },
+        {
+          "name": "_mcxDrawRsi",
+          "kind": "function",
+          "line": 33189
+        },
+        {
+          "name": "_mcxDrawOne",
+          "kind": "function",
+          "line": 33246
+        },
+        {
+          "name": "_mcxUpdateTable",
+          "kind": "function",
+          "line": 33278
+        },
+        {
+          "name": "_REGIME_ADJ_RULES",
+          "kind": "var",
+          "line": 33319
+        },
+        {
+          "name": "_REGIME_CONTENT",
+          "kind": "var",
+          "line": 33331
+        },
+        {
+          "name": "_mcxRegimeOf",
+          "kind": "function",
+          "line": 33430
+        },
+        {
+          "name": "_REGIME_LABEL",
+          "kind": "var",
+          "line": 33436
+        },
+        {
+          "name": "_VIX_NAKED_CALL_MAX",
+          "kind": "var",
+          "line": 33445
+        },
+        {
+          "name": "_REGIME_OVEREXT_FORBIDDEN",
+          "kind": "var",
+          "line": 33449
+        },
+        {
+          "name": "_regimeDynForbidden",
+          "kind": "function",
+          "line": 33455
+        },
+        {
+          "name": "_VIX_AVOID_NAKED_PUT_MAX",
+          "kind": "var",
+          "line": 33469
+        },
+        {
+          "name": "_VIX_LOW_IV_STRATEGY_MAX",
+          "kind": "var",
+          "line": 33470
+        },
+        {
+          "name": "_regimeCompactVixNotes",
+          "kind": "function",
+          "line": 33471
+        },
+        {
+          "name": "_REGIME_LS_KEY",
+          "kind": "var",
+          "line": 33489
+        },
+        {
+          "name": "_regimeReadState",
+          "kind": "function",
+          "line": 33490
+        },
+        {
+          "name": "_regimeWriteState",
+          "kind": "function",
+          "line": 33491
+        },
+        {
+          "name": "_regimeDayStart",
+          "kind": "function",
+          "line": 33492
+        },
+        {
+          "name": "_regimeUpdateTransition",
+          "kind": "function",
+          "line": 33494
+        },
+        {
+          "name": "_regimeTransitionStatus",
+          "kind": "function",
+          "line": 33507
+        },
+        {
+          "name": "_regimeSections",
+          "kind": "function",
+          "line": 33516
+        },
+        {
+          "name": "_regimeMainKey",
+          "kind": "var",
+          "line": 33553
+        },
+        {
+          "name": "_regimeRenderMain",
+          "kind": "function",
+          "line": 33554
+        },
+        {
+          "name": "_VIX_CTX_BADGE",
+          "kind": "var",
+          "line": 33583
+        },
+        {
+          "name": "_regimeCompactKey",
+          "kind": "var",
+          "line": 33584
+        },
+        {
+          "name": "_regimeRenderCompact",
+          "kind": "function",
+          "line": 33585
+        },
+        {
+          "name": "_regimeTransKey",
+          "kind": "var",
+          "line": 33613
+        },
+        {
+          "name": "_regimeRenderTransition",
+          "kind": "function",
+          "line": 33614
+        },
+        {
+          "name": "_regimeRefresh",
+          "kind": "function",
+          "line": 33641
+        },
+        {
+          "name": "_mcxSpy1dSma20Rising",
+          "kind": "function",
+          "line": 33658
+        },
+        {
+          "name": "_mcxRenderSma20DefenseRule",
+          "kind": "function",
+          "line": 33683
+        },
+        {
+          "name": "_mcxStopPolls",
+          "kind": "function",
+          "line": 33789
+        },
+        {
+          "name": "_mcxRedraw",
+          "kind": "function",
+          "line": 33970
+        },
+        {
+          "name": "_mcxRefresh",
+          "kind": "function",
+          "line": 33979
+        },
+        {
+          "name": "_mcxStartAutoRefresh",
+          "kind": "function",
+          "line": 33999
+        },
+        {
+          "name": "_mcxStopAutoRefresh",
+          "kind": "function",
+          "line": 34009
+        }
+      ],
+      "sideEffects": {
+        "document": 207,
+        "fetch": 23,
+        "ttCall": 20,
+        "setInterval": 5,
+        "setTimeout": 31,
+        "WebSocket": 10,
+        "addEventListener": 1,
+        "localStorage": 41,
+        "ResizeObserver": 7,
+        "requestAnimationFrame": 3
+      },
+      "owners": [
+        {
+          "name": "ffBackendCandlesMcxCharts",
+          "kind": "function",
+          "line": 14640,
+          "start": 902479,
+          "end": 902725,
+          "chars": 246,
+          "totalRefs": 8,
+          "externalRefs": 7,
+          "externalContexts": [
+            {
+              "line": 27212,
+              "text": "mcx:         (typeof ffBackendCandlesMcxCharts === 'function') ? ffBackendCandlesMcxCharts() : null,"
+            },
+            {
+              "line": 27212,
+              "text": "mcx:         (typeof ffBackendCandlesMcxCharts === 'function') ? ffBackendCandlesMcxCharts() : null,"
+            },
+            {
+              "line": 32425,
+              "text": "if (ffBackendCandlesMcxCharts() || ffBackendCandleParityDebug()) {"
+            },
+            {
+              "line": 33812,
+              "text": "if (ffBackendCandlesMcxCharts()) {"
+            },
+            {
+              "line": 33877,
+              "text": "} else if(ffBackendCandlesMcxCharts()){"
+            },
+            {
+              "line": 33920,
+              "text": "else if(ffBackendCandlesMcxCharts()){"
+            },
+            {
+              "line": 33947,
+              "text": "if(!ffBackendCandlesMcxCharts()){"
+            }
+          ],
+          "sideEffects": {
+            "localStorage": 1
+          }
+        },
+        {
+          "name": "_mcxBackendFetchInFlight",
+          "kind": "var",
+          "line": 33048,
+          "start": 1882159,
+          "end": 1882193,
+          "chars": 34,
+          "totalRefs": 5,
+          "externalRefs": 4,
+          "externalContexts": [
+            {
+              "line": 33818,
+              "text": "if (_mcxBackendFetchInFlight[_sym]) { try { await _mcxBackendFetchInFlight[_sym]; } catch (_e0) {} return; }"
+            },
+            {
+              "line": 33818,
+              "text": "if (_mcxBackendFetchInFlight[_sym]) { try { await _mcxBackendFetchInFlight[_sym]; } catch (_e0) {} return; }"
+            },
+            {
+              "line": 33854,
+              "text": "_mcxBackendFetchInFlight[_sym] = _p;"
+            },
+            {
+              "line": 33855,
+              "text": "try { await _p; } finally { delete _mcxBackendFetchInFlight[_sym]; }"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_mcxSpySqzCache",
+          "kind": "var",
+          "line": 33049,
+          "start": 1882260,
+          "end": 1882311,
+          "chars": 51,
+          "totalRefs": 9,
+          "externalRefs": 8,
+          "externalContexts": [
+            {
+              "line": 33540,
+              "text": "// Returns badge HTML using _mcxSpySqzCache. compact=true → smaller variant for Dashboard."
+            },
+            {
+              "line": 33542,
+              "text": "var s1 = _mcxSpySqzCache.spy1d, s4 = _mcxSpySqzCache.spy4h;"
+            },
+            {
+              "line": 33542,
+              "text": "var s1 = _mcxSpySqzCache.spy1d, s4 = _mcxSpySqzCache.spy4h;"
+            },
+            {
+              "line": 33588,
+              "text": "var sqzTag=(_mcxSpySqzCache.spy1d?'1':'0')+(_mcxSpySqzCache.spy4h?'1':'0');"
+            },
+            {
+              "line": 33588,
+              "text": "var sqzTag=(_mcxSpySqzCache.spy1d?'1':'0')+(_mcxSpySqzCache.spy4h?'1':'0');"
+            },
+            {
+              "line": 33892,
+              "text": "_mcxSpySqzCache.spy4h=!!(ctxMap['SPY-4H']&&ctxMap['SPY-4H'].sqz);"
+            },
+            {
+              "line": 33960,
+              "text": "_mcxSpySqzCache.spy1d = !!(ctxMap['SPY-1D'] && ctxMap['SPY-1D'].sqz);"
+            },
+            {
+              "line": 33961,
+              "text": "_mcxSpySqzCache.spy4h = !!(ctxMap['SPY-4H'] && ctxMap['SPY-4H'].sqz);"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_mcxSpySqzBadgeHtml",
+          "kind": "function",
+          "line": 33541,
+          "start": 1905310,
+          "end": 1905685,
+          "chars": 375,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33550,
+              "text": "if (el) el.innerHTML = _mcxSpySqzBadgeHtml();"
+            },
+            {
+              "line": 33607,
+              "text": "el.innerHTML='<div class=\"regime-compact-vixwrap\"><div class=\"regime-compact-vix\"><div class=\"regime-compact-lbl\">VIX · LIVE</div><div class=\"regime-compact-val\">'+vix.toFixed(1)+'</div>'+_mcxSpySqzBadgeHtml(true)+'</div>'+_VIX_CTX_BADGE+'<"
+            }
+          ],
+          "sideEffects": {}
+        },
+        {
+          "name": "_mcxRenderSpySqzBadge",
+          "kind": "function",
+          "line": 33548,
+          "start": 1905686,
+          "end": 1905827,
+          "chars": 141,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33893,
+              "text": "_mcxRenderSpySqzBadge();"
+            },
+            {
+              "line": 33966,
+              "text": "_mcxRenderSpySqzBadge(); // update MCX VIX block badge after ctxMap is fully built"
+            }
+          ],
+          "sideEffects": {
+            "document": 1
+          }
+        },
+        {
+          "name": "_mcxRenderCharts",
+          "kind": "async function",
+          "line": 33795,
+          "start": 1918938,
+          "end": 1928909,
+          "chars": 9971,
+          "totalRefs": 8,
+          "externalRefs": 7,
+          "externalContexts": [
+            {
+              "line": 33049,
+              "text": "var _mcxSpySqzCache = { spy1d: null, spy4h: null }; // populated after _mcxRenderCharts builds ctxMap"
+            },
+            {
+              "line": 33054,
+              "text": "_mcxResizeTimer = setTimeout(_mcxRenderCharts, 160);"
+            },
+            {
+              "line": 33119,
+              "text": "_mcxRenderCharts();"
+            },
+            {
+              "line": 33975,
+              "text": "_mcxRenderCharts();"
+            },
+            {
+              "line": 33988,
+              "text": "return _mcxRenderCharts(); // async — return Promise so next .then waits"
+            },
+            {
+              "line": 34057,
+              "text": "_mcxRenderCharts({ forceRefresh: true, reason: 'mcx_open' });"
+            },
+            {
+              "line": 34059,
+              "text": "setTimeout(_mcxRenderCharts, 100);"
+            }
+          ],
+          "sideEffects": {
+            "document": 12,
+            "setInterval": 2,
+            "ResizeObserver": 1
+          }
+        },
+        {
+          "name": "_mcxDrawVixCurve",
+          "kind": "function",
+          "line": 33725,
+          "start": 1915936,
+          "end": 1918717,
+          "chars": 2781,
+          "totalRefs": 3,
+          "externalRefs": 2,
+          "externalContexts": [
+            {
+              "line": 33959,
+              "text": "// _regimeRenderCompact (called via _mcxDrawVixCurve → _regimeRefresh) uses this cache."
+            },
+            {
+              "line": 33964,
+              "text": "_mcxDrawVixCurve();"
+            }
+          ],
+          "sideEffects": {
+            "document": 2
+          }
+        },
+        {
+          "name": "_mcxInit",
+          "kind": "function",
+          "line": 34020,
+          "start": 1930797,
+          "end": 1933551,
+          "chars": 2754,
+          "totalRefs": 4,
+          "externalRefs": 3,
+          "externalContexts": [
+            {
+              "line": 15215,
+              "text": "if (name === 'mcx') { _mcxInit(); }"
+            },
+            {
+              "line": 34001,
+              "text": "// The open-path snapshot trigger now lives in _mcxInit() via _mcxRefreshVixData();"
+            },
+            {
+              "line": 34074,
+              "text": "if (res) res.dataset.hasContent = '1';  // prevent _mcxInit from overwriting during same session"
+            }
+          ],
+          "sideEffects": {
+            "document": 4,
+            "setTimeout": 2,
+            "ResizeObserver": 2,
+            "requestAnimationFrame": 1
+          }
+        }
+      ],
+      "leadingContext": [
+        "'1'); location.reload();",
+        "//   Disable: localStorage.removeItem('apex_ff_backend_candles_mcx_charts'); location.reload();",
+        "// Scope: MCX charts only.  No scanner, RS, Portfolio, Journal, or pre-trade impact.",
+        "// Per-surface override: '1' forces ON, '0' forces OFF, unset → global chart policy",
+        "// (ffPreferBackendCandlesForCharts, default ON). Production now prefers backend",
+        "// candles for MCX charts by default; set the key to '0' to opt this one surface",
+        "// back to legacy browser Candle subscriptions.",
+        ""
+      ],
+      "trailingContext": [
+        "",
+        "",
+        "// Backward-compat stub: selAgent still routes here from old code paths",
+        "function runMarketContextPanel() { showView('mcx'); }",
+        "",
+        "// Called by \"RUN MACRO CHECK\" button — wraps the AI call, marks result as user-initiated",
+        "function _mcxRunMacroCheck() {",
+        "  var res = document.getElementById('mcxResults');",
+        "  if (res) res.dataset.hasContent = '1';  // prevent _mcxInit from overwriting during same session",
+        "  runMarketContextAnalysis();"
+      ]
+    }
+  },
+  "stateWritesOutsideDeclaration": {
+    "_regimeCompactKey": [
+      {
+        "line": 33591,
+        "text": "_regimeCompactKey=key;"
+      },
+      {
+        "line": 33894,
+        "text": "_regimeCompactKey=null;"
+      },
+      {
+        "line": 33962,
+        "text": "_regimeCompactKey = null; // force re-render with updated squeeze state"
+      }
+    ],
+    "_regimeMainKey": [
+      {
+        "line": 33559,
+        "text": "_regimeMainKey=key;"
+      }
+    ],
+    "_mcxSpySqzCache": [
+      {
+        "line": 33892,
+        "text": "_mcxSpySqzCache.spy4h=!!(ctxMap['SPY-4H']&&ctxMap['SPY-4H'].sqz);"
+      },
+      {
+        "line": 33960,
+        "text": "_mcxSpySqzCache.spy1d = !!(ctxMap['SPY-1D'] && ctxMap['SPY-1D'].sqz);"
+      },
+      {
+        "line": 33961,
+        "text": "_mcxSpySqzCache.spy4h = !!(ctxMap['SPY-4H'] && ctxMap['SPY-4H'].sqz);"
+      }
+    ],
+    "_mcxBackendFetchInFlight": []
+  },
+  "relevantInventory": [
+    {
+      "name": "journalTradeLegExpiryAudit",
+      "kind": "function",
+      "line": 20681,
+      "start": 1225930,
+      "chars": 1092,
+      "externalRefs": 7,
+      "sideEffects": {}
+    },
+    {
+      "name": "journalManager",
+      "kind": "var",
+      "line": 28612,
+      "start": 1648144,
+      "chars": 27165,
+      "externalRefs": 102,
+      "sideEffects": {
+        "localStorage": 2
+      }
+    },
+    {
+      "name": "jStatBox",
+      "kind": "function",
+      "line": 32874,
+      "start": 1871931,
+      "chars": 214,
+      "externalRefs": 10,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxOverlay",
+      "kind": "var",
+      "line": 33038,
+      "start": 1881701,
+      "chars": 62,
+      "externalRefs": 9,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxResizeTimer",
+      "kind": "var",
+      "line": 33039,
+      "start": 1881764,
+      "chars": 32,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSqzState",
+      "kind": "var",
+      "line": 33040,
+      "start": 1881797,
+      "chars": 30,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSpy4hTimer",
+      "kind": "var",
+      "line": 33041,
+      "start": 1881828,
+      "chars": 32,
+      "externalRefs": 8,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxVi3m4hTimer",
+      "kind": "var",
+      "line": 33042,
+      "start": 1881886,
+      "chars": 32,
+      "externalRefs": 8,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxAutoRefreshTimer",
+      "kind": "var",
+      "line": 33043,
+      "start": 1881944,
+      "chars": 32,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxRefreshBusy",
+      "kind": "var",
+      "line": 33044,
+      "start": 1881977,
+      "chars": 33,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxResizeObs",
+      "kind": "var",
+      "line": 33045,
+      "start": 1882011,
+      "chars": 32,
+      "externalRefs": 8,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxLiveCache",
+      "kind": "var",
+      "line": 33046,
+      "start": 1882044,
+      "chars": 30,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxLiveThrottle",
+      "kind": "var",
+      "line": 33047,
+      "start": 1882098,
+      "chars": 30,
+      "externalRefs": 6,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxBackendFetchInFlight",
+      "kind": "var",
+      "line": 33048,
+      "start": 1882159,
+      "chars": 34,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSpySqzCache",
+      "kind": "var",
+      "line": 33049,
+      "start": 1882260,
+      "chars": 51,
+      "externalRefs": 8,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxOnCandleTick",
+      "kind": "function",
+      "line": 33062,
+      "start": 1882824,
+      "chars": 754,
+      "externalRefs": 2,
+      "sideEffects": {
+        "setTimeout": 1
+      }
+    },
+    {
+      "name": "_mcxLiveDrawOne",
+      "kind": "function",
+      "line": 33081,
+      "start": 1883580,
+      "chars": 912,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxStopLiveUpdates",
+      "kind": "function",
+      "line": 33097,
+      "start": 1884494,
+      "chars": 165,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxAttachResizeObserver",
+      "kind": "function",
+      "line": 33107,
+      "start": 1884890,
+      "chars": 513,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 1,
+        "ResizeObserver": 2,
+        "requestAnimationFrame": 1
+      }
+    },
+    {
+      "name": "_mcxVi3mSym",
+      "kind": "function",
+      "line": 33126,
+      "start": 1885468,
+      "chars": 152,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxTechCtx",
+      "kind": "function",
+      "line": 33133,
+      "start": 1885692,
+      "chars": 1016,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSqzToast",
+      "kind": "function",
+      "line": 33155,
+      "start": 1886782,
+      "chars": 1593,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 4,
+        "setTimeout": 2
+      }
+    },
+    {
+      "name": "_mcxCheckSqz",
+      "kind": "function",
+      "line": 33181,
+      "start": 1888376,
+      "chars": 193,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxDrawRsi",
+      "kind": "function",
+      "line": 33189,
+      "start": 1888657,
+      "chars": 2440,
+      "externalRefs": 9,
+      "sideEffects": {
+        "document": 2
+      }
+    },
+    {
+      "name": "_mcxDrawOne",
+      "kind": "function",
+      "line": 33246,
+      "start": 1891158,
+      "chars": 1181,
+      "externalRefs": 7,
+      "sideEffects": {
+        "document": 3,
+        "setTimeout": 1
+      }
+    },
+    {
+      "name": "_mcxUpdateTable",
+      "kind": "function",
+      "line": 33278,
+      "start": 1892380,
+      "chars": 2283,
+      "externalRefs": 3,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_REGIME_ADJ_RULES",
+      "kind": "var",
+      "line": 33319,
+      "start": 1895031,
+      "chars": 834,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "_REGIME_CONTENT",
+      "kind": "var",
+      "line": 33331,
+      "start": 1895866,
+      "chars": 3571,
+      "externalRefs": 5,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxRegimeOf",
+      "kind": "function",
+      "line": 33430,
+      "start": 1899438,
+      "chars": 141,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "_REGIME_LABEL",
+      "kind": "var",
+      "line": 33436,
+      "start": 1899580,
+      "chars": 64,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "_VIX_NAKED_CALL_MAX",
+      "kind": "var",
+      "line": 33445,
+      "start": 1900175,
+      "chars": 29,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_REGIME_OVEREXT_FORBIDDEN",
+      "kind": "var",
+      "line": 33449,
+      "start": 1900498,
+      "chars": 322,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeDynForbidden",
+      "kind": "function",
+      "line": 33455,
+      "start": 1900976,
+      "chars": 253,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_VIX_AVOID_NAKED_PUT_MAX",
+      "kind": "var",
+      "line": 33469,
+      "start": 1901597,
+      "chars": 34,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_VIX_LOW_IV_STRATEGY_MAX",
+      "kind": "var",
+      "line": 33470,
+      "start": 1901667,
+      "chars": 36,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeCompactVixNotes",
+      "kind": "function",
+      "line": 33471,
+      "start": 1901751,
+      "chars": 578,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_REGIME_LS_KEY",
+      "kind": "var",
+      "line": 33489,
+      "start": 1902606,
+      "chars": 47,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeReadState",
+      "kind": "function",
+      "line": 33490,
+      "start": 1902654,
+      "chars": 126,
+      "externalRefs": 2,
+      "sideEffects": {
+        "localStorage": 1
+      }
+    },
+    {
+      "name": "_regimeWriteState",
+      "kind": "function",
+      "line": 33491,
+      "start": 1902781,
+      "chars": 107,
+      "externalRefs": 2,
+      "sideEffects": {
+        "localStorage": 1
+      }
+    },
+    {
+      "name": "_regimeDayStart",
+      "kind": "function",
+      "line": 33492,
+      "start": 1902889,
+      "chars": 92,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeUpdateTransition",
+      "kind": "function",
+      "line": 33494,
+      "start": 1903074,
+      "chars": 550,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeTransitionStatus",
+      "kind": "function",
+      "line": 33507,
+      "start": 1903709,
+      "chars": 346,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeSections",
+      "kind": "function",
+      "line": 33516,
+      "start": 1904131,
+      "chars": 1005,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSpySqzBadgeHtml",
+      "kind": "function",
+      "line": 33541,
+      "start": 1905310,
+      "chars": 375,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxRenderSpySqzBadge",
+      "kind": "function",
+      "line": 33548,
+      "start": 1905686,
+      "chars": 141,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_regimeMainKey",
+      "kind": "var",
+      "line": 33553,
+      "start": 1905829,
+      "chars": 24,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeRenderMain",
+      "kind": "function",
+      "line": 33554,
+      "start": 1905854,
+      "chars": 1337,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_VIX_CTX_BADGE",
+      "kind": "var",
+      "line": 33583,
+      "start": 1907434,
+      "chars": 520,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeCompactKey",
+      "kind": "var",
+      "line": 33584,
+      "start": 1907955,
+      "chars": 27,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeRenderCompact",
+      "kind": "function",
+      "line": 33585,
+      "start": 1907983,
+      "chars": 1685,
+      "externalRefs": 4,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_regimeTransKey",
+      "kind": "var",
+      "line": 33613,
+      "start": 1909670,
+      "chars": 23,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_regimeRenderTransition",
+      "kind": "function",
+      "line": 33614,
+      "start": 1909694,
+      "chars": 1529,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_regimeRefresh",
+      "kind": "function",
+      "line": 33641,
+      "start": 1911296,
+      "chars": 599,
+      "externalRefs": 10,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxSpy1dSma20Rising",
+      "kind": "function",
+      "line": 33658,
+      "start": 1912341,
+      "chars": 1019,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxRenderSma20DefenseRule",
+      "kind": "function",
+      "line": 33683,
+      "start": 1913606,
+      "chars": 2328,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "_mcxDrawVixCurve",
+      "kind": "function",
+      "line": 33725,
+      "start": 1915936,
+      "chars": 2781,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 2
+      }
+    },
+    {
+      "name": "_mcxStopPolls",
+      "kind": "function",
+      "line": 33789,
+      "start": 1918719,
+      "chars": 217,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxRenderCharts",
+      "kind": "async function",
+      "line": 33795,
+      "start": 1918938,
+      "chars": 9971,
+      "externalRefs": 7,
+      "sideEffects": {
+        "document": 12,
+        "setInterval": 2,
+        "ResizeObserver": 1
+      }
+    },
+    {
+      "name": "_mcxRedraw",
+      "kind": "function",
+      "line": 33970,
+      "start": 1928911,
+      "chars": 300,
+      "externalRefs": 3,
+      "sideEffects": {
+        "document": 3
+      }
+    },
+    {
+      "name": "_mcxRefresh",
+      "kind": "function",
+      "line": 33979,
+      "start": 1929267,
+      "chars": 778,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 2,
+        "setTimeout": 1
+      }
+    },
+    {
+      "name": "_mcxStartAutoRefresh",
+      "kind": "function",
+      "line": 33999,
+      "start": 1930047,
+      "chars": 397,
+      "externalRefs": 1,
+      "sideEffects": {
+        "setInterval": 1
+      }
+    },
+    {
+      "name": "_mcxStopAutoRefresh",
+      "kind": "function",
+      "line": 34009,
+      "start": 1930446,
+      "chars": 284,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "_mcxInit",
+      "kind": "function",
+      "line": 34020,
+      "start": 1930797,
+      "chars": 2754,
+      "externalRefs": 3,
+      "sideEffects": {
+        "document": 4,
+        "setTimeout": 2,
+        "ResizeObserver": 2,
+        "requestAnimationFrame": 1
+      }
+    },
+    {
+      "name": "_mcxRunMacroCheck",
+      "kind": "function",
+      "line": 34072,
+      "start": 1933770,
+      "chars": 212,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 1
+      }
+    },
+    {
+      "name": "jView",
+      "kind": "var",
+      "line": 34190,
+      "start": 1939824,
+      "chars": 19,
+      "externalRefs": 20,
+      "sideEffects": {}
+    },
+    {
+      "name": "jFilter",
+      "kind": "var",
+      "line": 34191,
+      "start": 1939899,
+      "chars": 76,
+      "externalRefs": 14,
+      "sideEffects": {}
+    },
+    {
+      "name": "jDetailId",
+      "kind": "var",
+      "line": 34192,
+      "start": 1939976,
+      "chars": 21,
+      "externalRefs": 7,
+      "sideEffects": {}
+    },
+    {
+      "name": "jEditLeg",
+      "kind": "var",
+      "line": 34193,
+      "start": 1939998,
+      "chars": 20,
+      "externalRefs": 0,
+      "sideEffects": {}
+    },
+    {
+      "name": "runJournalPanel",
+      "kind": "function",
+      "line": 34195,
+      "start": 1940020,
+      "chars": 715,
+      "externalRefs": 0,
+      "sideEffects": {
+        "setTimeout": 1
+      }
+    },
+    {
+      "name": "renderJournalView",
+      "kind": "function",
+      "line": 34215,
+      "start": 1940737,
+      "chars": 321,
+      "externalRefs": 18,
+      "sideEffects": {}
+    },
+    {
+      "name": "jStat",
+      "kind": "function",
+      "line": 34224,
+      "start": 1941126,
+      "chars": 306,
+      "externalRefs": 5,
+      "sideEffects": {}
+    },
+    {
+      "name": "jTradeCard",
+      "kind": "function",
+      "line": 34231,
+      "start": 1941434,
+      "chars": 1678,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSelectFilter",
+      "kind": "function",
+      "line": 34262,
+      "start": 1943183,
+      "chars": 493,
+      "externalRefs": 5,
+      "sideEffects": {}
+    },
+    {
+      "name": "renderJournalList",
+      "kind": "function",
+      "line": 34273,
+      "start": 1943678,
+      "chars": 4747,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 3,
+        "setTimeout": 3,
+        "addEventListener": 3
+      }
+    },
+    {
+      "name": "runJournalExport",
+      "kind": "function",
+      "line": 34425,
+      "start": 1952180,
+      "chars": 3685,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 10
+      }
+    },
+    {
+      "name": "jField",
+      "kind": "function",
+      "line": 34855,
+      "start": 1970189,
+      "chars": 470,
+      "externalRefs": 7,
+      "sideEffects": {}
+    },
+    {
+      "name": "jFieldSelect",
+      "kind": "function",
+      "line": 34863,
+      "start": 1970661,
+      "chars": 594,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "jFieldArea",
+      "kind": "function",
+      "line": 34872,
+      "start": 1971257,
+      "chars": 449,
+      "externalRefs": 3,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSelect",
+      "kind": "function",
+      "line": 34880,
+      "start": 1971708,
+      "chars": 360,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "jInput",
+      "kind": "function",
+      "line": 34887,
+      "start": 1972070,
+      "chars": 340,
+      "externalRefs": 8,
+      "sideEffects": {}
+    },
+    {
+      "name": "jPill",
+      "kind": "function",
+      "line": 34893,
+      "start": 1972412,
+      "chars": 295,
+      "externalRefs": 9,
+      "sideEffects": {}
+    },
+    {
+      "name": "jAnalyticCard",
+      "kind": "function",
+      "line": 34899,
+      "start": 1972709,
+      "chars": 352,
+      "externalRefs": 6,
+      "sideEffects": {}
+    },
+    {
+      "name": "jOnStrategyChange",
+      "kind": "function",
+      "line": 34917,
+      "start": 1973810,
+      "chars": 398,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 2
+      }
+    },
+    {
+      "name": "renderJournalAdd",
+      "kind": "function",
+      "line": 34931,
+      "start": 1974281,
+      "chars": 3158,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSubmitAdd",
+      "kind": "function",
+      "line": 34987,
+      "start": 1977441,
+      "chars": 1308,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 11
+      }
+    },
+    {
+      "name": "renderJournalEdit",
+      "kind": "function",
+      "line": 35021,
+      "start": 1978823,
+      "chars": 3033,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSubmitEdit",
+      "kind": "function",
+      "line": 35071,
+      "start": 1981858,
+      "chars": 1368,
+      "externalRefs": 1,
+      "sideEffects": {
+        "document": 11
+      }
+    },
+    {
+      "name": "renderJournalDetail",
+      "kind": "function",
+      "line": 35104,
+      "start": 1983300,
+      "chars": 5852,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 3,
+        "setTimeout": 1,
+        "addEventListener": 3
+      }
+    },
+    {
+      "name": "jCloseTrade",
+      "kind": "function",
+      "line": 35196,
+      "start": 1989154,
+      "chars": 633,
+      "externalRefs": 2,
+      "sideEffects": {
+        "document": 4
+      }
+    },
+    {
+      "name": "renderJournalAnalytics",
+      "kind": "function",
+      "line": 35212,
+      "start": 1989861,
+      "chars": 3033,
+      "externalRefs": 1,
+      "sideEffects": {}
+    },
+    {
+      "name": "jQuickCapture",
+      "kind": "function",
+      "line": 35267,
+      "start": 1992968,
+      "chars": 779,
+      "externalRefs": 0,
+      "sideEffects": {}
+    },
+    {
+      "name": "jDecisionColor",
+      "kind": "function",
+      "line": 35293,
+      "start": 1993749,
+      "chars": 278,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "jGradeColor",
+      "kind": "function",
+      "line": 35300,
+      "start": 1994029,
+      "chars": 161,
+      "externalRefs": 2,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSyncing",
+      "kind": "var",
+      "line": 35313,
+      "start": 1994557,
+      "chars": 21,
+      "externalRefs": 4,
+      "sideEffects": {}
+    },
+    {
+      "name": "jLastSync",
+      "kind": "var",
+      "line": 35314,
+      "start": 1994579,
+      "chars": 21,
+      "externalRefs": 5,
+      "sideEffects": {}
+    },
+    {
+      "name": "jSaveRemote",
+      "kind": "async function",
+      "line": 35328,
+      "start": 1995376,
+      "chars": 1982,
+      "externalRefs": 9,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    },
+    {
+      "name": "jEnrichedDryRun",
+      "kind": "async function",
+      "line": 35363,
+      "start": 1997589,
+      "chars": 3157,
+      "externalRefs": 1,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    },
+    {
+      "name": "jUpdateRemote",
+      "kind": "async function",
+      "line": 35423,
+      "start": 2001036,
+      "chars": 1231,
+      "externalRefs": 4,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    },
+    {
+      "name": "jDeleteRemote",
+      "kind": "async function",
+      "line": 35446,
+      "start": 2002339,
+      "chars": 2165,
+      "externalRefs": 3,
+      "sideEffects": {
+        "fetch": 1
+      }
+    },
+    {
+      "name": "jSyncToBackend",
+      "kind": "async function",
+      "line": 35489,
+      "start": 2004575,
+      "chars": 536,
+      "externalRefs": 1,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    },
+    {
+      "name": "jLoadFromBackend",
+      "kind": "async function",
+      "line": 35511,
+      "start": 2005239,
+      "chars": 1247,
+      "externalRefs": 2,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    },
+    {
+      "name": "jMigrateApexTradesToBackend",
+      "kind": "async function",
+      "line": 35759,
+      "start": 2015091,
+      "chars": 3841,
+      "externalRefs": 4,
+      "sideEffects": {
+        "ttCall": 1
+      }
+    }
+  ]
+}
