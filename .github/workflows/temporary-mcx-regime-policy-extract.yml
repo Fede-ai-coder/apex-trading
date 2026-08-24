@@ -44,51 +44,49 @@ jobs:
       - name: Repair check — backend directional preview
         run: node tests/backend-directional-preview-boundary-contract.test.js
       - name: Repair check — backend directional snapshot
-        shell: bash
-        run: |
-          set -o pipefail
-          node tests/backend-directional-snapshot-boundary-contract.test.js 2>&1 | tee /tmp/dsb-repair.log
-      - name: Preserve DSB diagnostic
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mcx-regime-policy-dsb-repair-log
-          path: /tmp/dsb-repair.log
-          if-no-files-found: error
-          retention-days: 1
+        run: node tests/backend-directional-snapshot-boundary-contract.test.js
       - name: Repair check — backend scanner snapshot UI
         run: node tests/backend-scanner-snapshot-ui-boundary-contract.test.js
       - name: Repair check — Journal Core
+        run: node tests/journal-core-boundary-contract.test.js
+      - name: Repair check — MCX backend candles
+        run: node tests/mcx-backend-candles-boundary-contract.test.js
+
+      - name: Repair check — remaining consumer matrix
         shell: bash
         run: |
-          set -o pipefail
-          node tests/journal-core-boundary-contract.test.js 2>&1 | tee /tmp/journal-repair.log
-      - name: Preserve Journal diagnostic
+          set +e
+          mkdir -p /tmp/regime-consumers
+          failed=0
+          run_one() {
+            label="$1"
+            file="$2"
+            node "$file" >"/tmp/regime-consumers/${label}.log" 2>&1
+            rc=$?
+            printf '%s rc=%s\n' "$label" "$rc" | tee -a /tmp/regime-consumers/status.txt
+            if [ "$rc" -ne 0 ]; then
+              failed=1
+              grep -n -E 'FAIL|FAILURES|TypeError|ReferenceError|AssertionError|expected .*got' "/tmp/regime-consumers/${label}.log" | head -80 || true
+            fi
+          }
+          run_one mcx-market-context tests/mcx-market-context-boundary-contract.test.js
+          run_one mcx-vix-market-context tests/mcx-vix-market-context-boundary-contract.test.js
+          run_one pess tests/pess-extraction-boundary-contract.test.js
+          run_one pretrade-risk-modal tests/pretrade-risk-modal-boundary-contract.test.js
+          run_one pretrade-risk-rules tests/pretrade-risk-rules-boundary-contract.test.js
+          run_one pretrade-technicals tests/pretrade-technicals-boundary-contract.test.js
+          run_one regime-naked-calls tests/regime-naked-calls.test.js
+          run_one sfs tests/sfs-extraction-boundary-contract.test.js
+          exit "$failed"
+
+      - name: Preserve remaining consumer diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mcx-regime-policy-journal-repair-log
-          path: /tmp/journal-repair.log
+          name: mcx-regime-policy-remaining-consumer-logs
+          path: /tmp/regime-consumers
           if-no-files-found: error
           retention-days: 1
-      - name: Repair check — MCX backend candles
-        run: node tests/mcx-backend-candles-boundary-contract.test.js
-      - name: Repair check — MCX market context
-        run: node tests/mcx-market-context-boundary-contract.test.js
-      - name: Repair check — MCX VIX market context
-        run: node tests/mcx-vix-market-context-boundary-contract.test.js
-      - name: Repair check — PESS
-        run: node tests/pess-extraction-boundary-contract.test.js
-      - name: Repair check — PRETRADE risk modal
-        run: node tests/pretrade-risk-modal-boundary-contract.test.js
-      - name: Repair check — PRETRADE risk rules
-        run: node tests/pretrade-risk-rules-boundary-contract.test.js
-      - name: Repair check — PRETRADE technicals
-        run: node tests/pretrade-technicals-boundary-contract.test.js
-      - name: Repair check — regime naked calls
-        run: node tests/regime-naked-calls.test.js
-      - name: Repair check — SFS
-        run: node tests/sfs-extraction-boundary-contract.test.js
 
       - name: Verify repaired tree
         shell: bash
