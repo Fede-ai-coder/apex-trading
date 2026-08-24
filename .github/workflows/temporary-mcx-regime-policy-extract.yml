@@ -1,19 +1,16 @@
 name: temporary-mcx-regime-policy-extract
 
 on:
-  push:
-    branches:
-      - agent/extract-mcx-regime-policy-core
   pull_request:
     branches:
       - dev-clean
-    types: [opened, reopened, synchronize]
+    types: [reopened]
 
 permissions:
   contents: write
 
 jobs:
-  diagnose:
+  repair:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact feature branch
@@ -39,39 +36,45 @@ jobs:
           test "$runtime_changed" = "$expected"
           git diff --check
 
-      - name: Capture exact Node 22 failure set
-        shell: bash
-        run: |
-          set -euo pipefail
-          report=tests/tools/temporary-mcx-regime-policy-failures.txt
-          : > "$report"
-          failed=0
-          for f in tests/*.test.js; do
-            if node "$f" > /tmp/mcx-regime-suite.log 2>&1; then
-              continue
-            fi
-            failed=1
-            printf '===== %s =====\n' "$f" >> "$report"
-            tail -80 /tmp/mcx-regime-suite.log >> "$report"
-            printf '\n' >> "$report"
-          done
-          if [ "$failed" -eq 0 ]; then
-            printf 'ALL_GREEN\n' > "$report"
-          fi
-          cat "$report"
+      - name: Apply fail-closed historical contract repair
+        run: node tests/tools/temporary-mcx-regime-policy-repair.js
 
-      - name: Commit diagnostic report if changed
+      - name: Run repaired consumers
         shell: bash
         run: |
           set -euo pipefail
-          report=tests/tools/temporary-mcx-regime-policy-failures.txt
-          git add "$report"
+          for f in \
+            tests/backend-directional-adapter-boundary-contract.test.js \
+            tests/backend-directional-preview-boundary-contract.test.js \
+            tests/backend-directional-snapshot-boundary-contract.test.js \
+            tests/backend-scanner-snapshot-ui-boundary-contract.test.js \
+            tests/journal-core-boundary-contract.test.js \
+            tests/mcx-backend-candles-boundary-contract.test.js \
+            tests/mcx-market-context-boundary-contract.test.js \
+            tests/mcx-vix-market-context-boundary-contract.test.js \
+            tests/pess-extraction-boundary-contract.test.js \
+            tests/pretrade-risk-modal-boundary-contract.test.js \
+            tests/pretrade-risk-rules-boundary-contract.test.js \
+            tests/pretrade-technicals-boundary-contract.test.js \
+            tests/regime-naked-calls.test.js \
+            tests/sfs-extraction-boundary-contract.test.js; do
+            node "$f"
+          done
+          git diff --check
+          test -z "$(git diff --name-only -- index.html js/)"
+
+      - name: Commit test-only repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add tests/
+          test -z "$(git diff --cached --name-only | grep -Ev '^tests/' || true)"
           if git diff --cached --quiet; then
-            echo 'diagnostic report already current'
+            echo 'repair already current'
             exit 0
           fi
-          test -z "$(git diff --cached --name-only | grep -v '^tests/tools/temporary-mcx-regime-policy-failures.txt$' || true)"
+          git diff --cached --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "test(mcx): record regime-policy failure set"
+          git commit -m "test(mcx): align historical contracts with regime policy"
           git push origin HEAD:agent/extract-mcx-regime-policy-core
