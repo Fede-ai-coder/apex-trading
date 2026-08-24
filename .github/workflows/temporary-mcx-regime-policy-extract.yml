@@ -37,7 +37,7 @@ jobs:
           git diff --check
 
       - name: Apply fail-closed historical contract repair
-        run: node tests/tools/temporary-mcx-regime-policy-repair.js
+        run: node tests/tools/temporary-mcx-regime-policy-repair-v2.js
 
       - name: Run repaired consumers
         shell: bash
