@@ -143,6 +143,11 @@ const journalUI = [
   'renderJournalDetail', 'renderJournalAnalytics'
 ];
 const journalSync = ['jLoadFromBackend', 'jSyncToBackend', 'jSaveRemote'];
+const regimePolicyCore = [
+  '_REGIME_ADJ_RULES', '_REGIME_CONTENT', '_mcxRegimeOf', '_REGIME_LABEL',
+  '_VIX_NAKED_CALL_MAX', '_REGIME_OVEREXT_FORBIDDEN', '_regimeDynForbidden',
+  '_VIX_AVOID_NAKED_PUT_MAX', '_VIX_LOW_IV_STRATEGY_MAX', '_regimeCompactVixNotes'
+];
 const regime = [
   '_REGIME_ADJ_RULES', '_VIX_NAKED_CALL_MAX', '_VIX_AVOID_NAKED_PUT_MAX',
   '_VIX_LOW_IV_STRATEGY_MAX', '_REGIME_OVEREXT_FORBIDDEN', '_REGIME_CONTENT',
@@ -165,8 +170,6 @@ const relevantInventory = decls
     sideEffects: sideEffects(SRC.slice(d.start, d.end)),
   }));
 
-// State-write probes for known cross-boundary variables. These intentionally
-// report textual assignment contexts outside the declaration itself.
 function assignmentContexts(name, limit = 20) {
   const d = byName.get(name) || { start: -1, end: -1 };
   const re = new RegExp(`${escRe(name)}(?:\\.[A-Za-z_$][\\w$]*)?\\s*(?:=|\\+=|-=|\\+\\+|--)`, 'g');
@@ -187,6 +190,7 @@ const report = {
   families: {
     journalUI: family('journalUI', journalUI),
     journalSync: family('journalSync', journalSync),
+    regimePolicyCore: family('regimePolicyCore', regimePolicyCore),
     regime: family('regime', regime),
     mcxChartLifecycle: family('mcxChartLifecycle', mcxChartLifecycle),
   },
