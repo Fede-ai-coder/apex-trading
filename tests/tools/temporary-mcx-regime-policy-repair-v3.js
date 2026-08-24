@@ -65,3 +65,33 @@ src = src.slice(0, start) + replacement + src.slice(end);
 const out = '/tmp/temporary-mcx-regime-policy-repair-v3-exec.js';
 fs.writeFileSync(out, src);
 require(out);
+
+// The DSB load-time profiler intentionally keeps complex literal initialisers in
+// its visible residue.  Regime Policy therefore belongs in that exact visible
+// set, but unlike backend-config it performs no call at load time.  Preserve the
+// profiler's sensitivity and prove this newly visible owner is declaration-only
+// rather than broadening the exemption threshold.
+{
+  const file = path.resolve('tests/backend-directional-snapshot-boundary-contract.test.js');
+  let dsb = fs.readFileSync(file, 'utf8');
+  const oldBlock = `  deepEq(withTopLevel.map(function (p) { return p.name; }),
+    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS),
+    'of the extracted modules, only backend-config.js and the Stress companion constants execute anything at load time');
+  PESS_EXTRACTION_SCRIPTS.forEach(function (src) {`;
+  const newBlock = `  deepEq(withTopLevel.map(function (p) { return p.name; }),
+    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat(['./js/services/mcx-regime-policy.js']),
+    'the visible top-level residue is exactly backend-config.js, Stress constants and Regime Policy literal data');
+  const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
+  ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
+  const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
+  ok(!/\\(/.test(regimePolicyTopLevel), 'Regime Policy performs NO call at load time');
+  ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(regimePolicyTopLevel),
+     'Regime Policy reads NO shared application/browser global at load time');
+  const regimePolicyAssignments = regimePolicyTopLevel.match(/(?:^|\\n)\\s*[A-Za-z_$][A-Za-z0-9_$.]*\\s*=/g) || [];
+  deepEq(regimePolicyAssignments, [], 'Regime Policy assigns to no pre-existing binding at load time');
+  PESS_EXTRACTION_SCRIPTS.forEach(function (src) {`;
+  const hits = dsb.split(oldBlock).length - 1;
+  if (hits !== 1) throw new Error('REPAIR_V3_DSB_TOP_LEVEL_CLASSIFICATION: expected 1 exact match, got ' + hits);
+  dsb = dsb.replace(oldBlock, newBlock);
+  fs.writeFileSync(file, dsb);
+}
