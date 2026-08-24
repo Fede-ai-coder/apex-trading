@@ -44,7 +44,18 @@ jobs:
       - name: Repair check — backend directional preview
         run: node tests/backend-directional-preview-boundary-contract.test.js
       - name: Repair check — backend directional snapshot
-        run: node tests/backend-directional-snapshot-boundary-contract.test.js
+        shell: bash
+        run: |
+          set -o pipefail
+          node tests/backend-directional-snapshot-boundary-contract.test.js 2>&1 | tee /tmp/dsb-repair.log
+      - name: Preserve DSB diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcx-regime-policy-dsb-repair-log
+          path: /tmp/dsb-repair.log
+          if-no-files-found: error
+          retention-days: 1
       - name: Repair check — backend scanner snapshot UI
         run: node tests/backend-scanner-snapshot-ui-boundary-contract.test.js
       - name: Repair check — Journal Core
