@@ -156,9 +156,11 @@ ok(gitBlobSha(MODULE) === EXPECTED_MODULE_GIT_BLOB,
 const mcx1Tag = '<script src="./' + MCX1_REL + '"></script>';
 const tag = '<script src="./' + MODULE_REL + '"></script>';
 const mcx3Tag = '<script src="./' + MCX3_REL + '"></script>';
+const journalTag = '<script src="./js/services/journal-core.js"></script>';
 ok((INDEX.split(mcx1Tag).length - 1) === 1, 'exactly one MCX-1 script tag exists');
 ok((INDEX.split(tag).length - 1) === 1, 'exactly one MCX-2 service script tag exists');
 ok((INDEX.split(mcx3Tag).length - 1) === 1, 'exactly one MCX-3 service script tag exists');
+ok((INDEX.split(journalTag).length - 1) === 1, 'exactly one Journal Core script tag exists');
 const mcx1At = INDEX.indexOf(mcx1Tag);
 const tagAt = INDEX.indexOf(tag);
 const nextScriptAt = INDEX.indexOf('<script', tagAt + tag.length);
@@ -170,8 +172,14 @@ const afterMcx3End = afterMcx3At >= 0 ? INDEX.indexOf('>', afterMcx3At) : -1;
 const afterMcx3Tag = afterMcx3End >= 0 ? INDEX.slice(afterMcx3At, afterMcx3End + 1) : '';
 ok(mcx1At >= 0 && tagAt > mcx1At, 'MCX-1 loads before MCX-2');
 ok(nextTag === '<script src="./' + MCX3_REL + '">', 'MCX-2 loads immediately before MCX-3');
-ok(mcx3At > tagAt && afterMcx3At > mcx3At && !/\bsrc\s*=/i.test(afterMcx3Tag),
-  'MCX-3 loads immediately before the residual inline application script');
+ok(mcx3At > tagAt && afterMcx3Tag === '<script src="./js/services/journal-core.js">',
+  'MCX-3 loads immediately before Journal Core');
+const journalAt = INDEX.indexOf(journalTag);
+const afterJournalAt = INDEX.indexOf('<script', journalAt + journalTag.length);
+const afterJournalEnd = afterJournalAt >= 0 ? INDEX.indexOf('>', afterJournalAt) : -1;
+const afterJournalTag = afterJournalEnd >= 0 ? INDEX.slice(afterJournalAt, afterJournalEnd + 1) : '';
+ok(journalAt > mcx3At && afterJournalAt > journalAt && !/\bsrc\s*=/i.test(afterJournalTag),
+  'Journal Core loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

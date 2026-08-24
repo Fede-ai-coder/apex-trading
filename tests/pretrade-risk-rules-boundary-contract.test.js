@@ -142,11 +142,12 @@ const PRETRADE_PR2 = require('./lib/pretrade-pr2-undo.js');
 // so every offset below still addresses exactly the document it was written
 // against.
 const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
+const POST_JOURNAL_MCX3_UNDO = require('./lib/post-journal-mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const liveIndex = fs.readFileSync(path.join(ROOT,'index.html'),'utf8');
 const at392 = MCX_UNDO3.isApplied(liveIndex)
-  ? MCX_UNDO3.undoMcxPr3(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
+  ? POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(liveIndex, fs.readFileSync(path.join(ROOT,'js/services/mcx-backend-candles.js'),'utf8'))
   : liveIndex;
 const at386 = MCX_UNDO2.isApplied(at392)
   ? MCX_UNDO2.undoMcxPr2(at392, fs.readFileSync(path.join(ROOT,'js/services/mcx-vix-market-context.js'),'utf8'))
@@ -329,7 +330,8 @@ const MCX_MODULE_REL='js/services/mcx-market-context.js';
 // PR #389 stacked the MCX VIX owner on top; the list stays EXACT and named.
 const MCX_VIX_MODULE_REL='js/services/mcx-vix-market-context.js';
 const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
-const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL];
+const JOURNAL_CORE_REL='js/services/journal-core.js';
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
 same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + all three MCX owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);

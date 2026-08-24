@@ -218,11 +218,13 @@ const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-vix-market-context.js',
   './js/services/mcx-backend-candles.js',
 ];
+const JOURNAL_EXTRACTION_SCRIPTS = ['./js/services/journal-core.js'];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
   .concat(PRETRADE_EXTRACTION_SCRIPTS)
-  .concat(MCX_EXTRACTION_SCRIPTS);
+  .concat(MCX_EXTRACTION_SCRIPTS)
+  .concat(JOURNAL_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2714,8 +2716,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 44,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE and three MCX extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 45,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, three MCX and Journal Core extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3035,20 +3037,20 @@ deepEq(BASE_NO_DSB.filter(function (p) {
   // service to be evaluated BEFORE the monolith. Note the exposure is wrapped in
   // try/catch, so a wrong script order would NOT throw: it would silently leave the
   // debug handle undefined. This predicate is what makes that order regression loud.
-  eq(deps.length, 9, 'the real document has exactly 9 cross-script LOAD-TIME dependencies (6 + the 2 W2 exposures + the SFS debug exposure)');
+  eq(deps.length, 12, 'the real document has exactly 12 cross-script LOAD-TIME dependencies (9 historical + 3 Journal CRUD bindings)');
   deepEq(deps.map(function (d) { return d.name; }).sort(),
     ['_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
      '_isTransientFetchError', '_ttCallWithRetry', 'apexDebugBackendDirectionalPreview',
      'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot',
-     'apexDebugSfsDetailChart'],
-    'the 9 identifiers the inline monolith evaluates at load time from earlier modules');
+     'apexDebugSfsDetailChart', 'jAddTrade', 'jDeleteTrade', 'jUpdateTrade'],
+    'the 12 identifiers the inline monolith evaluates at load time from earlier modules');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))), ['INLINE'],
     'ALL cross-script load-time dependencies belong to the inline monolith — no module depends on another at load time');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.provider; }))).sort(),
     ['./js/api/backend-client.js', './js/services/backend-directional-snapshot-service.js',
-     './js/services/candle-normalization.js', './js/services/sfs-scan-service.js',
+     './js/services/candle-normalization.js', './js/services/journal-core.js', './js/services/sfs-scan-service.js',
      './js/ui/backend-directional-preview.js'],
-    'those 9 come from exactly 5 provider modules');
+    'those 12 come from exactly 6 provider modules');
   deepEq(deps.filter(function (d) { return d.provider === SERVICE_SRC; })
              .map(function (d) { return d.name; }).sort(),
     ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],
@@ -3436,7 +3438,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && PESS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && EIC_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PRETRADE_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && JOURNAL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

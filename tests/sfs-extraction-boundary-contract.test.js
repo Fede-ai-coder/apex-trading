@@ -1407,7 +1407,7 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 44, '4.9 index.html loads 44 local application scripts, including the three PRETRADE owners and all three MCX owners');
+  eq(local.length, 45, '4.9 index.html loads 45 local application scripts, including PRETRADE, all three MCX owners and Journal Core');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,
@@ -3154,6 +3154,7 @@ section('11. RECONSTRUCTION — the relocation is reversible, to the byte');
   // load-bearing, and this entry point must always be the newest EIC helper.
   const EIC_UNDO = require('./lib/eic-pr5-undo.js');
 const MCX_UNDO3 = require('./lib/mcx-pr3-undo.js');
+const POST_JOURNAL_MCX3_UNDO = require('./lib/post-journal-mcx-pr3-undo.js');
 const MCX_UNDO2 = require('./lib/mcx-pr2-undo.js');
 const MCX_UNDO = require('./lib/mcx-pr1-undo.js');
 const PRETRADE_UNDO3 = require('./lib/pretrade-pr3-undo.js');
@@ -3180,7 +3181,7 @@ const PRETRADE_UNDO = require('./lib/pretrade-pr1-undo.js');
   const mcx2Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-vix-market-context.js'), 'utf8');
   const mcx3Src = fs.readFileSync(path.join(ROOT, 'js/services/mcx-backend-candles.js'), 'utf8');
   if (MCX_UNDO3.isApplied(HEAD_HTML)) {
-    HEAD_HTML = MCX_UNDO3.undoMcxPr3(HEAD_HTML, mcx3Src);
+    HEAD_HTML = POST_JOURNAL_MCX3_UNDO.undoMcxPr3AfterJournal(HEAD_HTML, mcx3Src);
     ok(true, '11.-6 MCX backend-candle service is undone byte-exactly before the MCX VIX link');
   }
   if (MCX_UNDO2.isApplied(HEAD_HTML)) {
