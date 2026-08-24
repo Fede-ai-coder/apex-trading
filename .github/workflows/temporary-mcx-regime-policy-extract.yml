@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  extract:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout exact feature branch
@@ -23,42 +23,51 @@ jobs:
         with:
           node-version: 22
 
-      - name: Prove pinned base and pre-extraction runtime state
+      - name: Prove pinned base and exact runtime footprint
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin dev-clean --quiet
           test "$(git rev-parse origin/dev-clean)" = "72a2c5759e17a3fd0477f62724d6fd4490be1c8f"
           test "$(git rev-parse --abbrev-ref HEAD)" = "agent/extract-mcx-regime-policy-core"
-          if [ ! -f js/services/mcx-regime-policy.js ]; then
-            test -z "$(git diff 72a2c5759e17a3fd0477f62724d6fd4490be1c8f...HEAD -- index.html js/)"
-          fi
-
-      - name: Apply exact guarded extraction
-        run: node tests/tools/temporary-mcx-regime-policy-extract.js
-
-      - name: Syntax and focused behavioral gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --check js/services/mcx-regime-policy.js
-          node tests/mcx-regime-rules.test.js
-          node tests/mcx-sma20-rising-defense-rule.test.js
-          node tests/mcx-refresh-on-open-freshness.test.js
+          runtime_changed="$(git diff --name-only 72a2c5759e17a3fd0477f62724d6fd4490be1c8f...HEAD -- index.html js/ | sort)"
+          expected=$'index.html\njs/services/mcx-regime-policy.js'
+          test "$runtime_changed" = "$expected"
           git diff --check
 
-      - name: Commit extraction only if production changed
+      - name: Capture exact Node 22 failure set
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- index.html js/services/mcx-regime-policy.js tests/tools/temporary-mcx-regime-policy-pins.json; then
-            echo 'extraction already current'
+          report=tests/tools/temporary-mcx-regime-policy-failures.txt
+          : > "$report"
+          failed=0
+          for f in tests/*.test.js; do
+            if node "$f" > /tmp/mcx-regime-suite.log 2>&1; then
+              continue
+            fi
+            failed=1
+            printf '===== %s =====\n' "$f" >> "$report"
+            tail -80 /tmp/mcx-regime-suite.log >> "$report"
+            printf '\n' >> "$report"
+          done
+          if [ "$failed" -eq 0 ]; then
+            printf 'ALL_GREEN\n' > "$report"
+          fi
+          cat "$report"
+
+      - name: Commit diagnostic report if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          report=tests/tools/temporary-mcx-regime-policy-failures.txt
+          git add "$report"
+          if git diff --cached --quiet; then
+            echo 'diagnostic report already current'
             exit 0
           fi
-          git add index.html js/services/mcx-regime-policy.js tests/tools/temporary-mcx-regime-policy-pins.json
-          test -z "$(git diff --cached --name-only | grep -Ev '^(index.html|js/services/mcx-regime-policy.js|tests/tools/temporary-mcx-regime-policy-pins.json)$' || true)"
-          git diff --cached --check
+          test -z "$(git diff --cached --name-only | grep -v '^tests/tools/temporary-mcx-regime-policy-failures.txt$' || true)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "refactor(mcx): extract regime policy core"
+          git commit -m "test(mcx): record regime-policy failure set"
           git push origin HEAD:agent/extract-mcx-regime-policy-core
