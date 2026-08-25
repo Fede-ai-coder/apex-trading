@@ -3,8 +3,8 @@
 // Permanent contract for the Journal backend write-through extraction after
 // the merged read-only audit (#399). One exact classic-script bridge owns the
 // legacy Journal CRUD wrappers, backend payload normalization, and terminal
-// journalManager patches. Migration, manual import, and backup UI remain inline
-// as separate policy/UI owners.
+// journalManager patches. Migration later moved to its own module; manual import
+// and backup UI remain inline as separate policy/UI owners.
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -16,12 +16,14 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
+const MIGRATION_U = require('./lib/journal-migration-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '9dc2148f91e0ae12aa405f2488b16ab9e03922ef';
 const BASE_TREE = '0769a850de8cbd4c5d93c915ce10081fc23a8438';
 const MODULE_REL = 'js/services/journal-backend-write-through.js';
 const MODULE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
+const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 
 const CORE_TAG = '<script src="./js/services/journal-core.js"></script>';
 const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
@@ -79,6 +81,7 @@ const EXPECTED_FREE_IDENTIFIERS = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
+const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT,
   encoding: 'utf8',
@@ -294,8 +297,10 @@ function futureOrderViolations(html) {
   const uiAt = html.indexOf(UI_TAG);
   const remoteAt = html.indexOf(REMOTE_TAG);
   const futureAt = html.indexOf(MODULE_TAG);
+  const migrationAt = html.indexOf(MIGRATION_TAG);
   const inlineAt = html.indexOf(INLINE_OPEN);
-  if (!(coreAt >= 0 && coreAt < uiAt && uiAt < remoteAt && remoteAt < futureAt && futureAt < inlineAt)) {
+  if (!(coreAt >= 0 && coreAt < uiAt && uiAt < remoteAt && remoteAt < futureAt &&
+        futureAt < migrationAt && migrationAt < inlineAt)) {
     violations.push('load-order');
   }
   const tag = APP_LOADER.parseScriptTags(html).find((entry) => entry.src === './js/services/journal-backend-write-through.js');
@@ -381,15 +386,18 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-eq(INDEX, expectedIndex, 'current index is exactly audit base minus slice plus one classic tag');
-eq(INDEX.length, 1956363, 'post-extraction index UTF-16 length is pinned');
-eq(sha256(INDEX), 'f6f7cc5518e8744bca359c47ec24e40f1c206b988e10ab1a4ae2c824f8b607bc',
-  'post-extraction index SHA-256 is pinned');
+const preMigrationIndex = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+eq(preMigrationIndex, expectedIndex,
+  'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
+eq(INDEX.length, 1951961, 'current post-Migration index UTF-16 length is pinned');
+eq(sha256(INDEX), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
+  'current post-Migration index SHA-256 is pinned');
 eq(futureOrderViolations(INDEX), [],
-  'order is Core -> UI -> Remote -> Write-through -> inline with one classic tag');
+  'order is Core -> UI -> Remote -> Write-through -> Migration -> inline');
 eq(countLiteral(INDEX, WRAPPER_MARKER), 0, 'legacy wrapper marker has zero inline residue');
 eq(countLiteral(INDEX, MANAGER_MARKER), 0, 'manager patch marker has zero inline residue');
-eq(countLiteral(INDEX, MIGRATION_MARKER), 1, 'migration marker remains inline exactly once');
+eq(countLiteral(INDEX, MIGRATION_MARKER), 0, 'migration marker has zero inline residue after its later extraction');
+eq(countLiteral(MIGRATION_MODULE, MIGRATION_MARKER), 1, 'migration marker lives in its later module exactly once');
 eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 1, 'manual import marker remains inline exactly once');
 eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'backup UI marker remains inline exactly once');
 
@@ -397,8 +405,10 @@ section('4. External ownership and consumers');
 eq(externalUsage('_jAddTradeOrig'), [], 'legacy add alias has no outside consumer');
 eq(externalUsage('_jUpdateTradeOrig'), [], 'legacy update alias has no outside consumer');
 eq(externalUsage('_jDeleteTradeOrig'), [], 'legacy delete alias has no outside consumer');
-eq(externalUsage('_tradeForBackend'), [{ where: 'index.html:inline', refs: 2 }],
-  'payload normalizer has exactly two inline consumers: migration and manual import');
+eq(externalUsage('_tradeForBackend'), [
+  { where: './js/services/journal-migration.js', refs: 1 },
+  { where: 'index.html:inline', refs: 1 },
+], 'payload normalizer has one Migration-module consumer and one inline manual-import consumer');
 eq(externalUsage('jAddTrade'), [
   { where: './js/services/journal-core.js', refs: 1 },
   { where: './js/ui/journal-ui.js', refs: 1 },
@@ -586,18 +596,19 @@ ok(!directInlineContract.includes("HTML.indexOf('journalManager → Backend Sync
   'save-confirm contract no longer depends on an inline marker window');
 
 section('7. Byte-exact undo, cumulative history and negative controls');
-const rebuilt = U.undoJournalBackendWriteThrough(INDEX, MODULE);
+const rebuilt = U.undoJournalBackendWriteThrough(preMigrationIndex, MODULE);
 eq(rebuilt, BASE, 'write-through undo reconstructs merged #399 base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
 const preRemote = REMOTE_U.undoJournalRemotePersistence(rebuilt, REMOTE_MODULE);
 eq(preRemote.length, REMOTE_U.BASE_CHARS, 'cumulative undo reaches the pre-Remote base');
 eq(sha256(preRemote), REMOTE_U.BASE_SHA256, 'cumulative undo hash matches the pre-Remote base');
-assert.throws(() => U.undoJournalBackendWriteThrough(INDEX, MODULE + ' '), /MODULE_IDENTITY/);
+assert.throws(() => U.undoJournalBackendWriteThrough(preMigrationIndex, MODULE + ' '), /MODULE_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalBackendWriteThrough(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+assert.throws(() => U.undoJournalBackendWriteThrough(
+  preMigrationIndex.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
   /TAG_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalBackendWriteThrough(INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
+assert.throws(() => U.undoJournalBackendWriteThrough(preMigrationIndex.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
 pass++;
 
 ok(boundaryViolations(MODULE.replace('var _jAddTradeOrig = jAddTrade;\n', ''), OUTSIDE_BASE).includes('manifest'),
@@ -635,8 +646,8 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
-eq(changedProduction, ['index.html', MODULE_REL].sort(),
-  'production footprint is exactly index.html plus the write-through module');
+eq(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-migration.js'].sort(),
+  'production footprint is index.html plus Write-through and the later Migration module');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,

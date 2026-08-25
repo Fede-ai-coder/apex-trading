@@ -644,8 +644,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(journalWriteThroughTagIdx >= 0, 'tag order: the Journal Write-through owner is present');
   eq(journalRemoteTagIdx, journalWriteThroughTagIdx - 1,
      'tag order: Journal Remote is immediately before Journal Write-through');
-  eq(journalWriteThroughTagIdx, inlineTagIdx - 1,
-     'tag order: Journal Write-through is the LAST external classic script before the inline monolith');
+  const journalMigrationTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /journal-migration\.js$/.test(String(t.src || '')); });
+  ok(journalMigrationTagIdx >= 0, 'tag order: the Journal Migration owner is present');
+  eq(journalWriteThroughTagIdx, journalMigrationTagIdx - 1,
+     'tag order: Journal Write-through is immediately before Journal Migration');
+  eq(journalMigrationTagIdx, inlineTagIdx - 1,
+     'tag order: Journal Migration is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -683,11 +687,11 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // scripts, then the three PRETRADE owners — risk rules, technicals and the risk
 // modal that closed the family — were appended after them. Four MCX owners
 // (market context, VIX market context, backend candles, regime policy) and
-// Journal Core, Journal UI, Journal Remote and Journal Write-through were
-// appended after those, shifting these two by thirteen each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 17,
+// Journal Core, Journal UI, Journal Remote, Journal Write-through and Journal
+// Migration were appended after those, shifting these two by fourteen each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 18,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 16,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 17,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -748,8 +752,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 16,
   eq(journalWriteThroughPart.length, 1, 'ORDER: the Journal Write-through owner is present exactly once');
   eq(PART_RANGES.indexOf(journalRemotePart[0]), PART_RANGES.indexOf(journalWriteThroughPart[0]) - 1,
      'ORDER: Journal Remote is immediately before Journal Write-through');
-  eq(PART_RANGES.indexOf(journalWriteThroughPart[0]), PART_RANGES.length - 2,
-     'ORDER: Journal Write-through is the last application script before the inline monolith');
+  const journalMigrationPart = PART_RANGES.filter(function (r) { return /journal-migration\.js$/.test(r.src); });
+  eq(journalMigrationPart.length, 1, 'ORDER: the Journal Migration owner is present exactly once');
+  eq(PART_RANGES.indexOf(journalWriteThroughPart[0]), PART_RANGES.indexOf(journalMigrationPart[0]) - 1,
+     'ORDER: Journal Write-through is immediately before Journal Migration');
+  eq(PART_RANGES.indexOf(journalMigrationPart[0]), PART_RANGES.length - 2,
+     'ORDER: Journal Migration is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

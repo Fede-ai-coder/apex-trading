@@ -874,7 +874,8 @@ async function main() {
   const JOURNAL_CORE_REL = 'js/services/journal-core.js';
   const JOURNAL_REMOTE_REL = 'js/services/journal-remote-persistence.js';
   const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js';
-  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL, 'js/services/mcx-regime-policy.js', 'js/ui/journal-ui.js', JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL].sort(), 'production footprint is exactly index.html + all four MCX owners + four Journal owners');
+  const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
+  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL, 'js/services/mcx-regime-policy.js', 'js/ui/journal-ui.js', JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL].sort(), 'production footprint is exactly index.html + all four MCX owners + five Journal owners');
   const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', '9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');
 

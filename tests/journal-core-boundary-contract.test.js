@@ -19,6 +19,7 @@ const REGIME_U = require('./lib/mcx-regime-policy-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
+const MIGRATION_U = require('./lib/journal-migration-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = 'dfb8433e8e7b0403fca5a23874dfbc600f5069c4';
@@ -28,6 +29,7 @@ const REGIME_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/mcx-regime-po
 const JOURNAL_UI_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-ui.js'), 'utf8');
 const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const WRITE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-backend-write-through.js'), 'utf8');
+const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -61,6 +63,7 @@ const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
+const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -121,8 +124,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n',
-  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n',
+  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> Migration -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(JOURNAL_TAG), 'Journal Core tag is classic synchronous src-only form');
@@ -229,7 +232,8 @@ section('6. snapshot/tagging and analytics semantics remain callable from inline
 }
 
 section('7. byte-exact undo and mutation-sensitive negative controls');
-const preWrite = WRITE_U.undoJournalBackendWriteThrough(INDEX, WRITE_MODULE);
+const preMigration = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+const preWrite = WRITE_U.undoJournalBackendWriteThrough(preMigration, WRITE_MODULE);
 const preRemote = REMOTE_U.undoJournalRemotePersistence(preWrite, REMOTE_MODULE);
 const preJournalUi = JOURNAL_UI_U.undoJournalUi(preRemote, JOURNAL_UI_MODULE);
 const preRegime = REGIME_U.undoMcxRegimePolicy(preJournalUi, REGIME_MODULE);

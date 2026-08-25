@@ -251,7 +251,8 @@ const MCX_BACKEND_CANDLES_REL='js/services/mcx-backend-candles.js';
 const JOURNAL_CORE_REL='js/services/journal-core.js';
 const JOURNAL_REMOTE_REL='js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL='js/services/journal-backend-write-through.js';
-same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + all four MCX owners + four Journal owners');
+const JOURNAL_MIGRATION_REL='js/services/journal-migration.js';
+same(changedProduction,['index.html',MODULE_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL,JOURNAL_MIGRATION_REL].sort(),'production footprint is exactly index.html + technical owner + risk-modal owner + all four MCX owners + five Journal owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 ok(!maintenanceScopeChanged.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no bootstrap workflow/script changed after the CI maintenance baseline');
 
