@@ -1,14 +1,10 @@
 'use strict';
 
-// Read-only audit for the next extraction after Journal Remote Persistence
-// (#398). This file deliberately changes no production source. It selects the
-// exact write-through bridge that patches the legacy Journal CRUD functions and
-// the terminal journalManager methods, proves its classic-script load contract,
-// inventories consumers/test fallout, and rejects the adjacent migration and
-// manual-import policies as separate owners.
-//
-// The audit is temporary: the extraction PR must replace it with a permanent
-// boundary contract and a byte-exact undo helper.
+// Permanent contract for the Journal backend write-through extraction after
+// the merged read-only audit (#399). One exact classic-script bridge owns the
+// legacy Journal CRUD wrappers, backend payload normalization, and terminal
+// journalManager patches. Migration, manual import, and backup UI remain inline
+// as separate policy/UI owners.
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -18,13 +14,14 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
+const U = require('./lib/journal-backend-write-through-undo.js');
+const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
-const BASE_SHA = '6022a42c79a18712584a3726c4851052bb47c358';
-const BASE_TREE = '65cf3eda90dd812fb8916579fd0059ae8142faa0';
-const AUDIT_REL = 'tests/temporary-journal-backend-write-through-audit.test.js';
-const FUTURE_MODULE_REL = 'js/services/journal-backend-write-through.js';
-const FUTURE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
+const BASE_SHA = '9dc2148f91e0ae12aa405f2488b16ab9e03922ef';
+const BASE_TREE = '0769a850de8cbd4c5d93c915ce10081fc23a8438';
+const MODULE_REL = 'js/services/journal-backend-write-through.js';
+const MODULE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 
 const CORE_TAG = '<script src="./js/services/journal-core.js"></script>';
 const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
@@ -80,26 +77,28 @@ const EXPECTED_FREE_IDENTIFIERS = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT,
   encoding: 'utf8',
   maxBuffer: 32 * 1024 * 1024,
 });
 
-const wrapperAt = INDEX.indexOf(WRAPPER_MARKER);
-const managerAt = INDEX.indexOf(MANAGER_MARKER);
-const migrationAt = INDEX.indexOf(MIGRATION_MARKER);
-const manualImportAt = INDEX.indexOf(MANUAL_IMPORT_MARKER);
-const backupAt = INDEX.indexOf(BACKUP_MARKER);
+const wrapperAt = BASE.indexOf(WRAPPER_MARKER);
+const managerAt = BASE.indexOf(MANAGER_MARKER);
+const migrationAt = BASE.indexOf(MIGRATION_MARKER);
+const manualImportAt = BASE.indexOf(MANUAL_IMPORT_MARKER);
+const backupAt = BASE.indexOf(BACKUP_MARKER);
 const candidateEnd = migrationAt - 1; // Keep one separator LF with migration.
-const CANDIDATE = INDEX.slice(wrapperAt, candidateEnd);
-const OUTSIDE_INDEX = INDEX.slice(0, wrapperAt) + INDEX.slice(candidateEnd);
+const CANDIDATE = BASE.slice(wrapperAt, candidateEnd);
+const OUTSIDE_BASE = BASE.slice(0, wrapperAt) + BASE.slice(candidateEnd);
 
 const APP_PARTS = APP_LOADER.loadOrderedScriptSources()
   .filter((part) => part.isAppJs && part.code != null)
   .map((part) => ({
     name: part.kind === 'inline' ? 'index.html:inline' : part.src,
-    code: part.kind === 'inline' ? part.code.replace(CANDIDATE, '\n') : part.code,
+    code: part.src === './js/services/journal-backend-write-through.js' ? '\n' : part.code,
   }));
 
 let pass = 0;
@@ -144,17 +143,6 @@ function externalUsage(name) {
     where: part.name,
     refs: identifierCountMasked(maskLiterals(part.code), name),
   })).filter((entry) => entry.refs > 0);
-}
-function changedPaths() {
-  const committed = execFileSync('git', ['diff', '--name-only', BASE_SHA + '...HEAD'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean);
-  const status = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
-  return Array.from(new Set(committed.concat(status))).sort();
 }
 function topLevelShape(source) {
   return scanTopLevelDeclarations(source).map((entry) => ({
@@ -268,7 +256,7 @@ function loadCandidate(source, omitted) {
   if (omitted) delete sandbox[omitted];
   try {
     vm.createContext(sandbox);
-    vm.runInContext(source, sandbox, { filename: FUTURE_MODULE_REL });
+    vm.runInContext(source, sandbox, { filename: MODULE_REL });
     return { ok: true, error: null, sandbox, legacy };
   } catch (error) {
     return { ok: false, error: String(error && error.message || error), sandbox, legacy };
@@ -301,11 +289,11 @@ function boundaryViolations(source, outsideSource) {
 
 function futureOrderViolations(html) {
   const violations = [];
-  if (countLiteral(html, FUTURE_TAG) !== 1) violations.push('tag-count');
+  if (countLiteral(html, MODULE_TAG) !== 1) violations.push('tag-count');
   const coreAt = html.indexOf(CORE_TAG);
   const uiAt = html.indexOf(UI_TAG);
   const remoteAt = html.indexOf(REMOTE_TAG);
-  const futureAt = html.indexOf(FUTURE_TAG);
+  const futureAt = html.indexOf(MODULE_TAG);
   const inlineAt = html.indexOf(INLINE_OPEN);
   if (!(coreAt >= 0 && coreAt < uiAt && uiAt < remoteAt && remoteAt < futureAt && futureAt < inlineAt)) {
     violations.push('load-order');
@@ -315,40 +303,38 @@ function futureOrderViolations(html) {
   return violations;
 }
 
-console.log('JOURNAL BACKEND WRITE-THROUGH AUDIT');
+console.log('JOURNAL BACKEND WRITE-THROUGH BOUNDARY CONTRACT');
 console.log('base=' + BASE_SHA);
 
-section('1. Pinned base and production scope');
+section('1. Pinned audit base and exact contiguous relocation identity');
 eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{commit}'], {
   cwd: ROOT, encoding: 'utf8',
-}).trim(), BASE_SHA, 'merged #398 base resolves exactly');
+}).trim(), BASE_SHA, 'merged #399 audit base resolves exactly');
 eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{tree}'], {
   cwd: ROOT, encoding: 'utf8',
-}).trim(), BASE_TREE, 'merged #398 tree resolves exactly');
-eq(INDEX, BASE, 'audit leaves production index.html byte-identical to #398');
-eq(INDEX.length, 1964275, 'post-#398 index UTF-16 length is pinned');
-eq(sha256(INDEX), 'bf7ad9d7c3a7cc2e0975e6e06b1af0ef5383232433cab5e56b75cdac7fbac973',
-  'post-#398 index SHA-256 is pinned');
-eq(changedPaths(), [AUDIT_REL], 'audit changes exactly one temporary test file');
-ok(!fs.existsSync(path.join(ROOT, FUTURE_MODULE_REL)), 'audit creates no runtime module');
-eq(countLiteral(INDEX, FUTURE_TAG), 0, 'audit adds no production script tag');
+}).trim(), BASE_TREE, 'merged #399 audit tree resolves exactly');
+eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches undo pin');
+eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches undo pin');
 
 section('2. Exact selected write-through boundary');
 for (const marker of [WRAPPER_MARKER, MANAGER_MARKER, MIGRATION_MARKER, MANUAL_IMPORT_MARKER, BACKUP_MARKER]) {
-  eq(countLiteral(INDEX, marker), 1, 'boundary marker is unique: ' + marker.split('\n')[0]);
+  eq(countLiteral(BASE, marker), 1, 'audit-base boundary marker is unique: ' + marker.split('\n')[0]);
 }
 ok(wrapperAt < managerAt && managerAt < migrationAt && migrationAt < manualImportAt && manualImportAt < backupAt,
   'physical order is wrappers -> manager patches -> migration -> manual import -> backup UI');
 eq(wrapperAt, 1932553, 'candidate starts at exact post-#398 offset');
 eq(candidateEnd, 1940536, 'candidate ends at exact post-#398 offset');
-eq(lineAt(INDEX, wrapperAt), 34026, 'candidate starts on line 34026');
-eq(lineAt(INDEX, candidateEnd), 34221, 'candidate ends on line 34221');
+eq(lineAt(BASE, wrapperAt), 34026, 'candidate starts on line 34026');
+eq(lineAt(BASE, candidateEnd), 34221, 'candidate ends on line 34221');
 eq(CANDIDATE.length, 7983, 'candidate has exact UTF-16 length');
 eq(sha256(CANDIDATE), '6d2bc369ed33d45e9f4eb99ab85a597e59fba4f84c4642431f5a413206857d1d',
   'candidate byte identity is pinned');
 ok(CANDIDATE.endsWith('})();\n'), 'candidate ends with the complete manager patch IIFE and one LF');
-eq(INDEX.slice(candidateEnd, migrationAt + MIGRATION_MARKER.length), '\n' + MIGRATION_MARKER,
+eq(BASE.slice(candidateEnd, migrationAt + MIGRATION_MARKER.length), '\n' + MIGRATION_MARKER,
   'one separator LF and the migration marker stay inline');
+eq(MODULE.length, U.MODULE_CHARS, 'module length matches the audited slice');
+eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the audited slice');
+eq(MODULE, CANDIDATE, 'module is byte-for-byte the complete audited slice');
 eq(topLevelShape(CANDIDATE), [
   { name: '_jAddTradeOrig', form: 'var', isAsync: false },
   { name: '_jUpdateTradeOrig', form: 'var', isAsync: false },
@@ -378,33 +364,34 @@ eq((candidateMasked.match(/\bjDeleteRemote\s*\(/g) || []).length, 3, 'three dele
 eq((candidateMasked.match(/\.bind\s*\(/g) || []).length, 9, 'all nine original manager methods are bound before patching');
 eq((candidateMasked.match(/\(function\s*\(\)\s*\{/g) || []).length, 1, 'one load-time manager patch IIFE is exact');
 
-section('3. Intentional load-time effects and future classic slot');
-const load = loadCandidate(CANDIDATE);
-ok(load.ok, 'candidate loads with the exact Journal Core surface: ' + load.error);
+section('3. Intentional load-time effects and exact classic slot');
+const load = loadCandidate(MODULE);
+ok(load.ok, 'module loads with the exact Journal Core surface: ' + load.error);
 eq(load.sandbox._jAddTradeOrig, load.legacy.jAddTrade, 'legacy add alias captures the original function');
 eq(load.sandbox._jUpdateTradeOrig, load.legacy.jUpdateTrade, 'legacy update alias captures the original function');
 eq(load.sandbox._jDeleteTradeOrig, load.legacy.jDeleteTrade, 'legacy delete alias captures the original function');
 for (const required of ['jAddTrade', 'jUpdateTrade', 'jDeleteTrade', 'journalManager']) {
-  ok(!loadCandidate(CANDIDATE, required).ok, 'classic load fails closed when required Core symbol is absent: ' + required);
+  ok(!loadCandidate(MODULE, required).ok, 'classic load fails closed when required Core symbol is absent: ' + required);
 }
-ok(loadCandidate(CANDIDATE).ok,
+ok(loadCandidate(MODULE).ok,
   'Journal Remote delegates are call-time dependencies and need not be mocked for classic evaluation');
 
-eq(countLiteral(INDEX, REMOTE_TAG + '\n<script>'), 1,
-  'Journal Remote currently loads immediately before the residual inline script');
-const indexWithoutCandidate = INDEX.slice(0, wrapperAt) + INDEX.slice(candidateEnd);
-const FUTURE_INDEX = indexWithoutCandidate.replace(
+const baseWithoutCandidate = BASE.slice(0, wrapperAt) + BASE.slice(candidateEnd);
+const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
-  REMOTE_TAG + '\n' + FUTURE_TAG + '\n<script>'
+  REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-eq(FUTURE_INDEX.length, 1956363, 'future index UTF-16 length is deterministic');
-eq(sha256(FUTURE_INDEX), 'f6f7cc5518e8744bca359c47ec24e40f1c206b988e10ab1a4ae2c824f8b607bc',
-  'future post-extraction index SHA-256 is deterministic');
-eq(futureOrderViolations(FUTURE_INDEX), [],
-  'future order is Core -> UI -> Remote -> Write-through -> inline with one classic tag');
-const futureWithoutTag = FUTURE_INDEX.replace(REMOTE_TAG + '\n' + FUTURE_TAG + '\n<script>', REMOTE_TAG + '\n<script>');
-eq(futureWithoutTag.slice(0, wrapperAt) + CANDIDATE + futureWithoutTag.slice(wrapperAt), INDEX,
-  'future tag removal plus byte-exact slice insertion reconstructs #398');
+eq(INDEX, expectedIndex, 'current index is exactly audit base minus slice plus one classic tag');
+eq(INDEX.length, 1956363, 'post-extraction index UTF-16 length is pinned');
+eq(sha256(INDEX), 'f6f7cc5518e8744bca359c47ec24e40f1c206b988e10ab1a4ae2c824f8b607bc',
+  'post-extraction index SHA-256 is pinned');
+eq(futureOrderViolations(INDEX), [],
+  'order is Core -> UI -> Remote -> Write-through -> inline with one classic tag');
+eq(countLiteral(INDEX, WRAPPER_MARKER), 0, 'legacy wrapper marker has zero inline residue');
+eq(countLiteral(INDEX, MANAGER_MARKER), 0, 'manager patch marker has zero inline residue');
+eq(countLiteral(INDEX, MIGRATION_MARKER), 1, 'migration marker remains inline exactly once');
+eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 1, 'manual import marker remains inline exactly once');
+eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'backup UI marker remains inline exactly once');
 
 section('4. External ownership and consumers');
 eq(externalUsage('_jAddTradeOrig'), [], 'legacy add alias has no outside consumer');
@@ -424,7 +411,7 @@ eq(externalUsage('jDeleteTrade'), [
   { where: './js/services/journal-core.js', refs: 1 },
   { where: './js/ui/journal-ui.js', refs: 1 },
 ], 'legacy delete owner and UI consumer remain explicit');
-eq(laterGlobalPatchCount(OUTSIDE_INDEX), 0,
+eq(laterGlobalPatchCount(OUTSIDE_BASE), 0,
   'no later inline reassignment competes with the selected write-through bridge');
 
 section('5. Real bridge behavior through mocks');
@@ -494,7 +481,7 @@ async function verifyBehavior() {
     journalManager: jm,
   };
   vm.createContext(sandbox);
-  vm.runInContext(CANDIDATE, sandbox, { filename: FUTURE_MODULE_REL });
+  vm.runInContext(MODULE, sandbox, { filename: MODULE_REL });
 
   eq(sandbox._jAddTradeOrig, legacyAdd, 'runtime alias keeps the original legacy add function');
   eq(sandbox._jUpdateTradeOrig, legacyUpdate, 'runtime alias keeps the original legacy update function');
@@ -556,10 +543,10 @@ async function verifyBehavior() {
 }
 
 section('6. Rejected adjacent owners and extraction fallout');
-const wrapperOnly = INDEX.slice(wrapperAt, managerAt - 1);
-const managerOnly = INDEX.slice(managerAt, candidateEnd);
-const migrationOnly = INDEX.slice(migrationAt, manualImportAt - 1);
-const manualOnly = INDEX.slice(manualImportAt, backupAt - 1);
+const wrapperOnly = BASE.slice(wrapperAt, managerAt - 1);
+const managerOnly = BASE.slice(managerAt, candidateEnd);
+const migrationOnly = BASE.slice(migrationAt, manualImportAt - 1);
+const manualOnly = BASE.slice(manualImportAt, backupAt - 1);
 eq(legacyPatchNames(wrapperOnly), LEGACY_PATCHES, 'wrapper-only slice has all three legacy patches');
 eq(managerPatchNames(wrapperOnly), [], 'wrapper-only slice omits all manager terminal patches');
 eq(legacyPatchNames(managerOnly), [], 'manager-only slice omits all legacy patches');
@@ -570,7 +557,7 @@ ok(maskLiterals(migrationOnly).includes('isApexPreviewOrLocalEnv'),
   'migration alone owns the preview/local auto-upload gate');
 ok(maskLiterals(manualOnly).includes('window.apexImportJournalTradesJson'),
   'manual import alone owns an explicit console/window exposure');
-eq(boundaryViolations(CANDIDATE, OUTSIDE_INDEX), [], 'selected boundary passes every semantic ownership gate');
+eq(boundaryViolations(MODULE, OUTSIDE_BASE), [], 'extracted module passes every semantic ownership gate');
 
 const loaderAwareConsumers = [
   'tests/journal-import-json.test.js',
@@ -590,56 +577,84 @@ const contractsToAdvance = [
 ];
 for (const rel of contractsToAdvance) {
   const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  ok(source.includes('journal-remote-persistence.js'), rel + ' pins the current tail and must advance in extraction');
+  ok(source.includes('journal-backend-write-through.js'), rel + ' advances to the current classic-script tail');
 }
 const directInlineContract = fs.readFileSync(path.join(ROOT, 'tests/journal-backend-save-confirm.test.js'), 'utf8');
-ok(directInlineContract.includes("HTML.indexOf('journalManager → Backend Sync Layer')"),
-  'save-confirm contract has one direct inline marker slice to replace with ordered app source');
+ok(directInlineContract.includes('load-app-source') && directInlineContract.includes('journal-backend-write-through.js'),
+  'save-confirm contract reads the extracted write-through module explicitly');
+ok(!directInlineContract.includes("HTML.indexOf('journalManager → Backend Sync Layer')"),
+  'save-confirm contract no longer depends on an inline marker window');
 
-section('7. Mutation-sensitive negative controls');
-ok(boundaryViolations(CANDIDATE.replace('var _jAddTradeOrig = jAddTrade;\n', ''), OUTSIDE_INDEX).includes('manifest'),
+section('7. Byte-exact undo, cumulative history and negative controls');
+const rebuilt = U.undoJournalBackendWriteThrough(INDEX, MODULE);
+eq(rebuilt, BASE, 'write-through undo reconstructs merged #399 base byte-for-byte');
+eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
+const preRemote = REMOTE_U.undoJournalRemotePersistence(rebuilt, REMOTE_MODULE);
+eq(preRemote.length, REMOTE_U.BASE_CHARS, 'cumulative undo reaches the pre-Remote base');
+eq(sha256(preRemote), REMOTE_U.BASE_SHA256, 'cumulative undo hash matches the pre-Remote base');
+assert.throws(() => U.undoJournalBackendWriteThrough(INDEX, MODULE + ' '), /MODULE_IDENTITY/);
+pass++;
+assert.throws(() => U.undoJournalBackendWriteThrough(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+  /TAG_IDENTITY/);
+pass++;
+assert.throws(() => U.undoJournalBackendWriteThrough(INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
+pass++;
+
+ok(boundaryViolations(MODULE.replace('var _jAddTradeOrig = jAddTrade;\n', ''), OUTSIDE_BASE).includes('manifest'),
   'missing legacy alias mutant is rejected');
-ok(boundaryViolations(CANDIDATE.replace('jm.remove = function(id)', 'jm.removeTrade = function(id)'), OUTSIDE_INDEX)
+ok(boundaryViolations(MODULE.replace('jm.remove = function(id)', 'jm.removeTrade = function(id)'), OUTSIDE_BASE)
   .includes('manager-patches'), 'renamed manager patch mutant is rejected');
-ok(boundaryViolations(CANDIDATE + '\nfunction foreignWriteThroughOwner() {}\n', OUTSIDE_INDEX).includes('manifest'),
+ok(boundaryViolations(MODULE + '\nfunction foreignWriteThroughOwner() {}\n', OUTSIDE_BASE).includes('manifest'),
   'foreign top-level owner mutant is rejected');
-ok(boundaryViolations(CANDIDATE + '\ndocument.body;\n', OUTSIDE_INDEX).includes('foreign-direct-effect'),
+ok(boundaryViolations(MODULE + '\ndocument.body;\n', OUTSIDE_BASE).includes('foreign-direct-effect'),
   'foreign DOM effect mutant is rejected');
-ok(boundaryViolations(CANDIDATE + '\njSaveRemote({});\n', OUTSIDE_INDEX).includes('load-contract'),
+ok(boundaryViolations(MODULE + '\njSaveRemote({});\n', OUTSIDE_BASE).includes('load-contract'),
   'top-level remote invocation mutant is rejected by minimal classic load');
-ok(boundaryViolations(CANDIDATE + '\n' + migrationOnly, OUTSIDE_INDEX).includes('owner-overreach'),
+ok(boundaryViolations(MODULE + '\n' + migrationOnly, OUTSIDE_BASE).includes('owner-overreach'),
   'migration overreach mutant is rejected');
-ok(boundaryViolations(CANDIDATE, OUTSIDE_INDEX + '\njAddTrade = function() {};\n').includes('later-global-patch'),
+ok(boundaryViolations(MODULE, OUTSIDE_BASE + '\njAddTrade = function() {};\n').includes('later-global-patch'),
   'competing later legacy patch mutant is rejected');
-ok(sha256(CANDIDATE.replace('delete t.live;', 'delete t.notes;')) !== sha256(CANDIDATE),
+ok(sha256(MODULE.replace('delete t.live;', 'delete t.notes;')) !== sha256(MODULE),
   'same-length payload mutation is rejected by the identity pin');
 
-ok(futureOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG + '\n', '')).includes('tag-count'),
-  'missing future tag mutant is rejected');
-ok(futureOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG, FUTURE_TAG + '\n' + FUTURE_TAG)).includes('tag-count'),
-  'duplicate future tag mutant is rejected');
-ok(futureOrderViolations(FUTURE_INDEX.replace(
-  REMOTE_TAG + '\n' + FUTURE_TAG,
-  FUTURE_TAG + '\n' + REMOTE_TAG
-)).includes('load-order'), 'future tag before Journal Remote mutant is rejected');
-ok(futureOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG, FUTURE_TAG.replace('>', ' defer>')))
-  .includes('classic-tag'), 'deferred future tag mutant is rejected');
+ok(futureOrderViolations(INDEX.replace(MODULE_TAG + '\n', '')).includes('tag-count'),
+  'missing module tag mutant is rejected');
+ok(futureOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG)).includes('tag-count'),
+  'duplicate module tag mutant is rejected');
+ok(futureOrderViolations(INDEX.replace(
+  REMOTE_TAG + '\n' + MODULE_TAG,
+  MODULE_TAG + '\n' + REMOTE_TAG
+)).includes('load-order'), 'module tag before Journal Remote mutant is rejected');
+ok(futureOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG.replace('>', ' defer>')))
+  .includes('classic-tag'), 'deferred module tag mutant is rejected');
 eq(identifierCountMasked(maskLiterals('// _tradeForBackend\n"_tradeForBackend"; _tradeForBackendCopy;'), '_tradeForBackend'), 0,
   'identifier inventory ignores comments, strings and suffix collisions');
+
+section('8. Production scope and temporary-audit replacement');
+const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
+  cwd: ROOT, encoding: 'utf8',
+}).trim().split(/\r?\n/).filter(Boolean);
+const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
+eq(changedProduction, ['index.html', MODULE_REL].sort(),
+  'production footprint is exactly index.html plus the write-through module');
+ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
+  'no workflow or bootstrap script changed');
+eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,
+  'temporary audit is removed by the extraction');
 
 const report = {
   base: {
     commit: BASE_SHA,
     tree: BASE_TREE,
-    indexChars: INDEX.length,
-    indexSha256: sha256(INDEX),
+    indexChars: BASE.length,
+    indexSha256: sha256(BASE),
   },
   selected: {
-    futureModule: FUTURE_MODULE_REL,
+    module: MODULE_REL,
     start: wrapperAt,
     end: candidateEnd,
-    startLine: lineAt(INDEX, wrapperAt),
-    endLine: lineAt(INDEX, candidateEnd),
+    startLine: lineAt(BASE, wrapperAt),
+    endLine: lineAt(BASE, candidateEnd),
     chars: CANDIDATE.length,
     sha256: sha256(CANDIDATE),
     topLevelOwners: TOP_LEVEL_OWNERS,
@@ -653,22 +668,22 @@ const report = {
     backupPanel: 'DOM UI and backup transport owner',
   },
   extractionContract: {
-    productionFiles: ['index.html', FUTURE_MODULE_REL],
+    productionFiles: ['index.html', MODULE_REL],
     permanentTest: 'tests/journal-backend-write-through-boundary-contract.test.js',
     undoHelper: 'tests/lib/journal-backend-write-through-undo.js',
-    futureIndexChars: FUTURE_INDEX.length,
-    futureIndexSha256: sha256(FUTURE_INDEX),
+    currentIndexChars: INDEX.length,
+    currentIndexSha256: sha256(INDEX),
     contractsToAdvance,
     loaderAwareConsumers,
   },
 };
 
 verifyBehavior().then(() => {
-  console.log('\nJOURNAL_BACKEND_WRITE_THROUGH_AUDIT_BEGIN');
+  console.log('\nJOURNAL_BACKEND_WRITE_THROUGH_CONTRACT_BEGIN');
   console.log(JSON.stringify(report, null, 2));
-  console.log('JOURNAL_BACKEND_WRITE_THROUGH_AUDIT_END');
+  console.log('JOURNAL_BACKEND_WRITE_THROUGH_CONTRACT_END');
   console.log('\n' + pass + ' assertions passed');
-  console.log('JOURNAL_BACKEND_WRITE_THROUGH_AUDIT_OK');
+  console.log('JOURNAL_BACKEND_WRITE_THROUGH_BOUNDARY_CONTRACT_OK');
 }).catch((error) => {
   console.error(error && error.stack || error);
   process.exitCode = 1;

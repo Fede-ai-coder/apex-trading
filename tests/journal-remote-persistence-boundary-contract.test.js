@@ -5,8 +5,8 @@
 // Audited base: dev-clean @ b82d2c8c616e91eff7197faf017ebc1451ced723
 // Scope: relocation only. Two state bindings and six async functions move as
 // one contiguous byte-identical slice. The adjacent CRUD wrappers and the
-// journalManager/backend sync layer deliberately remain inline because they
-// perform load-time aliasing/reassignment.
+// journalManager/backend sync layer later moved together into their own
+// ordered classic-script bridge because they perform load-time patching.
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -16,12 +16,14 @@ const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
+const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = 'b82d2c8c616e91eff7197faf017ebc1451ced723';
 const MODULE_REL = 'js/services/journal-remote-persistence.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const JOURNAL_UI_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-ui.js'), 'utf8');
+const WRITE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-backend-write-through.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -42,6 +44,7 @@ const JOURNAL_CORE_TAG = '<script src="./js/services/journal-core.js"></script>'
 const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
+const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -134,10 +137,11 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n<script>',
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
-eq(INDEX, expectedIndex, 'current index is exactly base minus slice plus one classic tag');
-eq(INDEX.length, 1964275, 'post-extraction index UTF-16 length is pinned');
-eq(sha256(INDEX), 'bf7ad9d7c3a7cc2e0975e6e06b1af0ef5383232433cab5e56b75cdac7fbac973',
-  'post-extraction index SHA-256 is pinned');
+const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(INDEX, WRITE_MODULE);
+eq(preWriteIndex, expectedIndex, 'newest undo reaches exactly base minus Remote slice plus its classic tag');
+eq(preWriteIndex.length, 1964275, 'post-Remote/pre-Write-through index UTF-16 length is pinned');
+eq(sha256(preWriteIndex), 'bf7ad9d7c3a7cc2e0975e6e06b1af0ef5383232433cab5e56b75cdac7fbac973',
+  'post-Remote/pre-Write-through index SHA-256 is pinned');
 
 section('2. ownership — zero inline residue and one app-wide declaration');
 for (const name of FUNCTIONS) {
@@ -161,22 +165,28 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n',
-  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> inline');
-ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) && INDEX.indexOf(REMOTE_TAG) < inlineAt,
-  'Journal Remote loads synchronously after Journal UI and before inline consumers');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n',
+  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> inline');
+ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
+  INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) && INDEX.indexOf(WRITE_TAG) < inlineAt,
+  'Journal Remote loads synchronously after Journal UI and before Write-through + inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(REMOTE_TAG), 'Journal Remote tag is classic synchronous src-only form');
 eq(count(INDEX, REMOTE_MARKER), 0, 'remote service marker has zero inline residue');
 eq(count(MODULE, REMOTE_MARKER), 1, 'remote service marker belongs to the module exactly once');
-eq(count(INDEX, WRAPPER_MARKER), 1, 'CRUD wrapper marker remains inline');
-eq(count(INDEX, MANAGER_MARKER), 1, 'journalManager sync marker remains inline');
+eq(count(INDEX, WRAPPER_MARKER), 0, 'CRUD wrapper marker has zero inline residue');
+eq(count(INDEX, MANAGER_MARKER), 0, 'journalManager sync marker has zero inline residue');
+eq(count(WRITE_MODULE, WRAPPER_MARKER), 1, 'CRUD wrapper marker moved once into Write-through');
+eq(count(WRITE_MODULE, MANAGER_MARKER), 1, 'manager sync marker moved once into Write-through');
 for (const name of ['_jAddTradeOrig', '_jUpdateTradeOrig', '_jDeleteTradeOrig']) {
-  eq(varDeclCount(INDEX, name), 1, name + ' load-time alias remains inline');
+  eq(varDeclCount(INDEX, name), 0, name + ' load-time alias has zero inline residue');
   eq(varDeclCount(MODULE, name), 0, name + ' is excluded from the service');
+  eq(varDeclCount(WRITE_MODULE, name), 1, name + ' moved once into Write-through');
 }
 for (const name of ['jAddTrade', 'jUpdateTrade', 'jDeleteTrade']) {
-  eq((INDEX.match(new RegExp('(?:^|\\n)' + name + '\\s*=\\s*function', 'g')) || []).length, 1,
-    name + ' reassignment remains inline exactly once');
+  eq((INDEX.match(new RegExp('(?:^|\\n)' + name + '\\s*=\\s*function', 'g')) || []).length, 0,
+    name + ' reassignment has zero inline residue');
+  eq((WRITE_MODULE.match(new RegExp('(?:^|\\n)' + name + '\\s*=\\s*function', 'g')) || []).length, 1,
+    name + ' reassignment moved exactly once into Write-through');
 }
 
 section('4. classic load is inert; transport effects remain call-time only');
@@ -259,16 +269,16 @@ async function verifyBehavior() {
 }
 
 section('6. byte-exact undo, cumulative history and negative controls');
-const rebuilt = U.undoJournalRemotePersistence(INDEX, MODULE);
+const rebuilt = U.undoJournalRemotePersistence(preWriteIndex, MODULE);
 eq(rebuilt, BASE, 'Journal Remote undo reconstructs merged #397 base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
 const preJournalUi = JOURNAL_UI_U.undoJournalUi(rebuilt, JOURNAL_UI_MODULE);
 eq(preJournalUi.length, JOURNAL_UI_U.BASE_CHARS, 'cumulative undo reaches the pre-Journal-UI base');
 eq(sha256(preJournalUi), JOURNAL_UI_U.BASE_SHA256, 'cumulative undo hash matches pre-Journal-UI base');
-throws(() => U.undoJournalRemotePersistence(INDEX, MODULE + ' '), 'module-byte mutant is rejected');
-throws(() => U.undoJournalRemotePersistence(INDEX.replace(REMOTE_TAG, REMOTE_TAG + '\n' + REMOTE_TAG), MODULE),
+throws(() => U.undoJournalRemotePersistence(preWriteIndex, MODULE + ' '), 'module-byte mutant is rejected');
+throws(() => U.undoJournalRemotePersistence(preWriteIndex.replace(REMOTE_TAG, REMOTE_TAG + '\n' + REMOTE_TAG), MODULE),
   'duplicate-tag mutant is rejected');
-throws(() => U.undoJournalRemotePersistence(INDEX.replace(REMOTE_TAG, ''), MODULE),
+throws(() => U.undoJournalRemotePersistence(preWriteIndex.replace(REMOTE_TAG, ''), MODULE),
   'missing-tag mutant is rejected');
 same(topLevelNames(MODULE + '\nfunction foreignRemoteOwner(){}'), MANIFEST.concat(['foreignRemoteOwner']),
   'manifest scanner exposes a foreign owner mutant');
@@ -289,8 +299,8 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
-same(changedProduction, ['index.html', MODULE_REL].sort(),
-  'production footprint is exactly index.html + Journal Remote module');
+same(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-backend-write-through.js'].sort(),
+  'production footprint is index.html + Journal Remote + later Write-through module');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,

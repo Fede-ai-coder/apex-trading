@@ -17,12 +17,14 @@ const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
+const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '395f19575cdc543b3a370e2168e2e6cfb823a4a7';
 const MODULE_REL = 'js/ui/journal-ui.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
+const WRITE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-backend-write-through.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -65,6 +67,7 @@ const JOURNAL_CORE_TAG = '<script src="./js/services/journal-core.js"></script>'
 const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
+const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -145,12 +148,14 @@ section('3. classic load slot and the later remote-persistence owner');
 const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 const regimeAt = INDEX.indexOf(REGIME_TAG), uiTagAt = INDEX.indexOf(UI_TAG);
 const remoteTagAt = INDEX.indexOf(REMOTE_TAG);
+const writeTagAt = INDEX.indexOf(WRITE_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> inline');
-ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt && inlineAt > remoteTagAt,
-  'Journal UI loads synchronously after Regime Policy and before later Remote + inline consumers');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> inline');
+ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt &&
+  writeTagAt > remoteTagAt && inlineAt > writeTagAt,
+  'Journal UI loads synchronously before later Remote + Write-through + inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(UI_TAG), 'Journal UI tag is classic synchronous src-only form');
 eq(count(INDEX, REMOTE_MARKER), 0, 'remote-persistence marker has zero inline residue after the later extraction');
 eq(count(MODULE, REMOTE_MARKER), 0, 'remote persistence is not pulled into Journal UI');
@@ -202,7 +207,8 @@ eq((MODULE.match(/\blocalStorage\s*\./g) || []).length, 0, 'Journal UI owns no d
 eq((MODULE.match(/\b(?:new\s+)?WebSocket\b/g) || []).length, 0, 'Journal UI owns no WebSocket');
 
 section('5. byte-exact undo and mutation-sensitive negative controls');
-const preRemote = REMOTE_U.undoJournalRemotePersistence(INDEX, REMOTE_MODULE);
+const preWrite = WRITE_U.undoJournalBackendWriteThrough(INDEX, WRITE_MODULE);
+const preRemote = REMOTE_U.undoJournalRemotePersistence(preWrite, REMOTE_MODULE);
 const rebuilt = U.undoJournalUi(preRemote, MODULE);
 eq(rebuilt, BASE, 'Journal UI undo reconstructs the post-#395 base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
@@ -219,8 +225,10 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
-same(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-remote-persistence.js'].sort(),
-  'production footprint is exactly index.html + Journal UI + later Journal Remote module');
+same(changedProduction, [
+  'index.html', MODULE_REL, 'js/services/journal-remote-persistence.js',
+  'js/services/journal-backend-write-through.js',
+].sort(), 'production footprint includes Journal UI + later Remote + Write-through modules');
 ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 

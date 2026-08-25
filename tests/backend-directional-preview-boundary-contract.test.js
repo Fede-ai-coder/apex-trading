@@ -133,6 +133,7 @@ const EIC_LIVE_DEEP_DIVE_REL = './js/ui/eic-live-deep-dive.js';
 const PRETRADE_RISK_MODAL_REL = './js/ui/pretrade-risk-modal.js';
 const JOURNAL_UI_REL = './js/ui/journal-ui.js';
 const JOURNAL_REMOTE_REL = './js/services/journal-remote-persistence.js';
+const JOURNAL_WRITE_THROUGH_REL = './js/services/journal-backend-write-through.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2328,7 +2329,12 @@ section('30. physical script order');
   const iJournalRemote = srcs.indexOf(JOURNAL_REMOTE_REL);
   ok(iJournalRemote >= 0, 'index.html loads the Journal Remote script');
   eq(iJournalUi, iJournalRemote - 1, 'ORDER: Journal UI is immediately before Journal Remote');
-  eq(iJournalRemote, srcs.length - 2, 'ORDER: Journal Remote is the LAST external script before the inline monolith');
+  const iJournalWriteThrough = srcs.indexOf(JOURNAL_WRITE_THROUGH_REL);
+  ok(iJournalWriteThrough >= 0, 'index.html loads the Journal Write-through script');
+  eq(iJournalRemote, iJournalWriteThrough - 1,
+     'ORDER: Journal Remote is immediately before Journal Write-through');
+  eq(iJournalWriteThrough, srcs.length - 2,
+     'ORDER: Journal Write-through is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2400,7 +2406,12 @@ section('30. physical script order');
   const journalRemoteTagIdx = TAGS.findIndex(function (t) { return /journal-remote-persistence\.js$/.test(clean(t.src)); });
   ok(journalRemoteTagIdx >= 0, 'tag order: the Journal Remote owner is present');
   eq(journalUiTagIdx, journalRemoteTagIdx - 1, 'tag order: Journal UI is immediately before Journal Remote');
-  eq(journalRemoteTagIdx, inlineTagIdx - 1, 'tag order: Journal Remote is the LAST script tag before the inline monolith');
+  const journalWriteThroughTagIdx = TAGS.findIndex(function (t) { return /journal-backend-write-through\.js$/.test(clean(t.src)); });
+  ok(journalWriteThroughTagIdx >= 0, 'tag order: the Journal Write-through owner is present');
+  eq(journalRemoteTagIdx, journalWriteThroughTagIdx - 1,
+     'tag order: Journal Remote is immediately before Journal Write-through');
+  eq(journalWriteThroughTagIdx, inlineTagIdx - 1,
+     'tag order: Journal Write-through is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');

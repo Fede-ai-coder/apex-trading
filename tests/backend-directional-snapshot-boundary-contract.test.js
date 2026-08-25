@@ -223,6 +223,7 @@ const JOURNAL_EXTRACTION_SCRIPTS = [
   './js/services/journal-core.js',
   './js/ui/journal-ui.js',
   './js/services/journal-remote-persistence.js',
+  './js/services/journal-backend-write-through.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2721,8 +2722,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 48,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and three Journal extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 49,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and four Journal extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2912,8 +2913,9 @@ function topLevelDeclarations(code) {
   deepEq(withTopLevel.map(function (p) { return p.name; }),
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat([
       './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
+      './js/services/journal-backend-write-through.js',
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals and Journal UI state');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state and the audited Journal Write-through patches');
   const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
   ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
   const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
@@ -3058,15 +3060,16 @@ deepEq(BASE_NO_DSB.filter(function (p) {
   // service to be evaluated BEFORE the monolith. Note the exposure is wrapped in
   // try/catch, so a wrong script order would NOT throw: it would silently leave the
   // debug handle undefined. This predicate is what makes that order regression loud.
-  eq(deps.length, 12, 'the real document has exactly 12 cross-script LOAD-TIME dependencies (9 historical + 3 Journal CRUD bindings)');
+  eq(deps.length, 12, 'the real document has exactly 12 cross-script LOAD-TIME dependencies (9 historical + 3 Journal CRUD bindings evaluated by Write-through)');
   deepEq(deps.map(function (d) { return d.name; }).sort(),
     ['_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
      '_isTransientFetchError', '_ttCallWithRetry', 'apexDebugBackendDirectionalPreview',
      'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot',
      'apexDebugSfsDetailChart', 'jAddTrade', 'jDeleteTrade', 'jUpdateTrade'],
     'the 12 identifiers the inline monolith evaluates at load time from earlier modules');
-  deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))), ['INLINE'],
-    'ALL cross-script load-time dependencies belong to the inline monolith — no module depends on another at load time');
+  deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))),
+    ['./js/services/journal-backend-write-through.js', 'INLINE'],
+    'cross-script load-time dependencies belong exactly to Journal Write-through and the inline monolith');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.provider; }))).sort(),
     ['./js/api/backend-client.js', './js/services/backend-directional-snapshot-service.js',
      './js/services/candle-normalization.js', './js/services/journal-core.js', './js/services/sfs-scan-service.js',

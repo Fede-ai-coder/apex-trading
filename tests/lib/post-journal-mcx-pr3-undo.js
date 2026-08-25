@@ -1,18 +1,23 @@
 'use strict';
-// Current-app reconstruction bridge after Journal Remote + Journal UI +
-// Regime Policy + Journal Core.
+// Current-app reconstruction bridge after Journal Write-through + Journal
+// Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Journal Remote relocation first, then Journal UI, Regime Policy,
-// Journal Core, and finally delegate to the original MCX3 identity guard. All
-// layers remain independently fail-closed.
+// newest Write-through relocation first, then Journal Remote, Journal UI,
+// Regime Policy, Journal Core, and finally delegate to the original MCX3
+// identity guard. All layers remain independently fail-closed.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_WRITE_THROUGH = require('./journal-backend-write-through-undo.js');
 const JOURNAL_REMOTE = require('./journal-remote-persistence-undo.js');
 const JOURNAL_UI = require('./journal-ui-undo.js');
 const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_WRITE_THROUGH_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-backend-write-through.js'),
+  'utf8'
+);
 const JOURNAL_REMOTE_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-remote-persistence.js'),
   'utf8'
@@ -31,9 +36,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preJournalRemote = JOURNAL_REMOTE.isApplied(html)
-    ? JOURNAL_REMOTE.undoJournalRemotePersistence(html, JOURNAL_REMOTE_SOURCE)
+  const preWriteThrough = JOURNAL_WRITE_THROUGH.isApplied(html)
+    ? JOURNAL_WRITE_THROUGH.undoJournalBackendWriteThrough(html, JOURNAL_WRITE_THROUGH_SOURCE)
     : html;
+  const preJournalRemote = JOURNAL_REMOTE.isApplied(preWriteThrough)
+    ? JOURNAL_REMOTE.undoJournalRemotePersistence(preWriteThrough, JOURNAL_REMOTE_SOURCE)
+    : preWriteThrough;
   const preJournalUi = JOURNAL_UI.isApplied(preJournalRemote)
     ? JOURNAL_UI.undoJournalUi(preJournalRemote, JOURNAL_UI_SOURCE)
     : preJournalRemote;
