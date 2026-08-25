@@ -4,9 +4,10 @@
 //
 // Audited base: dev-clean @ 395f19575cdc543b3a370e2168e2e6cfb823a4a7
 // Scope: relocation only. One contiguous 42-owner block moves out of the
-// monolith. Journal Core remains in its service; remote persistence, backend
-// sync/migration and the HTML entry point deliberately remain outside this UI
-// owner. The module is a classic synchronous script and is inert at load time.
+// monolith. Journal Core remains in its service; remote persistence later moved
+// to its own service, while wrapper/sync/migration effects and the HTML entry
+// point deliberately remain outside this UI owner. The module is a classic
+// synchronous script and is inert at load time.
 // ─────────────────────────────────────────────────────────────────────────────
 const fs = require('fs');
 const path = require('path');
@@ -15,11 +16,13 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/journal-ui-undo.js');
+const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '395f19575cdc543b3a370e2168e2e6cfb823a4a7';
 const MODULE_REL = 'js/ui/journal-ui.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -51,7 +54,7 @@ const MANIFEST = [
   'jDecisionColor', 'jGradeColor',
 ];
 const REMOTE_FUNCTIONS = [
-  'jSaveRemote', 'jUpdateRemote', 'jDeleteRemote', 'jSyncToBackend', 'jLoadFromBackend',
+  'jSaveRemote', 'jEnrichedDryRun', 'jUpdateRemote', 'jDeleteRemote', 'jSyncToBackend', 'jLoadFromBackend',
 ];
 const REMOTE_STATE = ['jSyncing', 'jLastSync'];
 
@@ -61,6 +64,7 @@ const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
 const JOURNAL_CORE_TAG = '<script src="./js/services/journal-core.js"></script>';
 const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
+const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -137,25 +141,31 @@ eq(identifierCount(baseOutside, 'jFilter'), 0, 'jFilter has no true identifier r
 eq(count(baseOutside, 'jFilter'), 3, 'the three raw outside matches remain jFilterPortfolio collisions');
 eq(count(BASE, 'jFilterPortfolio'), 3, 'jFilterPortfolio collision count is pinned independently');
 
-section('3. classic load slot and intentionally retained remote-persistence owner');
+section('3. classic load slot and the later remote-persistence owner');
 const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 const regimeAt = INDEX.indexOf(REGIME_TAG), uiTagAt = INDEX.indexOf(UI_TAG);
+const remoteTagAt = INDEX.indexOf(REMOTE_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> Regime -> Journal UI -> inline');
-ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && inlineAt > uiTagAt,
-  'Journal UI loads synchronously after Regime Policy and before residual inline code');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> inline');
+ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt && inlineAt > remoteTagAt,
+  'Journal UI loads synchronously after Regime Policy and before later Remote + inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(UI_TAG), 'Journal UI tag is classic synchronous src-only form');
-eq(count(INDEX, REMOTE_MARKER), 1, 'remote-persistence marker remains inline exactly once');
+eq(count(INDEX, REMOTE_MARKER), 0, 'remote-persistence marker has zero inline residue after the later extraction');
 eq(count(MODULE, REMOTE_MARKER), 0, 'remote persistence is not pulled into Journal UI');
+eq(count(REMOTE_MODULE, REMOTE_MARKER), 1, 'remote persistence belongs to its later service exactly once');
 for (const name of REMOTE_FUNCTIONS) {
-  eq(fnCount(INDEX, name), 1, name + ' remains inline exactly once');
+  eq(fnCount(INDEX, name), 0, name + ' has zero inline residue after the later extraction');
+  eq(fnCount(REMOTE_MODULE, name), 1, name + ' moved exactly once into Journal Remote');
   eq(fnCount(MODULE, name), 0, name + ' is not pulled into Journal UI');
+  eq(fnCount(APP, name), 1, name + ' has exactly one app-wide declaration');
 }
 for (const name of REMOTE_STATE) {
-  eq(varDeclCount(INDEX, name), 1, name + ' remains inline exactly once');
+  eq(varDeclCount(INDEX, name), 0, name + ' has zero inline residue after the later extraction');
+  eq(varDeclCount(REMOTE_MODULE, name), 1, name + ' moved exactly once into Journal Remote');
   eq(varDeclCount(MODULE, name), 0, name + ' is not pulled into Journal UI');
+  eq(varDeclCount(APP, name), 1, name + ' has exactly one app-wide declaration');
 }
 eq(identifierCount(MODULE, 'jLoadFromBackend'), 1, 'background load remains a call-time dependency');
 eq(identifierCount(MODULE, 'jSyncToBackend'), 1, 'sync after import remains a call-time dependency');
@@ -192,23 +202,25 @@ eq((MODULE.match(/\blocalStorage\s*\./g) || []).length, 0, 'Journal UI owns no d
 eq((MODULE.match(/\b(?:new\s+)?WebSocket\b/g) || []).length, 0, 'Journal UI owns no WebSocket');
 
 section('5. byte-exact undo and mutation-sensitive negative controls');
-const rebuilt = U.undoJournalUi(INDEX, MODULE);
+const preRemote = REMOTE_U.undoJournalRemotePersistence(INDEX, REMOTE_MODULE);
+const rebuilt = U.undoJournalUi(preRemote, MODULE);
 eq(rebuilt, BASE, 'Journal UI undo reconstructs the post-#395 base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
-throws(() => U.undoJournalUi(INDEX, MODULE + ' '), 'module-byte mutant is rejected');
-throws(() => U.undoJournalUi(INDEX.replace(UI_TAG, UI_TAG + '\n' + UI_TAG), MODULE),
+throws(() => U.undoJournalUi(preRemote, MODULE + ' '), 'module-byte mutant is rejected');
+throws(() => U.undoJournalUi(preRemote.replace(UI_TAG, UI_TAG + '\n' + UI_TAG), MODULE),
   'duplicate-tag mutant is rejected');
-throws(() => U.undoJournalUi(INDEX.replace(UI_TAG, ''), MODULE), 'missing-tag mutant is rejected');
+throws(() => U.undoJournalUi(preRemote.replace(UI_TAG, ''), MODULE), 'missing-tag mutant is rejected');
 same(topLevelNames(MODULE + '\nfunction foreignJournalUiOwner(){}'), MANIFEST.concat(['foreignJournalUiOwner']),
   'manifest scanner exposes a foreign top-level owner mutant');
 ok(fnCount(INDEX + '\n' + baseSlice, 'runJournalPanel') > 0, 'inline-duplication mutant is visible to zero-residue guard');
 
 section('6. production scope');
-const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], {
+const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
-same(changedProduction, ['index.html', MODULE_REL].sort(), 'production footprint is exactly index.html + Journal UI module');
+same(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-remote-persistence.js'].sort(),
+  'production footprint is exactly index.html + Journal UI + later Journal Remote module');
 ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 
