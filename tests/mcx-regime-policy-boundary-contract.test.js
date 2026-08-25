@@ -15,12 +15,14 @@ const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/mcx-regime-policy-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
+const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '72a2c5759e17a3fd0477f62724d6fd4490be1c8f';
 const MODULE_REL = 'js/services/mcx-regime-policy.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const JOURNAL_UI_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-ui.js'), 'utf8');
+const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -72,6 +74,7 @@ const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
 const JOURNAL_TAG = '<script src="./js/services/journal-core.js"></script>';
 const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
+const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -132,13 +135,14 @@ for (const name of STATE.concat(FUNCTIONS)) {
 section('3. exact classic load slot and intentionally retained owners');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const journalAt = INDEX.indexOf(JOURNAL_TAG), regimeAt = INDEX.indexOf(REGIME_TAG);
-const journalUiAt = INDEX.indexOf(JOURNAL_UI_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
+const journalUiAt = INDEX.indexOf(JOURNAL_UI_TAG), remoteAt = INDEX.indexOf(REMOTE_TAG);
+const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal -> Regime Policy -> Journal UI -> inline');
-ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt && journalUiAt > regimeAt && inlineAt > journalUiAt,
-  'Regime Policy loads synchronously after Journal Core and before Journal UI / residual inline code');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal -> Regime Policy -> Journal UI -> Journal Remote -> inline');
+ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt && journalUiAt > regimeAt && remoteAt > journalUiAt && inlineAt > remoteAt,
+  'Regime Policy loads synchronously after Journal Core and before Journal UI / Journal Remote / residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(REGIME_TAG), 'Regime Policy tag is classic synchronous src-only form');
 for (const name of INLINE_TRANSITION.concat(INLINE_RENDER)) {
   eq(fnCount(INDEX, name), 1, name + ' deliberately remains inline exactly once');
@@ -206,7 +210,8 @@ section('5. regime classification and conditional-risk semantics are unchanged')
 }
 
 section('6. byte-exact undo and mutation-sensitive negative controls');
-const preJournalUi = JOURNAL_UI_U.undoJournalUi(INDEX, JOURNAL_UI_MODULE);
+const preRemote = REMOTE_U.undoJournalRemotePersistence(INDEX, REMOTE_MODULE);
+const preJournalUi = JOURNAL_UI_U.undoJournalUi(preRemote, JOURNAL_UI_MODULE);
 const rebuilt = U.undoMcxRegimePolicy(preJournalUi, MODULE);
 eq(rebuilt, BASE, 'Regime Policy undo reconstructs audited base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');

@@ -637,7 +637,10 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   const journalUiTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /journal-ui\.js$/.test(String(t.src || '')); });
   ok(journalUiTagIdx >= 0, 'tag order: the Journal UI owner is present');
   eq(regimeTagIdx, journalUiTagIdx - 1, 'tag order: Regime Policy is immediately before Journal UI');
-  eq(journalUiTagIdx, inlineTagIdx - 1, 'tag order: Journal UI is the LAST external classic script before the inline monolith');
+  const journalRemoteTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /journal-remote-persistence\.js$/.test(String(t.src || '')); });
+  ok(journalRemoteTagIdx >= 0, 'tag order: the Journal Remote owner is present');
+  eq(journalUiTagIdx, journalRemoteTagIdx - 1, 'tag order: Journal UI is immediately before Journal Remote');
+  eq(journalRemoteTagIdx, inlineTagIdx - 1, 'tag order: Journal Remote is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -675,11 +678,11 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // scripts, then the three PRETRADE owners — risk rules, technicals and the risk
 // modal that closed the family — were appended after them. Four MCX owners
 // (market context, VIX market context, backend candles, regime policy) and
-// Journal Core and Journal UI were appended after those, shifting these two by
-// eleven each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 15,
+// Journal Core, Journal UI and Journal Remote were appended after those,
+// shifting these two by twelve each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 16,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 14,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 15,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -732,8 +735,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 14,
   eq(journalUiPart.length, 1, 'ORDER: the Journal UI owner is present exactly once');
   eq(PART_RANGES.indexOf(regimePart[0]), PART_RANGES.indexOf(journalUiPart[0]) - 1,
      'ORDER: Regime Policy is immediately before Journal UI');
-  eq(PART_RANGES.indexOf(journalUiPart[0]), PART_RANGES.length - 2,
-     'ORDER: Journal UI is the last application script before the inline monolith');
+  const journalRemotePart = PART_RANGES.filter(function (r) { return /journal-remote-persistence\.js$/.test(r.src); });
+  eq(journalRemotePart.length, 1, 'ORDER: the Journal Remote owner is present exactly once');
+  eq(PART_RANGES.indexOf(journalUiPart[0]), PART_RANGES.indexOf(journalRemotePart[0]) - 1,
+     'ORDER: Journal UI is immediately before Journal Remote');
+  eq(PART_RANGES.indexOf(journalRemotePart[0]), PART_RANGES.length - 2,
+     'ORDER: Journal Remote is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,
