@@ -17,6 +17,7 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
+const MIGRATION_U = require('./lib/journal-migration-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = 'b82d2c8c616e91eff7197faf017ebc1451ced723';
@@ -24,6 +25,7 @@ const MODULE_REL = 'js/services/journal-remote-persistence.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const JOURNAL_UI_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-ui.js'), 'utf8');
 const WRITE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-backend-write-through.js'), 'utf8');
+const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -45,6 +47,7 @@ const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
+const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -137,7 +140,8 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n<script>',
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
-const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(INDEX, WRITE_MODULE);
+const preMigrationIndex = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(preMigrationIndex, WRITE_MODULE);
 eq(preWriteIndex, expectedIndex, 'newest undo reaches exactly base minus Remote slice plus its classic tag');
 eq(preWriteIndex.length, 1964275, 'post-Remote/pre-Write-through index UTF-16 length is pinned');
 eq(sha256(preWriteIndex), 'bf7ad9d7c3a7cc2e0975e6e06b1af0ef5383232433cab5e56b75cdac7fbac973',
@@ -165,11 +169,12 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n',
-  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> inline');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n',
+  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> Migration -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
-  INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) && INDEX.indexOf(WRITE_TAG) < inlineAt,
-  'Journal Remote loads synchronously after Journal UI and before Write-through + inline consumers');
+  INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
+  INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) && INDEX.indexOf(MIGRATION_TAG) < inlineAt,
+  'Journal Remote loads synchronously before Write-through, Migration, and inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(REMOTE_TAG), 'Journal Remote tag is classic synchronous src-only form');
 eq(count(INDEX, REMOTE_MARKER), 0, 'remote service marker has zero inline residue');
 eq(count(MODULE, REMOTE_MARKER), 1, 'remote service marker belongs to the module exactly once');
@@ -299,8 +304,10 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
-same(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-backend-write-through.js'].sort(),
-  'production footprint is index.html + Journal Remote + later Write-through module');
+same(changedProduction, [
+  'index.html', MODULE_REL, 'js/services/journal-backend-write-through.js',
+  'js/services/journal-migration.js',
+].sort(), 'production footprint is index.html + Journal Remote + later Write-through and Migration modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,
