@@ -135,6 +135,7 @@ const JOURNAL_UI_REL = './js/ui/journal-ui.js';
 const JOURNAL_REMOTE_REL = './js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL = './js/services/journal-backend-write-through.js';
 const JOURNAL_MIGRATION_REL = './js/services/journal-migration.js';
+const JOURNAL_MANUAL_IMPORT_REL = './js/services/journal-manual-import.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2338,8 +2339,12 @@ section('30. physical script order');
   ok(iJournalMigration >= 0, 'index.html loads the Journal Migration script');
   eq(iJournalWriteThrough, iJournalMigration - 1,
      'ORDER: Journal Write-through is immediately before Journal Migration');
-  eq(iJournalMigration, srcs.length - 2,
-     'ORDER: Journal Migration is the LAST external script before the inline monolith');
+  const iJournalManualImport = srcs.indexOf(JOURNAL_MANUAL_IMPORT_REL);
+  ok(iJournalManualImport >= 0, 'index.html loads the Journal Manual Import script');
+  eq(iJournalMigration, iJournalManualImport - 1,
+     'ORDER: Journal Migration is immediately before Journal Manual Import');
+  eq(iJournalManualImport, srcs.length - 2,
+     'ORDER: Journal Manual Import is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2416,11 +2421,14 @@ section('30. physical script order');
   eq(journalRemoteTagIdx, journalWriteThroughTagIdx - 1,
      'tag order: Journal Remote is immediately before Journal Write-through');
   const journalMigrationTagIdx = TAGS.findIndex(function (t) { return /journal-migration\.js$/.test(clean(t.src)); });
+  const journalManualImportTagIdx = TAGS.findIndex(function (t) { return /journal-manual-import\.js$/.test(clean(t.src)); });
   ok(journalMigrationTagIdx >= 0, 'tag order: the Journal Migration owner is present');
   eq(journalWriteThroughTagIdx, journalMigrationTagIdx - 1,
      'tag order: Journal Write-through is immediately before Journal Migration');
-  eq(journalMigrationTagIdx, inlineTagIdx - 1,
-     'tag order: Journal Migration is the LAST script tag before the inline monolith');
+  eq(journalMigrationTagIdx, journalManualImportTagIdx - 1,
+     'tag order: Journal Migration is immediately before Journal Manual Import');
+  eq(journalManualImportTagIdx, inlineTagIdx - 1,
+     'tag order: Journal Manual Import is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');

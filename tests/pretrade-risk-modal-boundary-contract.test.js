@@ -530,7 +530,9 @@ eq(harness,0,'no mutation harness errors');
 eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by their intended guard');
 
 section('11. production scope');
-const changed=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+const committedChanged=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+const statusChanged=execFileSync('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:ROOT,encoding:'utf8'}).split(/\r?\n/).filter(Boolean).map(line=>line.slice(3));
+const changed=Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
 // The diff is measured from the pre-modal base, so it now also spans the MCX
 // market-context owner extracted on top. The list stays EXACT and named — an
@@ -543,7 +545,8 @@ const JOURNAL_CORE_REL='js/services/journal-core.js';
 const JOURNAL_REMOTE_REL='js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL='js/services/journal-backend-write-through.js';
 const JOURNAL_MIGRATION_REL='js/services/journal-migration.js';
-same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL,JOURNAL_MIGRATION_REL].sort(),'production footprint is exactly index.html + the modal owner + all four MCX owners + five Journal owners');
+const JOURNAL_MANUAL_IMPORT_REL='js/services/journal-manual-import.js';
+same(changedProduction,['index.html',MODULE_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL,JOURNAL_MIGRATION_REL,JOURNAL_MANUAL_IMPORT_REL].sort(),'production footprint is exactly index.html + the modal owner + all four MCX owners + six Journal owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
 ok(!maintenanceScopeChanged.some(p=>p.startsWith('.github/')||p.startsWith('scripts/')),'no workflow or bootstrap script changed after the CI maintenance baseline');
 ok(!changed.some(p=>p===RULES_REL||p===TECH_REL),'neither earlier PRETRADE owner was modified');

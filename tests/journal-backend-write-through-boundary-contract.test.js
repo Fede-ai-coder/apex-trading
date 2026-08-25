@@ -17,6 +17,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '9dc2148f91e0ae12aa405f2488b16ab9e03922ef';
@@ -24,6 +25,7 @@ const BASE_TREE = '0769a850de8cbd4c5d93c915ce10081fc23a8438';
 const MODULE_REL = 'js/services/journal-backend-write-through.js';
 const MODULE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
+const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 
 const CORE_TAG = '<script src="./js/services/journal-core.js"></script>';
 const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
@@ -82,6 +84,7 @@ const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
+const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT,
   encoding: 'utf8',
@@ -298,9 +301,10 @@ function futureOrderViolations(html) {
   const remoteAt = html.indexOf(REMOTE_TAG);
   const futureAt = html.indexOf(MODULE_TAG);
   const migrationAt = html.indexOf(MIGRATION_TAG);
+  const manualAt = html.indexOf(MANUAL_TAG);
   const inlineAt = html.indexOf(INLINE_OPEN);
   if (!(coreAt >= 0 && coreAt < uiAt && uiAt < remoteAt && remoteAt < futureAt &&
-        futureAt < migrationAt && migrationAt < inlineAt)) {
+        futureAt < migrationAt && migrationAt < manualAt && manualAt < inlineAt)) {
     violations.push('load-order');
   }
   const tag = APP_LOADER.parseScriptTags(html).find((entry) => entry.src === './js/services/journal-backend-write-through.js');
@@ -386,19 +390,21 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-const preMigrationIndex = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1951961, 'current post-Migration index UTF-16 length is pinned');
-eq(sha256(INDEX), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
-  'current post-Migration index SHA-256 is pinned');
+eq(INDEX.length, 1944246, 'current post-Manual-Import index UTF-16 length is pinned');
+eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+  'current post-Manual-Import index SHA-256 is pinned');
 eq(futureOrderViolations(INDEX), [],
-  'order is Core -> UI -> Remote -> Write-through -> Migration -> inline');
+  'order is Core -> UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
 eq(countLiteral(INDEX, WRAPPER_MARKER), 0, 'legacy wrapper marker has zero inline residue');
 eq(countLiteral(INDEX, MANAGER_MARKER), 0, 'manager patch marker has zero inline residue');
 eq(countLiteral(INDEX, MIGRATION_MARKER), 0, 'migration marker has zero inline residue after its later extraction');
 eq(countLiteral(MIGRATION_MODULE, MIGRATION_MARKER), 1, 'migration marker lives in its later module exactly once');
-eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 1, 'manual import marker remains inline exactly once');
+eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 0, 'manual import marker has zero inline residue');
+eq(countLiteral(MANUAL_MODULE, MANUAL_IMPORT_MARKER), 1, 'manual import marker lives in its module exactly once');
 eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'backup UI marker remains inline exactly once');
 
 section('4. External ownership and consumers');
@@ -407,8 +413,8 @@ eq(externalUsage('_jUpdateTradeOrig'), [], 'legacy update alias has no outside c
 eq(externalUsage('_jDeleteTradeOrig'), [], 'legacy delete alias has no outside consumer');
 eq(externalUsage('_tradeForBackend'), [
   { where: './js/services/journal-migration.js', refs: 1 },
-  { where: 'index.html:inline', refs: 1 },
-], 'payload normalizer has one Migration-module consumer and one inline manual-import consumer');
+  { where: './js/services/journal-manual-import.js', refs: 1 },
+], 'payload normalizer has one Migration-module consumer and one Manual-Import-module consumer');
 eq(externalUsage('jAddTrade'), [
   { where: './js/services/journal-core.js', refs: 1 },
   { where: './js/ui/journal-ui.js', refs: 1 },
@@ -642,12 +648,18 @@ eq(identifierCountMasked(maskLiterals('// _tradeForBackend\n"_tradeForBackend"; 
   'identifier inventory ignores comments, strings and suffix collisions');
 
 section('8. Production scope and temporary-audit replacement');
-const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
+const committedChanged = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
   cwd: ROOT, encoding: 'utf8',
 }).trim().split(/\r?\n/).filter(Boolean);
+const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+  cwd: ROOT, encoding: 'utf8',
+}).split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
+const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
-eq(changedProduction, ['index.html', MODULE_REL, 'js/services/journal-migration.js'].sort(),
-  'production footprint is index.html plus Write-through and the later Migration module');
+eq(changedProduction, [
+  'index.html', MODULE_REL, 'js/services/journal-migration.js',
+  'js/services/journal-manual-import.js'
+].sort(), 'production footprint is index.html plus Write-through, Migration, and Manual Import');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,

@@ -19,6 +19,7 @@ const BASE_SHA = '450f792be44caa6a537e68f3d16b211f9fc2cacc';
 const BASE_TREE = '55dd52392c00956e4893d195e6edd7f6636c6e14';
 const MODULE_REL = 'js/services/journal-migration.js';
 const MODULE_TAG = '<script src="./js/services/journal-migration.js"></script>';
+const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const CONTRACT_REL = 'tests/journal-migration-boundary-contract.test.js';
 const UNDO_REL = 'tests/lib/journal-migration-undo.js';
 
@@ -61,6 +62,10 @@ const EXPECTED_DEPENDENCIES = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
+const MANUAL_U = require('./lib/journal-manual-import-undo.js');
+const MANUAL_MODULE = fs.readFileSync(
+  path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8'
+);
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const WRITE_MODULE = fs.readFileSync(
   path.join(ROOT, 'js/services/journal-backend-write-through.js'), 'utf8'
@@ -265,9 +270,10 @@ function moduleOrderViolations(html) {
   const remoteAt = html.indexOf(REMOTE_TAG);
   const writeAt = html.indexOf(WRITE_TAG);
   const moduleAt = html.indexOf(MODULE_TAG);
+  const manualAt = html.indexOf(MANUAL_TAG);
   const inlineAt = html.indexOf(INLINE_OPEN);
   if (!(coreAt >= 0 && coreAt < uiAt && uiAt < remoteAt && remoteAt < writeAt &&
-        writeAt < moduleAt && moduleAt < inlineAt)) {
+        writeAt < moduleAt && moduleAt < manualAt && manualAt < inlineAt)) {
     violations.push('load-order');
   }
   const tags = APP_LOADER.parseScriptTags(html)
@@ -377,9 +383,9 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1951961, 'post-extraction index UTF-16 length is pinned');
-eq(sha256(INDEX), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
-  'post-extraction index SHA-256 is pinned');
+eq(INDEX.length, 1944246, 'post-Manual-Import index UTF-16 length is pinned');
+eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+  'post-Manual-Import index SHA-256 is pinned');
 eq(countLiteral(INDEX, MODULE_TAG), 1, 'index loads the migration module exactly once');
 
 section('2. Exact selected migration boundary');
@@ -422,7 +428,8 @@ eq(countLiteral(maskLiterals(MODULE), 'isApexPreviewOrLocalEnv()'), 1,
 eq(ownerDeclarationCounts(OUTSIDE_APP), { state: 0, migrate: 0 },
   'no competing migration owner remains elsewhere in application source');
 eq(countLiteral(INDEX, MIGRATION_MARKER), 0, 'migration marker has zero inline residue');
-eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 1, 'manual-import marker remains inline exactly once');
+eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 0, 'manual-import marker has zero inline residue');
+eq(countLiteral(MANUAL_MODULE, MANUAL_IMPORT_MARKER), 1, 'manual-import marker lives in its module exactly once');
 eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'Backup/Restore marker remains inline exactly once');
 
 section('3. Inert classic evaluation, exact load order, and reconstruction');
@@ -431,11 +438,12 @@ ok(load.ok, 'module evaluates with zero call-time dependencies present: ' + load
 eq(load.sandbox._jMigrationDone, false, 'classic evaluation initializes only the false session latch');
 eq(typeof load.sandbox.jMigrateApexTradesToBackend, 'function', 'classic evaluation exposes the async owner');
 
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n<script>'), 1,
-  'Migration loads immediately after Write-through and before residual inline code');
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n<script>'), 1,
+  'Migration loads after Write-through and immediately before Manual Import');
 eq(moduleOrderViolations(INDEX), [],
-  'order is Core -> UI -> Remote -> Write-through -> Migration -> inline, with one classic tag');
-const indexWithoutTag = INDEX.replace(
+  'order is Core -> UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
+const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const indexWithoutTag = preManualIndex.replace(
   WRITE_TAG + '\n' + MODULE_TAG + '\n<script>',
   WRITE_TAG + '\n<script>'
 );
@@ -595,24 +603,25 @@ const contractsToAdvance = [
 ];
 for (const rel of contractsToAdvance) {
   const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  ok(source.includes('journal-migration.js') || source.includes('journal-migration\\.js') ||
-     source.includes('five Journal owners'),
-     rel + ' recognizes the fifth Journal owner or the current classic-script tail');
+  ok(source.includes('journal-manual-import.js') ||
+     source.includes('journal-manual-import\\.js') ||
+     source.includes('six Journal owners'),
+     rel + ' recognizes the sixth Journal owner or the current classic-script tail');
 }
 
 section('7. Byte-exact undo and mutation-sensitive negative controls');
-const rebuilt = U.undoJournalMigration(INDEX, MODULE);
+const rebuilt = U.undoJournalMigration(preManualIndex, MODULE);
 eq(rebuilt, BASE, 'migration undo reconstructs merged #401 byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
 const preWrite = WRITE_U.undoJournalBackendWriteThrough(rebuilt, WRITE_MODULE);
 eq(preWrite.length, WRITE_U.BASE_CHARS, 'cumulative undo reaches the pre-Write-through base');
 eq(sha256(preWrite), WRITE_U.BASE_SHA256, 'cumulative undo hash matches the pre-Write-through base');
-assert.throws(() => U.undoJournalMigration(INDEX, MODULE + ' '), /MODULE_IDENTITY/);
+assert.throws(() => U.undoJournalMigration(preManualIndex, MODULE + ' '), /MODULE_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalMigration(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+assert.throws(() => U.undoJournalMigration(preManualIndex.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
   /TAG_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalMigration(INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
+assert.throws(() => U.undoJournalMigration(preManualIndex.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
 pass++;
 
 ok(boundaryViolations(MODULE.replace('var _jMigrationDone = false;\n', ''), OUTSIDE_APP).includes('manifest'),
@@ -653,8 +662,8 @@ eq(identifierCountMasked(maskLiterals(
 section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the Journal Migration owner');
+eq(changedProduction, ['index.html', 'js/services/journal-manual-import.js', MODULE_REL],
+  'production footprint includes index.html plus Migration and the later Manual Import owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Journal Migration contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Journal Migration undo helper is part of the change');
 ok(changed.indexOf('tests/temporary-journal-migration-audit.test.js') >= 0,
