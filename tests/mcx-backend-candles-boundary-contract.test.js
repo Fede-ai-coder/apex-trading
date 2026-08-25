@@ -43,6 +43,7 @@ const MCX1_TAG = '<script src="./js/services/mcx-market-context.js"></script>';
 const MCX2_TAG = '<script src="./js/services/mcx-vix-market-context.js"></script>';
 const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
 const JOURNAL_TAG = '<script src="./js/services/journal-core.js"></script>';
+const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -109,8 +110,8 @@ eq(count(INDEX, MCX2_TAG), 1, 'exactly one MCX2 tag');
 eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
-eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> inline');
+eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> Regime Policy -> inline');
 const journalAt = INDEX.indexOf(JOURNAL_TAG);
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'MCX3 loads synchronously after its predecessors and immediately before Journal Core');

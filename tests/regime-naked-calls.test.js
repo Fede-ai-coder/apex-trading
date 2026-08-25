@@ -20,6 +20,7 @@ const path = require('path');
 const vm   = require('vm');
 
 const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
+const REGIME_POLICY = fs.readFileSync(path.join(__dirname, '..', 'js/services/mcx-regime-policy.js'), 'utf8');
 
 // Extract a raw block of source between startStr (inclusive) and endStr (exclusive).
 function extractBlock(src, startStr, endStr) {
@@ -74,7 +75,7 @@ function makeDom() {
 
 // Build a sandbox with all regime render code defined (no top-level calls run).
 function makeSandbox(dom) {
-  const code = extractBlock(HTML, 'var _REGIME_ADJ_RULES', 'function _mcxDrawVixCurve');
+  const code = REGIME_POLICY + '\n' + extractBlock(HTML, 'var _REGIME_LS_KEY', 'function _mcxDrawVixCurve');
   const sb = {
     document: dom,
     _mcxSpySqzCache: { spy1d: false, spy4h: false },

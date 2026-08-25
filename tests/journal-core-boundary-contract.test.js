@@ -14,11 +14,13 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const APP_LOADER = require('./lib/load-app-source.js');
 const U = require('./lib/journal-core-undo.js');
+const REGIME_U = require('./lib/mcx-regime-policy-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = 'dfb8433e8e7b0403fca5a23874dfbc600f5069c4';
 const MODULE_REL = 'js/services/journal-core.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const REGIME_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/mcx-regime-policy.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
@@ -44,6 +46,7 @@ const MCX1_TAG = '<script src="./js/services/mcx-market-context.js"></script>';
 const MCX2_TAG = '<script src="./js/services/mcx-vix-market-context.js"></script>';
 const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
 const JOURNAL_TAG = '<script src="./js/services/journal-core.js"></script>';
+const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -104,8 +107,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> Regime Policy -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(JOURNAL_TAG), 'Journal Core tag is classic synchronous src-only form');
@@ -203,7 +206,8 @@ section('6. snapshot/tagging and analytics semantics remain callable from inline
 }
 
 section('7. byte-exact undo and mutation-sensitive negative controls');
-const rebuilt = U.undoJournalCore(INDEX, MODULE);
+const preRegime = REGIME_U.undoMcxRegimePolicy(INDEX, REGIME_MODULE);
+const rebuilt = U.undoJournalCore(preRegime, MODULE);
 eq(rebuilt, BASE, 'Journal Core undo reconstructs audited base byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
 throws(() => U.undoJournalCore(INDEX, MODULE + ' '), 'module-byte mutant is rejected');
