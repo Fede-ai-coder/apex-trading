@@ -1104,12 +1104,14 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   const MCX_BACKEND_REL = './js/services/mcx-backend-candles.js';
   const JOURNAL_CORE_REL = './js/services/journal-core.js';
   const REGIME_POLICY_REL = './js/services/mcx-regime-policy.js';
+  const JOURNAL_UI_REL = './js/ui/journal-ui.js';
   eq(idx(PRETRADE_MODAL_REL), idx(MCX_REL) - 1, 'the PRETRADE risk-modal owner is immediately before the MCX market-context owner');
   eq(idx(MCX_REL), idx(MCX_VIX_REL) - 1, 'the MCX market-context owner is immediately before the MCX VIX owner');
   eq(idx(MCX_VIX_REL), idx(MCX_BACKEND_REL) - 1, 'the MCX VIX owner is immediately before the MCX backend-candle owner');
   eq(idx(MCX_BACKEND_REL), idx(JOURNAL_CORE_REL) - 1, 'the MCX backend-candle owner is immediately before Journal Core');
   eq(idx(JOURNAL_CORE_REL), idx(REGIME_POLICY_REL) - 1, 'Journal Core is immediately before Regime Policy');
-  eq(idx(REGIME_POLICY_REL), SCRIPT_ORDER.length - 2, 'Regime Policy is the last external script before the monolith');
+  eq(idx(REGIME_POLICY_REL), idx(JOURNAL_UI_REL) - 1, 'Regime Policy is immediately before Journal UI');
+  eq(idx(JOURNAL_UI_REL), SCRIPT_ORDER.length - 2, 'Journal UI is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1120,8 +1122,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, all four MCX owners and Journal Core before inline');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX, Journal Core, Regime and Journal UI before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -3354,7 +3356,10 @@ section('29. script order');
     './js/services/mcx-vix-market-context.js',
     './js/services/mcx-backend-candles.js',
   ];
-  const JOURNAL_EXTRACTION_SCRIPTS = ['./js/services/journal-core.js'];
+  const JOURNAL_EXTRACTION_SCRIPTS = [
+    './js/services/journal-core.js',
+    './js/ui/journal-ui.js',
+  ];
   const REGIME_POLICY_EXTRACTION_SCRIPTS = ['./js/services/mcx-regime-policy.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
@@ -3376,7 +3381,7 @@ section('29. script order');
     ok(localSrcs.indexOf(src) >= 0, 'the declared EIC extraction module is loaded: ' + src);
   });
   JOURNAL_EXTRACTION_SCRIPTS.forEach(function (src) {
-    ok(localSrcs.indexOf(src) >= 0, 'the declared Journal Core extraction module is loaded: ' + src);
+    ok(localSrcs.indexOf(src) >= 0, 'the declared Journal extraction module is loaded: ' + src);
   });
   REGIME_POLICY_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared Regime Policy extraction module is loaded: ' + src);

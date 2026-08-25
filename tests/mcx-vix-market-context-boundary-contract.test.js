@@ -18,6 +18,7 @@ const MODULE_REL = 'js/services/mcx-vix-market-context.js';
 const MCX1_REL = 'js/services/mcx-market-context.js';
 const MCX3_REL = 'js/services/mcx-backend-candles.js';
 const REGIME_REL = 'js/services/mcx-regime-policy.js';
+const JOURNAL_UI_REL = 'js/ui/journal-ui.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -159,11 +160,13 @@ const tag = '<script src="./' + MODULE_REL + '"></script>';
 const mcx3Tag = '<script src="./' + MCX3_REL + '"></script>';
 const journalTag = '<script src="./js/services/journal-core.js"></script>';
 const regimeTag = '<script src="./' + REGIME_REL + '"></script>';
+const journalUiTag = '<script src="./' + JOURNAL_UI_REL + '"></script>';
 ok((INDEX.split(mcx1Tag).length - 1) === 1, 'exactly one MCX-1 script tag exists');
 ok((INDEX.split(tag).length - 1) === 1, 'exactly one MCX-2 service script tag exists');
 ok((INDEX.split(mcx3Tag).length - 1) === 1, 'exactly one MCX-3 service script tag exists');
 ok((INDEX.split(journalTag).length - 1) === 1, 'exactly one Journal Core script tag exists');
 ok((INDEX.split(regimeTag).length - 1) === 1, 'exactly one Regime Policy script tag exists');
+ok((INDEX.split(journalUiTag).length - 1) === 1, 'exactly one Journal UI script tag exists');
 const mcx1At = INDEX.indexOf(mcx1Tag);
 const tagAt = INDEX.indexOf(tag);
 const nextScriptAt = INDEX.indexOf('<script', tagAt + tag.length);
@@ -187,8 +190,14 @@ const regimeAt = INDEX.indexOf(regimeTag);
 const afterRegimeAt = INDEX.indexOf('<script', regimeAt + regimeTag.length);
 const afterRegimeEnd = afterRegimeAt >= 0 ? INDEX.indexOf('>', afterRegimeAt) : -1;
 const afterRegimeTag = afterRegimeEnd >= 0 ? INDEX.slice(afterRegimeAt, afterRegimeEnd + 1) : '';
-ok(regimeAt > journalAt && afterRegimeAt > regimeAt && !/\bsrc\s*=/i.test(afterRegimeTag),
-  'Regime Policy loads immediately before the residual inline application script');
+ok(regimeAt > journalAt && afterRegimeTag === '<script src="./' + JOURNAL_UI_REL + '">',
+  'Regime Policy loads immediately before Journal UI');
+const journalUiAt = INDEX.indexOf(journalUiTag);
+const afterJournalUiAt = INDEX.indexOf('<script', journalUiAt + journalUiTag.length);
+const afterJournalUiEnd = afterJournalUiAt >= 0 ? INDEX.indexOf('>', afterJournalUiAt) : -1;
+const afterJournalUiTag = afterJournalUiEnd >= 0 ? INDEX.slice(afterJournalUiAt, afterJournalUiEnd + 1) : '';
+ok(journalUiAt > regimeAt && afterJournalUiAt > journalUiAt && !/\bsrc\s*=/i.test(afterJournalUiTag),
+  'Journal UI loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

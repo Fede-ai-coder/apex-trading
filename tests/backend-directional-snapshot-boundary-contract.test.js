@@ -219,7 +219,10 @@ const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-backend-candles.js',
   './js/services/mcx-regime-policy.js',
 ];
-const JOURNAL_EXTRACTION_SCRIPTS = ['./js/services/journal-core.js'];
+const JOURNAL_EXTRACTION_SCRIPTS = [
+  './js/services/journal-core.js',
+  './js/ui/journal-ui.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -2717,8 +2720,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 46,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and Journal Core extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 47,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and two Journal extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2906,8 +2909,10 @@ function topLevelDeclarations(code) {
   // `Object.freeze`, which cannot call an application function, read a shared
   // global or observe load order. That is what the byte budget was approximating.
   deepEq(withTopLevel.map(function (p) { return p.name; }),
-    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat(['./js/services/mcx-regime-policy.js']),
-    'the visible top-level residue is exactly backend-config.js, Stress constants and Regime Policy literal data');
+    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat([
+      './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
+    ]),
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals and Journal UI state');
   const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
   ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
   const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
@@ -2916,6 +2921,12 @@ function topLevelDeclarations(code) {
      'Regime Policy reads NO shared application/browser global at load time');
   const regimePolicyAssignments = regimePolicyTopLevel.match(/(?:^|\n)\s*[A-Za-z_$][A-Za-z0-9_$.]*\s*=/g) || [];
   deepEq(regimePolicyAssignments, [], 'Regime Policy assigns to no pre-existing binding at load time');
+  const journalUiPart = APP_PARTS.find(function (p) { return p.name === './js/ui/journal-ui.js'; });
+  ok(!!journalUiPart, 'Journal UI is present for explicit load-time residue proof');
+  const journalUiTopLevel = stripFunctions(maskSource(journalUiPart.code));
+  ok(!/\(/.test(journalUiTopLevel), 'Journal UI performs NO call at load time');
+  ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(journalUiTopLevel),
+     'Journal UI reads NO shared application/browser global at load time');
   PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(withTopLevel.map(function (p) { return p.name; }).indexOf(src) < 0,
        'the PESS extraction module executes NOTHING at load time: ' + src);
@@ -3461,15 +3472,22 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   const shippedService = SHIPPED_MODULES.find(function (m) { return m.name === SERVICE_SRC; });
   ok(shippedService.declBytes <= SIZE_CEILING,
      'the shipped service (' + shippedService.declBytes + ' B) is UNDER the unchanged ' + SIZE_CEILING + ' B ceiling');
-  // The SFS UI panel (SFS PR 3) overtook the DSB service as the largest shipped
-  // module. Recorded as a fact, and deliberately NOT used to move the ceiling —
-  // the whole point of the audit-time baseline above. It is still under it.
-  eq(SHIPPED_MODULES[0].name, './js/ui/sfs-panel.js',
-     'the SFS UI panel is now the largest shipped module overall — recorded, but deliberately NOT used to move the ceiling');
-  ok(SHIPPED_MODULES[0].declBytes <= SIZE_CEILING,
-     'the SFS UI panel (' + SHIPPED_MODULES[0].declBytes + ' B) is UNDER the unchanged ' + SIZE_CEILING + ' B ceiling');
-  eq(SHIPPED_MODULES[1].name, SERVICE_SRC,
-     'the DSB service is now the second-largest shipped module');
+  // Journal UI is a later, independently audited contiguous owner. It is
+  // recorded but cannot feed back into the historical DSB ceiling. Its rejected
+  // list/view split carried 15 external writes, so the whole-owner decision is
+  // not evidence that DSB option A should be re-ranked retroactively.
+  eq(SHIPPED_MODULES[0].name, './js/ui/journal-ui.js',
+     'the later Journal UI owner is now the largest shipped module overall');
+  eq(SHIPPED_MODULES[0].declBytes, 52971, 'Journal UI declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[0].fileBytes, 54514, 'Journal UI complete file bytes are recorded separately');
+  ok(SHIPPED_MODULES[0].declBytes > SIZE_CEILING,
+     'the later whole-owner Journal UI intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[1].name, './js/ui/sfs-panel.js',
+     'the SFS UI panel is now the second-largest shipped module');
+  ok(SHIPPED_MODULES[1].declBytes <= SIZE_CEILING,
+     'the SFS UI panel remains under the unchanged historical ceiling');
+  eq(SHIPPED_MODULES[2].name, SERVICE_SRC,
+     'the DSB service is now the third-largest shipped module');
 }
 note('secondary metric only — largest complete file: ' + LARGEST_SHIPPED.fileBytes +
      ' B; the ceiling above deliberately does NOT mix the two units');

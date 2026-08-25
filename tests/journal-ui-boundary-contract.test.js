@@ -1,0 +1,217 @@
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// JOURNAL UI — complete UI/export/forms extraction boundary.
+//
+// Audited base: dev-clean @ 395f19575cdc543b3a370e2168e2e6cfb823a4a7
+// Scope: relocation only. One contiguous 42-owner block moves out of the
+// monolith. Journal Core remains in its service; remote persistence, backend
+// sync/migration and the HTML entry point deliberately remain outside this UI
+// owner. The module is a classic synchronous script and is inert at load time.
+// ─────────────────────────────────────────────────────────────────────────────
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+const APP_LOADER = require('./lib/load-app-source.js');
+const U = require('./lib/journal-ui-undo.js');
+
+const ROOT = path.resolve(__dirname, '..');
+const BASE_SHA = '395f19575cdc543b3a370e2168e2e6cfb823a4a7';
+const MODULE_REL = 'js/ui/journal-ui.js';
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const INDEX = APP_LOADER.loadIndexHtml();
+const APP = APP_LOADER.loadAppJavaScriptSource();
+const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
+  cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
+});
+
+const STATE = ['jView', 'jFilter', 'jDetailId', 'jEditLeg', 'J_LEG_TEMPLATES'];
+const FUNCTIONS = [
+  'runJournalPanel', 'renderJournalView', 'jStat', 'jTradeCard', 'jSelectFilter',
+  'renderJournalList', 'showJournalExportModal', 'runJournalExport', '_loadSheetJS',
+  '_jexNum', '_jexStr', '_jexBool', '_jexTradesSummary', '_jexLegs',
+  '_jexAdjustments', '_jexSnapshots', '_jexDataQuality', '_doJournalExcelExport',
+  '_doJournalCSVFallback', 'jField', 'jFieldSelect', 'jFieldArea', 'jSelect',
+  'jInput', 'jPill', 'jAnalyticCard', 'jOnStrategyChange', 'renderJournalAdd',
+  'jSubmitAdd', 'renderJournalEdit', 'jSubmitEdit', 'renderJournalDetail',
+  'jCloseTrade', 'renderJournalAnalytics', 'jQuickCapture', 'jDecisionColor',
+  'jGradeColor',
+];
+const MANIFEST = [
+  'jView', 'jFilter', 'jDetailId', 'jEditLeg',
+  'runJournalPanel', 'renderJournalView', 'jStat', 'jTradeCard', 'jSelectFilter',
+  'renderJournalList', 'showJournalExportModal', 'runJournalExport', '_loadSheetJS',
+  '_jexNum', '_jexStr', '_jexBool', '_jexTradesSummary', '_jexLegs',
+  '_jexAdjustments', '_jexSnapshots', '_jexDataQuality', '_doJournalExcelExport',
+  '_doJournalCSVFallback', 'jField', 'jFieldSelect', 'jFieldArea', 'jSelect',
+  'jInput', 'jPill', 'jAnalyticCard', 'J_LEG_TEMPLATES', 'jOnStrategyChange',
+  'renderJournalAdd', 'jSubmitAdd', 'renderJournalEdit', 'jSubmitEdit',
+  'renderJournalDetail', 'jCloseTrade', 'renderJournalAnalytics', 'jQuickCapture',
+  'jDecisionColor', 'jGradeColor',
+];
+const REMOTE_FUNCTIONS = [
+  'jSaveRemote', 'jUpdateRemote', 'jDeleteRemote', 'jSyncToBackend', 'jLoadFromBackend',
+];
+const REMOTE_STATE = ['jSyncing', 'jLastSync'];
+
+const MCX1_TAG = '<script src="./js/services/mcx-market-context.js"></script>';
+const MCX2_TAG = '<script src="./js/services/mcx-vix-market-context.js"></script>';
+const MCX3_TAG = '<script src="./js/services/mcx-backend-candles.js"></script>';
+const JOURNAL_CORE_TAG = '<script src="./js/services/journal-core.js"></script>';
+const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
+const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
+const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
+const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
+const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
+const HELPERS_MARKER = '// ── UI HELPERS ────────────────────────────────────────────────────\n';
+const QUICK_MARKER = '// ── Quick capture: pre-fill ADD form from current EIC analysis ──────\n';
+const REMOTE_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL REMOTE PERSISTENCE — v1\n';
+
+let pass = 0, fail = 0;
+function ok(v, msg) { if (v) { pass++; console.log('  PASS  ' + msg); } else { fail++; console.log('  FAIL  ' + msg); } }
+function eq(a, b, msg) { ok(a === b, msg + (a === b ? '' : ' (expected ' + JSON.stringify(b) + ', got ' + JSON.stringify(a) + ')')); }
+function same(a, b, msg) { eq(JSON.stringify(a), JSON.stringify(b), msg); }
+function section(s) { console.log('\n' + s); }
+function sha256(s) { return crypto.createHash('sha256').update(s, 'utf8').digest('hex'); }
+function count(src, needle) { let n = 0, p = 0; while ((p = src.indexOf(needle, p)) >= 0) { n++; p += needle.length; } return n; }
+function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function identifierCount(src, name) {
+  return (src.match(new RegExp('(?:^|[^A-Za-z0-9_$])' + esc(name) + '(?![A-Za-z0-9_$])', 'gm')) || []).length;
+}
+function fnCount(src, name) { return (src.match(new RegExp('(?:async\\s+)?function\\s+' + esc(name) + '\\s*\\(', 'g')) || []).length; }
+function varDeclCount(src, name) { return (src.match(new RegExp('(?:^|\\n)\\s*var\\s+' + esc(name) + '\\s*=', 'g')) || []).length; }
+function writeCount(src, name) {
+  const target = esc(name) + '(?:\\s*\\[[^\\]\\n]+\\]|\\.[A-Za-z_$][A-Za-z0-9_$]*)?';
+  return (src.match(new RegExp('(?:^|[^A-Za-z0-9_$])' + target + '\\s*(?:=|\\+=|-=|\\+\\+|--)', 'gm')) || []).length;
+}
+function topLevelNames(src) {
+  const out = [];
+  const re = /^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(|^var\s+([A-Za-z_$][\w$]*)\s*=/gm;
+  let m; while ((m = re.exec(src))) out.push(m[1] || m[2]);
+  return out;
+}
+function throws(fn, msg) { let threw = false; try { fn(); } catch (_) { threw = true; } ok(threw, msg); }
+
+console.log('Journal UI boundary contract');
+console.log('base=' + BASE_SHA);
+
+section('1. pinned base, audited winner and exact contiguous relocation identity');
+eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{commit}'], { cwd: ROOT, encoding: 'utf8' }).trim(), BASE_SHA,
+  'BASE_SHA resolves to the merged post-#395 audit commit');
+eq(BASE.length, U.BASE_CHARS, 'Node UTF-16 base length matches undo pin');
+eq(sha256(BASE), U.BASE_SHA256, 'base SHA-256 matches undo pin');
+const uiAt = BASE.indexOf(UI_MARKER), exportAt = BASE.indexOf(EXPORT_MARKER);
+const helpersAt = BASE.indexOf(HELPERS_MARKER), quickAt = BASE.indexOf(QUICK_MARKER);
+const remoteAt = BASE.indexOf(REMOTE_MARKER);
+ok(uiAt < exportAt && exportAt < helpersAt && helpersAt < quickAt && quickAt < remoteAt,
+  'audited marker order remains UI -> export -> helpers -> quick -> remote persistence');
+eq(uiAt, U.SLICE_AT, 'whole-UI slice starts at the pinned audited offset');
+eq(remoteAt - 1 - uiAt, U.SLICE_CHARS, 'whole-UI slice has the pinned audited length, excluding the retained separator newline');
+eq(BASE[remoteAt - 1], '\n', 'one separator newline remains with the residual monolith');
+const baseSlice = BASE.slice(uiAt, remoteAt - 1);
+eq(sha256(baseSlice), U.SLICE_SHA256, 'audited whole-UI slice SHA-256 matches');
+eq(MODULE.length, U.MODULE_CHARS, 'module length matches audited extraction');
+eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches audited extraction');
+eq(MODULE, baseSlice, 'module is byte-for-byte the complete audited base slice');
+same(topLevelNames(MODULE), MANIFEST, 'module declares exactly the 42 intended owners in physical order');
+const baseOutside = BASE.slice(0, uiAt) + BASE.slice(remoteAt - 1);
+eq(MANIFEST.reduce((n, name) => n + writeCount(baseOutside, name), 0), 0,
+  'whole-UI owner set has zero external writes at the audited base');
+const listOwners = topLevelNames(BASE.slice(uiAt, exportAt));
+eq(listOwners.reduce((n, name) => n + writeCount(BASE.slice(0, uiAt) + '\n' + BASE.slice(exportAt), name), 0), 15,
+  'rejected list/view sub-split remains measurably coupled by 15 external writes');
+
+section('2. ownership — zero inline residue and one app-wide declaration');
+for (const name of FUNCTIONS) {
+  eq(fnCount(INDEX, name), 0, name + ' has zero inline declarations');
+  eq(fnCount(MODULE, name), 1, name + ' is declared once in journal-ui');
+  eq(fnCount(APP, name), 1, name + ' has exactly one app-wide declaration');
+}
+for (const name of STATE) {
+  eq(varDeclCount(INDEX, name), 0, name + ' has zero inline declarations');
+  eq(varDeclCount(MODULE, name), 1, name + ' is declared once in journal-ui');
+  eq(varDeclCount(APP, name), 1, name + ' has exactly one app-wide declaration');
+}
+eq(identifierCount(baseOutside, 'jFilter'), 0, 'jFilter has no true identifier reference outside the audited UI owner');
+eq(count(baseOutside, 'jFilter'), 3, 'the three raw outside matches remain jFilterPortfolio collisions');
+eq(count(BASE, 'jFilterPortfolio'), 3, 'jFilterPortfolio collision count is pinned independently');
+
+section('3. classic load slot and intentionally retained remote-persistence owner');
+const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
+const regimeAt = INDEX.indexOf(REGIME_TAG), uiTagAt = INDEX.indexOf(UI_TAG);
+eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
+eq(INDEX.slice(mcx1At, inlineAt),
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n',
+  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Journal Core -> Regime -> Journal UI -> inline');
+ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && inlineAt > uiTagAt,
+  'Journal UI loads synchronously after Regime Policy and before residual inline code');
+ok(!/\b(?:async|defer|type)\s*=/.test(UI_TAG), 'Journal UI tag is classic synchronous src-only form');
+eq(count(INDEX, REMOTE_MARKER), 1, 'remote-persistence marker remains inline exactly once');
+eq(count(MODULE, REMOTE_MARKER), 0, 'remote persistence is not pulled into Journal UI');
+for (const name of REMOTE_FUNCTIONS) {
+  eq(fnCount(INDEX, name), 1, name + ' remains inline exactly once');
+  eq(fnCount(MODULE, name), 0, name + ' is not pulled into Journal UI');
+}
+for (const name of REMOTE_STATE) {
+  eq(varDeclCount(INDEX, name), 1, name + ' remains inline exactly once');
+  eq(varDeclCount(MODULE, name), 0, name + ' is not pulled into Journal UI');
+}
+eq(identifierCount(MODULE, 'jLoadFromBackend'), 1, 'background load remains a call-time dependency');
+eq(identifierCount(MODULE, 'jSyncToBackend'), 1, 'sync after import remains a call-time dependency');
+eq(count(INDEX, 'onclick="showJournalExportModal()"'), 1, 'HTML export entry point remains unchanged outside the module');
+
+section('4. classic-script evaluation is inert; UI effects remain call-time only');
+try {
+  const sandbox = { console: { log() {}, warn() {}, error() {} } };
+  vm.createContext(sandbox);
+  vm.runInContext(MODULE, sandbox, { filename: MODULE_REL });
+  ok(MANIFEST.every((name) => name in sandbox), 'all 42 globals exist after classic-script evaluation');
+  eq(sandbox.jView, 'list', 'initial Journal view remains list');
+  same(sandbox.jFilter, { strategy:'all', status:'all', decision:'all', grade:'all' }, 'initial Journal filters are unchanged');
+  eq(sandbox.jDetailId, null, 'initial detail id remains null');
+  eq(sandbox.jEditLeg, null, 'initial edit leg remains null');
+  same(Object.keys(sandbox.J_LEG_TEMPLATES),
+    ['EIC','PESS','strangle','bull put spread','bear call spread','bear put spread','bull call spread','Custom'],
+    'strategy template keys and order are unchanged');
+  eq(sandbox._jexNum('1.235', 2), 1.24, 'Excel numeric normalizer remains callable');
+  eq(sandbox._jexStr(null), '', 'Excel string normalizer preserves null handling');
+  eq(sandbox._jexBool(0), 'false', 'Excel boolean normalizer preserves false handling');
+  eq(sandbox.jDecisionColor('APPROVED'), 'var(--gr)', 'decision color policy remains callable');
+  eq(sandbox.jGradeColor('WEAK'), 'var(--rd)', 'grade color policy remains callable');
+} catch (e) {
+  console.log(e && e.stack || e);
+  ok(false, 'module evaluates without touching call-time DOM/backend globals');
+}
+eq((MODULE.match(/\bdocument\s*\./g) || []).length, 52, '52 DOM accesses remain inside function bodies');
+eq((MODULE.match(/\bsetTimeout\s*\(/g) || []).length, 6, 'six timers remain inside function bodies');
+eq((MODULE.match(/\baddEventListener\s*\(/g) || []).length, 6, 'six listener registrations remain inside function bodies');
+eq((MODULE.match(/\bfetch\s*\(/g) || []).length, 0, 'Journal UI owns no fetch call');
+eq((MODULE.match(/\bttCall\s*\(/g) || []).length, 0, 'Journal UI owns no backend transport call');
+eq((MODULE.match(/\blocalStorage\s*\./g) || []).length, 0, 'Journal UI owns no direct localStorage access');
+eq((MODULE.match(/\b(?:new\s+)?WebSocket\b/g) || []).length, 0, 'Journal UI owns no WebSocket');
+
+section('5. byte-exact undo and mutation-sensitive negative controls');
+const rebuilt = U.undoJournalUi(INDEX, MODULE);
+eq(rebuilt, BASE, 'Journal UI undo reconstructs the post-#395 base byte-for-byte');
+eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
+throws(() => U.undoJournalUi(INDEX, MODULE + ' '), 'module-byte mutant is rejected');
+throws(() => U.undoJournalUi(INDEX.replace(UI_TAG, UI_TAG + '\n' + UI_TAG), MODULE),
+  'duplicate-tag mutant is rejected');
+throws(() => U.undoJournalUi(INDEX.replace(UI_TAG, ''), MODULE), 'missing-tag mutant is rejected');
+same(topLevelNames(MODULE + '\nfunction foreignJournalUiOwner(){}'), MANIFEST.concat(['foreignJournalUiOwner']),
+  'manifest scanner exposes a foreign top-level owner mutant');
+ok(fnCount(INDEX + '\n' + baseSlice, 'runJournalPanel') > 0, 'inline-duplication mutant is visible to zero-residue guard');
+
+section('6. production scope');
+const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], {
+  cwd: ROOT, encoding: 'utf8',
+}).trim().split(/\r?\n/).filter(Boolean);
+const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
+same(changedProduction, ['index.html', MODULE_REL].sort(), 'production footprint is exactly index.html + Journal UI module');
+ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
+  'no workflow or bootstrap script changed');
+
+console.log('\n' + pass + ' passed, ' + fail + ' failed');
+if (fail) process.exit(1);
+console.log('JOURNAL UI BOUNDARY CONTRACT: OK');
