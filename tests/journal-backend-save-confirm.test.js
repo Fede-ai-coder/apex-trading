@@ -26,6 +26,10 @@ const path = require('path');
 const vm   = require('vm');
 
 const HTML = require('./lib/load-app-source').loadAppJavaScriptSource();
+const WRITE_THROUGH = fs.readFileSync(
+  path.join(__dirname, '..', 'js', 'services', 'journal-backend-write-through.js'),
+  'utf8'
+);
 
 function extractFn(src, name) {
   for (const prefix of ['async function ', 'function ']) {
@@ -191,11 +195,9 @@ function makeCtx(opts) {
 
   // Manual save path (jm.add sync layer) stashes an awaitable backend promise and is
   // NOT gated by any preview/local predicate.
-  const syncLayerIdx = HTML.indexOf('journalManager → Backend Sync Layer');
-  const syncLayer = HTML.slice(syncLayerIdx, syncLayerIdx + 4000);
-  assert(syncLayer.indexOf('jm._lastBackendWrite = jSaveRemote') !== -1,
+  assert(WRITE_THROUGH.indexOf('jm._lastBackendWrite = jSaveRemote') !== -1,
     '9: sync layer stashes jm._lastBackendWrite for the manual add path');
-  assert(syncLayer.indexOf('isApexPreviewOrLocalEnv') === -1 && syncLayer.indexOf('isApexLocalDevEnv') === -1,
+  assert(WRITE_THROUGH.indexOf('isApexPreviewOrLocalEnv') === -1 && WRITE_THROUGH.indexOf('isApexLocalDevEnv') === -1,
     '9: manual save/update/delete sync layer is NOT preview/local gated');
 
   // Only the bulk migration keeps the broad preview predicate.
