@@ -454,7 +454,8 @@ const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // 43 once PR #389 added js/services/mcx-vix-market-context.js.
 // 44 once MCX PR3 added js/services/mcx-backend-candles.js.
 // 45 once Journal Core moved to js/services/journal-core.js.
-const LOCAL_SCRIPT_COUNT = 45;
+// 46 once MCX Regime Policy moved to js/services/mcx-regime-policy.js.
+const LOCAL_SCRIPT_COUNT = 46;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1358,23 +1359,25 @@ eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), 6, '9.10c the transport module tak
 eq(A.localSrcs.indexOf('./' + BATCH_REL), 7, '9.10c2 the batch panel takes slot 8');
 eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — the last of the four');
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
-eq(A.localSrcs[A.localSrcs.length - 8], './js/ui/backend-directional-snapshot-panel.js',
-  '9.11a the DSB panel remains immediately before the three PRETRADE owners, all three MCX owners and Journal Core');
-eq(A.localSrcs[A.localSrcs.length - 7], './js/services/pretrade-risk-rules.js',
+eq(A.localSrcs[A.localSrcs.length - 9], './js/ui/backend-directional-snapshot-panel.js',
+  '9.11a the DSB panel remains immediately before the three PRETRADE owners, all four MCX owners and Journal Core');
+eq(A.localSrcs[A.localSrcs.length - 8], './js/services/pretrade-risk-rules.js',
   '9.11b the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-eq(A.localSrcs[A.localSrcs.length - 6], './js/services/pretrade-technicals.js',
+eq(A.localSrcs[A.localSrcs.length - 7], './js/services/pretrade-technicals.js',
   '9.11c the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
-eq(A.localSrcs[A.localSrcs.length - 5], './js/ui/pretrade-risk-modal.js',
+eq(A.localSrcs[A.localSrcs.length - 6], './js/ui/pretrade-risk-modal.js',
   '9.11d the PRETRADE risk-modal owner is immediately before the MCX market-context owner');
-eq(A.localSrcs[A.localSrcs.length - 4], './js/services/mcx-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 5], './js/services/mcx-market-context.js',
   '9.11e the MCX market-context owner is immediately before the MCX VIX owner');
-eq(A.localSrcs[A.localSrcs.length - 3], './js/services/mcx-vix-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 4], './js/services/mcx-vix-market-context.js',
   '9.11f the MCX VIX owner is immediately before the MCX backend-candle owner');
-eq(A.localSrcs[A.localSrcs.length - 2], './js/services/mcx-backend-candles.js',
+eq(A.localSrcs[A.localSrcs.length - 3], './js/services/mcx-backend-candles.js',
   '9.11g the MCX backend-candle owner is immediately before Journal Core');
-eq(A.localSrcs[A.localSrcs.length - 1], './js/services/journal-core.js',
-  '9.11h Journal Core is the newest local script before the monolith');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 45 local application scripts, including PRETRADE, MCX and Journal Core owners');
+eq(A.localSrcs[A.localSrcs.length - 2], './js/services/journal-core.js',
+  '9.11h Journal Core is immediately before Regime Policy');
+eq(A.localSrcs[A.localSrcs.length - 1], './js/services/mcx-regime-policy.js',
+  '9.11i Regime Policy is the newest local script before the monolith');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 46 local application scripts, including PRETRADE, four MCX and Journal Core owners');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3555,14 +3558,15 @@ const GUARDS = [
     r.localSrcs.indexOf('./' + UI_REL) === r.localSrcs.indexOf('./' + BATCH_REL) + 1],
   ['pess-module-count', (r) => r.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).length === 4],
   ['local-script-count', (r) => r.localSrcs.length === LOCAL_SCRIPT_COUNT],
-  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 8] === './js/ui/backend-directional-snapshot-panel.js' &&
-    r.localSrcs[r.localSrcs.length - 7] === './js/services/pretrade-risk-rules.js' &&
-    r.localSrcs[r.localSrcs.length - 6] === './js/services/pretrade-technicals.js' &&
-    r.localSrcs[r.localSrcs.length - 5] === './js/ui/pretrade-risk-modal.js' &&
-    r.localSrcs[r.localSrcs.length - 4] === './js/services/mcx-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 3] === './js/services/mcx-vix-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 2] === './js/services/mcx-backend-candles.js' &&
-    r.localSrcs[r.localSrcs.length - 1] === './js/services/journal-core.js'],
+  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 9] === './js/ui/backend-directional-snapshot-panel.js' &&
+    r.localSrcs[r.localSrcs.length - 8] === './js/services/pretrade-risk-rules.js' &&
+    r.localSrcs[r.localSrcs.length - 7] === './js/services/pretrade-technicals.js' &&
+    r.localSrcs[r.localSrcs.length - 6] === './js/ui/pretrade-risk-modal.js' &&
+    r.localSrcs[r.localSrcs.length - 5] === './js/services/mcx-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 4] === './js/services/mcx-vix-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 3] === './js/services/mcx-backend-candles.js' &&
+    r.localSrcs[r.localSrcs.length - 2] === './js/services/journal-core.js' &&
+    r.localSrcs[r.localSrcs.length - 1] === './js/services/mcx-regime-policy.js'],
   ['config-slot', (r) => r.localSrcs.indexOf('./' + CONFIG_REL) === 5],
   ['ui-slot', (r) => r.localSrcs.indexOf('./' + UI_REL) === 8],
   ['ratchet', (r) => r.inlinePess.length === RATCHET_AFTER],

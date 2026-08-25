@@ -217,6 +217,7 @@ const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-market-context.js',
   './js/services/mcx-vix-market-context.js',
   './js/services/mcx-backend-candles.js',
+  './js/services/mcx-regime-policy.js',
 ];
 const JOURNAL_EXTRACTION_SCRIPTS = ['./js/services/journal-core.js'];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
@@ -2716,8 +2717,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 45,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, three MCX and Journal Core extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 46,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and Journal Core extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2905,8 +2906,16 @@ function topLevelDeclarations(code) {
   // `Object.freeze`, which cannot call an application function, read a shared
   // global or observe load order. That is what the byte budget was approximating.
   deepEq(withTopLevel.map(function (p) { return p.name; }),
-    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS),
-    'of the extracted modules, only backend-config.js and the Stress companion constants execute anything at load time');
+    ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat(['./js/services/mcx-regime-policy.js']),
+    'the visible top-level residue is exactly backend-config.js, Stress constants and Regime Policy literal data');
+  const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
+  ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
+  const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
+  ok(!/\(/.test(regimePolicyTopLevel), 'Regime Policy performs NO call at load time');
+  ok(!/(?<![A-Za-z0-9_$.])(?:S|WL|BACKEND|window|globalThis|document|localStorage)(?![A-Za-z0-9_$])/.test(regimePolicyTopLevel),
+     'Regime Policy reads NO shared application/browser global at load time');
+  const regimePolicyAssignments = regimePolicyTopLevel.match(/(?:^|\n)\s*[A-Za-z_$][A-Za-z0-9_$.]*\s*=/g) || [];
+  deepEq(regimePolicyAssignments, [], 'Regime Policy assigns to no pre-existing binding at load time');
   PESS_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(withTopLevel.map(function (p) { return p.name; }).indexOf(src) < 0,
        'the PESS extraction module executes NOTHING at load time: ' + src);
