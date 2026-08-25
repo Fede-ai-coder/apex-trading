@@ -419,6 +419,7 @@ const CONFIG_REL = 'js/services/pess-config-rules.js';
 const TRANSPORT_REL = 'js/services/pess-live-transport.js';
 const BATCH_REL = 'js/ui/pess-batch-panel.js';
 const UI_REL = 'js/ui/pess-panel.js';
+const JOURNAL_UI_REL = 'js/ui/journal-ui.js';
 const MODULE_REL = {
   [CONFIG_RULES]: CONFIG_REL, [LIVE_TRANSPORT]: TRANSPORT_REL, [BATCH_PANEL]: BATCH_REL,
   [UI_PANEL]: UI_REL,
@@ -455,7 +456,8 @@ const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // 44 once MCX PR3 added js/services/mcx-backend-candles.js.
 // 45 once Journal Core moved to js/services/journal-core.js.
 // 46 once MCX Regime Policy moved to js/services/mcx-regime-policy.js.
-const LOCAL_SCRIPT_COUNT = 46;
+// 47 once Journal UI moved to js/ui/journal-ui.js.
+const LOCAL_SCRIPT_COUNT = 47;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -511,7 +513,7 @@ const isPessName = (n) => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function analyze(input) {
-  const { html, modules, manifest, mask } = input;
+  const { html, modules, manifest, mask, parserFixtures = [] } = input;
   const maskFn = mask || maskSource;
 
   const tags = L.parseScriptTags(html).map((t) => ({
@@ -525,14 +527,17 @@ function analyze(input) {
     (t) => (t.src == null || String(t.src).trim() === '') && L.isJsType(t.type) && t.inline.length > 100000);
   if (inl.length !== 1) return { fatal: 'expected one inline monolith, got ' + inl.length };
   const mono = inl[0].inline;
-  // The masker must be length-preserving over EVERY real input. The monolith
-  // holds one astral character (a surrogate pair), and it sits AFTER the PESS
-  // span — so a code-point split shifts only later offsets and would leave every
-  // PESS measurement below looking correct. This invariant is what catches it.
+  // The masker must be length-preserving over EVERY real parser fixture. The
+  // sole astral character (a surrogate pair) originally sat after the PESS span
+  // in the monolith; it now lives byte-identically in Journal UI. Keeping that
+  // extracted source in this parser proof still catches a code-point split.
   const maskedMono = maskFn(mono);
   let maskLenOk = maskedMono.length === mono.length;
   for (const owner of Object.keys(modules)) {
     if (maskFn(modules[owner]).length !== modules[owner].length) maskLenOk = false;
+  }
+  for (const src of parserFixtures) {
+    if (maskFn(src).length !== src.length) maskLenOk = false;
   }
   const inlineDecls = scanTopLevelDeclarations(mono, maskedMono).sort((a, b) => a.start - b.start);
 
@@ -589,11 +594,13 @@ const CONFIG_SRC = fs.readFileSync(path.join(ROOT, CONFIG_REL), 'utf8');
 const TRANSPORT_SRC = fs.readFileSync(path.join(ROOT, TRANSPORT_REL), 'utf8');
 const BATCH_SRC = fs.readFileSync(path.join(ROOT, BATCH_REL), 'utf8');
 const UI_SRC = fs.readFileSync(path.join(ROOT, UI_REL), 'utf8');
+const JOURNAL_UI_SRC = fs.readFileSync(path.join(ROOT, JOURNAL_UI_REL), 'utf8');
+const PARSER_FIXTURES = [JOURNAL_UI_SRC];
 const MODULES = {
   [CONFIG_RULES]: CONFIG_SRC, [LIVE_TRANSPORT]: TRANSPORT_SRC, [BATCH_PANEL]: BATCH_SRC,
   [UI_PANEL]: UI_SRC,
 };
-const A = analyze({ html: HTML, modules: MODULES, manifest: MANIFEST });
+const A = analyze({ html: HTML, modules: MODULES, manifest: MANIFEST, parserFixtures: PARSER_FIXTURES });
 assert.ok(!A.fatal, 'analyser failed: ' + A.fatal);
 
 console.log('\n════════════════════════════════════════════════════════════════════════════════');
@@ -642,14 +649,15 @@ eq(A.inlinePessNames.filter((n) => A.mod[CONFIG_RULES].pessNames.indexOf(n) >= 0
   '2.7b PESS CONFIG_RULES inline residual is still 0 — PR 1 stays undone');
 eq(A.inlinePessNames.filter((n) => A.mod[LIVE_TRANSPORT].pessNames.indexOf(n) >= 0).length, 0,
   '2.7c PESS LIVE_TRANSPORT inline residual is still 0 — PR 2 stays undone');
-ok(A.maskLenOk, '2.8 the masker is length-preserving over the monolith and ALL THREE shipped modules');
+ok(A.maskLenOk, '2.8 the masker is length-preserving over the monolith, all four PESS modules and Journal UI parser fixture');
 {
   const a = maskSource(A.mono), b = maskSourceWithoutRegexKeywords(A.mono);
   let diff = Math.abs(a.length - b.length);
   for (let i = 0, n = Math.min(a.length, b.length); i < n; i++) if (a[i] !== b[i]) diff++;
   eq(diff, 494, '2.8b disabling the regex-keyword lookback changes 494 masked chars — the lookback does real work here');
 }
-ok(Array.from(A.mono).length === A.mono.length - 1, '2.9 the monolith holds exactly one astral character — it sits after the PESS span, so only the length invariant catches a code-point split');
+ok(Array.from(A.mono).length === A.mono.length && Array.from(JOURNAL_UI_SRC).length === JOURNAL_UI_SRC.length - 1,
+  '2.9 the sole astral character moved byte-identically from the monolith into Journal UI, so the fixture still catches a code-point split');
 note('six shipped-module fixtures reproduced exactly; SFS, DSB and PESS-config inline residuals all 0');
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1359,25 +1367,27 @@ eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), 6, '9.10c the transport module tak
 eq(A.localSrcs.indexOf('./' + BATCH_REL), 7, '9.10c2 the batch panel takes slot 8');
 eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — the last of the four');
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
-eq(A.localSrcs[A.localSrcs.length - 9], './js/ui/backend-directional-snapshot-panel.js',
-  '9.11a the DSB panel remains immediately before the three PRETRADE owners, all four MCX owners and Journal Core');
-eq(A.localSrcs[A.localSrcs.length - 8], './js/services/pretrade-risk-rules.js',
+eq(A.localSrcs[A.localSrcs.length - 10], './js/ui/backend-directional-snapshot-panel.js',
+  '9.11a the DSB panel remains immediately before the three PRETRADE owners, all four MCX owners, Journal Core and Journal UI');
+eq(A.localSrcs[A.localSrcs.length - 9], './js/services/pretrade-risk-rules.js',
   '9.11b the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-eq(A.localSrcs[A.localSrcs.length - 7], './js/services/pretrade-technicals.js',
+eq(A.localSrcs[A.localSrcs.length - 8], './js/services/pretrade-technicals.js',
   '9.11c the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
-eq(A.localSrcs[A.localSrcs.length - 6], './js/ui/pretrade-risk-modal.js',
+eq(A.localSrcs[A.localSrcs.length - 7], './js/ui/pretrade-risk-modal.js',
   '9.11d the PRETRADE risk-modal owner is immediately before the MCX market-context owner');
-eq(A.localSrcs[A.localSrcs.length - 5], './js/services/mcx-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 6], './js/services/mcx-market-context.js',
   '9.11e the MCX market-context owner is immediately before the MCX VIX owner');
-eq(A.localSrcs[A.localSrcs.length - 4], './js/services/mcx-vix-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 5], './js/services/mcx-vix-market-context.js',
   '9.11f the MCX VIX owner is immediately before the MCX backend-candle owner');
-eq(A.localSrcs[A.localSrcs.length - 3], './js/services/mcx-backend-candles.js',
+eq(A.localSrcs[A.localSrcs.length - 4], './js/services/mcx-backend-candles.js',
   '9.11g the MCX backend-candle owner is immediately before Journal Core');
-eq(A.localSrcs[A.localSrcs.length - 2], './js/services/journal-core.js',
+eq(A.localSrcs[A.localSrcs.length - 3], './js/services/journal-core.js',
   '9.11h Journal Core is immediately before Regime Policy');
-eq(A.localSrcs[A.localSrcs.length - 1], './js/services/mcx-regime-policy.js',
-  '9.11i Regime Policy is the newest local script before the monolith');
-eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 46 local application scripts, including PRETRADE, four MCX and Journal Core owners');
+eq(A.localSrcs[A.localSrcs.length - 2], './js/services/mcx-regime-policy.js',
+  '9.11i Regime Policy is immediately before Journal UI');
+eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/journal-ui.js',
+  '9.11j Journal UI is the newest local script before the monolith');
+eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT, '9.12 index.html now loads 47 local application scripts, including PRETRADE, four MCX, Journal Core and Journal UI owners');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3558,15 +3568,16 @@ const GUARDS = [
     r.localSrcs.indexOf('./' + UI_REL) === r.localSrcs.indexOf('./' + BATCH_REL) + 1],
   ['pess-module-count', (r) => r.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).length === 4],
   ['local-script-count', (r) => r.localSrcs.length === LOCAL_SCRIPT_COUNT],
-  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 9] === './js/ui/backend-directional-snapshot-panel.js' &&
-    r.localSrcs[r.localSrcs.length - 8] === './js/services/pretrade-risk-rules.js' &&
-    r.localSrcs[r.localSrcs.length - 7] === './js/services/pretrade-technicals.js' &&
-    r.localSrcs[r.localSrcs.length - 6] === './js/ui/pretrade-risk-modal.js' &&
-    r.localSrcs[r.localSrcs.length - 5] === './js/services/mcx-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 4] === './js/services/mcx-vix-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 3] === './js/services/mcx-backend-candles.js' &&
-    r.localSrcs[r.localSrcs.length - 2] === './js/services/journal-core.js' &&
-    r.localSrcs[r.localSrcs.length - 1] === './js/services/mcx-regime-policy.js'],
+  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 10] === './js/ui/backend-directional-snapshot-panel.js' &&
+    r.localSrcs[r.localSrcs.length - 9] === './js/services/pretrade-risk-rules.js' &&
+    r.localSrcs[r.localSrcs.length - 8] === './js/services/pretrade-technicals.js' &&
+    r.localSrcs[r.localSrcs.length - 7] === './js/ui/pretrade-risk-modal.js' &&
+    r.localSrcs[r.localSrcs.length - 6] === './js/services/mcx-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 5] === './js/services/mcx-vix-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 4] === './js/services/mcx-backend-candles.js' &&
+    r.localSrcs[r.localSrcs.length - 3] === './js/services/journal-core.js' &&
+    r.localSrcs[r.localSrcs.length - 2] === './js/services/mcx-regime-policy.js' &&
+    r.localSrcs[r.localSrcs.length - 1] === './js/ui/journal-ui.js'],
   ['config-slot', (r) => r.localSrcs.indexOf('./' + CONFIG_REL) === 5],
   ['ui-slot', (r) => r.localSrcs.indexOf('./' + UI_REL) === 8],
   ['ratchet', (r) => r.inlinePess.length === RATCHET_AFTER],
@@ -3607,7 +3618,7 @@ const PLAN_GUARDS = [
 
 function runGuards(html, mods) {
   let r;
-  try { r = analyze({ html: html, modules: mods, manifest: MANIFEST }); } catch (e) { return ['threw:' + String(e.message).slice(0, 40)]; }
+  try { r = analyze({ html: html, modules: mods, manifest: MANIFEST, parserFixtures: PARSER_FIXTURES }); } catch (e) { return ['threw:' + String(e.message).slice(0, 40)]; }
   if (r.fatal) return ['fatal:' + r.fatal];
   const broken = [];
   for (const [n, g] of GUARDS) { let v; try { v = g(r); } catch (_) { v = false; } if (!v) broken.push(n); }
@@ -4038,7 +4049,7 @@ const MUTANTS = [
 
   // ── PARSER ───────────────────────────────────────────────────────────────
   ['PARSER', 'masker splits by code point, not UTF-16 unit', () => {
-    let r; try { r = analyze({ html: HTML, modules: mods(), manifest: MANIFEST, mask: maskSourceByCodePoint }); } catch (e) { return ['threw']; }
+    let r; try { r = analyze({ html: HTML, modules: mods(), manifest: MANIFEST, mask: maskSourceByCodePoint, parserFixtures: PARSER_FIXTURES }); } catch (e) { return ['threw']; }
     if (r.fatal) return ['fatal'];
     return GUARDS.filter(([, g]) => { try { return !g(r); } catch (_) { return true; } }).map(([n]) => n);
   }],

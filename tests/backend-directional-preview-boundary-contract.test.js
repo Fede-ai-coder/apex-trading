@@ -131,6 +131,7 @@ const EIC_TICKER_PANEL_REL = './js/ui/eic-ticker-analysis-panel.js';
 // this entry the EIC family is closed at four modules.
 const EIC_LIVE_DEEP_DIVE_REL = './js/ui/eic-live-deep-dive.js';
 const PRETRADE_RISK_MODAL_REL = './js/ui/pretrade-risk-modal.js';
+const JOURNAL_UI_REL = './js/ui/journal-ui.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2320,7 +2321,10 @@ section('30. physical script order');
   const iRegime = srcs.indexOf('./js/services/mcx-regime-policy.js');
   ok(iRegime >= 0, 'index.html loads the Regime Policy script');
   eq(iJournal, iRegime - 1, 'ORDER: Journal Core is immediately before Regime Policy');
-  eq(iRegime, srcs.length - 2, 'ORDER: Regime Policy is the LAST external script before the inline monolith');
+  const iJournalUi = srcs.indexOf(JOURNAL_UI_REL);
+  ok(iJournalUi >= 0, 'index.html loads the Journal UI script');
+  eq(iRegime, iJournalUi - 1, 'ORDER: Regime Policy is immediately before Journal UI');
+  eq(iJournalUi, srcs.length - 2, 'ORDER: Journal UI is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2386,7 +2390,10 @@ section('30. physical script order');
   const regimeTagIdx = TAGS.findIndex(function (t) { return /mcx-regime-policy\.js$/.test(clean(t.src)); });
   ok(regimeTagIdx >= 0, 'tag order: the Regime Policy owner is present');
   eq(journalTagIdx, regimeTagIdx - 1, 'tag order: Journal Core is immediately before Regime Policy');
-  eq(regimeTagIdx, inlineTagIdx - 1, 'tag order: Regime Policy is the LAST script tag before the inline monolith');
+  const journalUiTagIdx = TAGS.findIndex(function (t) { return /journal-ui\.js$/.test(clean(t.src)); });
+  ok(journalUiTagIdx >= 0, 'tag order: the Journal UI owner is present');
+  eq(regimeTagIdx, journalUiTagIdx - 1, 'tag order: Regime Policy is immediately before Journal UI');
+  eq(journalUiTagIdx, inlineTagIdx - 1, 'tag order: Journal UI is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
@@ -2435,8 +2442,8 @@ section('30. physical script order');
     return p.kind === 'local' && /(^|\/)js\/ui\//.test(String(p.src == null ? '' : p.src));
   }).map(function (p) { return String(p.src); }).sort(),
      [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL, PESS_UI_PANEL_REL,
-      EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL, PRETRADE_RISK_MODAL_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly ten scripts — the BDSP module, the BSS panel, the DSB panel, the SFS UI panel, the PESS batch panel, the PESS UI panel, the EIC panel, the EIC ticker-analysis panel, the EIC live-deep-dive module and the PRETRADE risk modal');
+      EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL, PRETRADE_RISK_MODAL_REL, JOURNAL_UI_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly eleven named scripts, including the later Journal UI owner');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
