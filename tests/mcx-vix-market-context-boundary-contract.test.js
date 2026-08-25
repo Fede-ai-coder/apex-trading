@@ -22,6 +22,7 @@ const JOURNAL_UI_REL = 'js/ui/journal-ui.js';
 const JOURNAL_REMOTE_REL = 'js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js';
 const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
+const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -167,6 +168,7 @@ const journalUiTag = '<script src="./' + JOURNAL_UI_REL + '"></script>';
 const journalRemoteTag = '<script src="./' + JOURNAL_REMOTE_REL + '"></script>';
 const journalWriteThroughTag = '<script src="./' + JOURNAL_WRITE_THROUGH_REL + '"></script>';
 const journalMigrationTag = '<script src="./' + JOURNAL_MIGRATION_REL + '"></script>';
+const journalManualImportTag = '<script src="./' + JOURNAL_MANUAL_IMPORT_REL + '"></script>';
 ok((INDEX.split(mcx1Tag).length - 1) === 1, 'exactly one MCX-1 script tag exists');
 ok((INDEX.split(tag).length - 1) === 1, 'exactly one MCX-2 service script tag exists');
 ok((INDEX.split(mcx3Tag).length - 1) === 1, 'exactly one MCX-3 service script tag exists');
@@ -176,6 +178,7 @@ ok((INDEX.split(journalUiTag).length - 1) === 1, 'exactly one Journal UI script 
 ok((INDEX.split(journalRemoteTag).length - 1) === 1, 'exactly one Journal Remote script tag exists');
 ok((INDEX.split(journalWriteThroughTag).length - 1) === 1, 'exactly one Journal Write-through script tag exists');
 ok((INDEX.split(journalMigrationTag).length - 1) === 1, 'exactly one Journal Migration script tag exists');
+ok((INDEX.split(journalManualImportTag).length - 1) === 1, 'exactly one Journal Manual Import script tag exists');
 const mcx1At = INDEX.indexOf(mcx1Tag);
 const tagAt = INDEX.indexOf(tag);
 const nextScriptAt = INDEX.indexOf('<script', tagAt + tag.length);
@@ -225,9 +228,15 @@ const afterJournalMigrationAt = INDEX.indexOf('<script', journalMigrationAt + jo
 const afterJournalMigrationEnd = afterJournalMigrationAt >= 0 ? INDEX.indexOf('>', afterJournalMigrationAt) : -1;
 const afterJournalMigrationTag = afterJournalMigrationEnd >= 0
   ? INDEX.slice(afterJournalMigrationAt, afterJournalMigrationEnd + 1) : '';
-ok(journalMigrationAt > journalWriteThroughAt && afterJournalMigrationAt > journalMigrationAt &&
-   !/\bsrc\s*=/i.test(afterJournalMigrationTag),
-  'Journal Migration loads immediately before the residual inline application script');
+ok(journalMigrationAt > journalWriteThroughAt &&
+   afterJournalMigrationTag === '<script src="./' + JOURNAL_MANUAL_IMPORT_REL + '">',
+  'Journal Migration loads immediately before Journal Manual Import');
+const journalManualImportAt = INDEX.indexOf(journalManualImportTag);
+const afterManualAt = INDEX.indexOf('<script', journalManualImportAt + journalManualImportTag.length);
+const afterManualEnd = afterManualAt >= 0 ? INDEX.indexOf('>', afterManualAt) : -1;
+const afterManualTag = afterManualEnd >= 0 ? INDEX.slice(afterManualAt, afterManualEnd + 1) : '';
+ok(journalManualImportAt > journalMigrationAt && !/\bsrc\s*=/i.test(afterManualTag),
+  'Journal Manual Import loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

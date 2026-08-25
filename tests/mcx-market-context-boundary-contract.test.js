@@ -864,7 +864,10 @@ async function main() {
   eq(killed, total, 'all ' + total + ' genuine mutants killed by their intended guard');
 
   section('12. production scope');
-  const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
+  const committedChanged = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
+  const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: ROOT, encoding: 'utf8' })
+    .split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
+  const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
   const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
   // The diff is measured from THIS extraction's base, so it now also spans the
   // MCX VIX owner extracted on top by PR #389. The list stays EXACT and named —
@@ -875,7 +878,8 @@ async function main() {
   const JOURNAL_REMOTE_REL = 'js/services/journal-remote-persistence.js';
   const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js';
   const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
-  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL, 'js/services/mcx-regime-policy.js', 'js/ui/journal-ui.js', JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL].sort(), 'production footprint is exactly index.html + all four MCX owners + five Journal owners');
+  const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
+  same(changedProduction, ['index.html', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL, 'js/services/mcx-regime-policy.js', 'js/ui/journal-ui.js', JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL].sort(), 'production footprint is exactly index.html + all four MCX owners + six Journal owners');
   const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', '9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
   ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');
 

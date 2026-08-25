@@ -19,6 +19,7 @@ const U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = '395f19575cdc543b3a370e2168e2e6cfb823a4a7';
@@ -71,6 +72,7 @@ const UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
+const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -155,8 +157,8 @@ const writeTagAt = INDEX.indexOf(WRITE_TAG);
 const migrationTagAt = INDEX.indexOf(MIGRATION_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n',
-  'service tail is contiguous MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> Migration -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
 ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt &&
   writeTagAt > remoteTagAt && migrationTagAt > writeTagAt && inlineAt > migrationTagAt,
   'Journal UI loads synchronously before later Remote + Write-through + Migration + inline consumers');
@@ -211,7 +213,9 @@ eq((MODULE.match(/\blocalStorage\s*\./g) || []).length, 0, 'Journal UI owns no d
 eq((MODULE.match(/\b(?:new\s+)?WebSocket\b/g) || []).length, 0, 'Journal UI owns no WebSocket');
 
 section('5. byte-exact undo and mutation-sensitive negative controls');
-const preMigration = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const preManual = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const preMigration = MIGRATION_U.undoJournalMigration(preManual, MIGRATION_MODULE);
 const preWrite = WRITE_U.undoJournalBackendWriteThrough(preMigration, WRITE_MODULE);
 const preRemote = REMOTE_U.undoJournalRemotePersistence(preWrite, REMOTE_MODULE);
 const rebuilt = U.undoJournalUi(preRemote, MODULE);
@@ -233,7 +237,8 @@ const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWi
 same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-remote-persistence.js',
   'js/services/journal-backend-write-through.js', 'js/services/journal-migration.js',
-].sort(), 'production footprint includes Journal UI + later Remote + Write-through + Migration modules');
+  'js/services/journal-manual-import.js',
+].sort(), 'production footprint includes Journal UI plus later Remote, Write-through, Migration, and Manual Import modules');
 ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 

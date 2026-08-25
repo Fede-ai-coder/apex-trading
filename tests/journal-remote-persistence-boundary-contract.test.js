@@ -18,6 +18,7 @@ const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const BASE_SHA = 'b82d2c8c616e91eff7197faf017ebc1451ced723';
@@ -48,6 +49,7 @@ const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
+const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -140,7 +142,9 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n<script>',
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
-const preMigrationIndex = MIGRATION_U.undoJournalMigration(INDEX, MIGRATION_MODULE);
+const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(preMigrationIndex, WRITE_MODULE);
 eq(preWriteIndex, expectedIndex, 'newest undo reaches exactly base minus Remote slice plus its classic tag');
 eq(preWriteIndex.length, 1964275, 'post-Remote/pre-Write-through index UTF-16 length is pinned');
@@ -169,12 +173,14 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n',
-  'service tail is MCX1 -> MCX2 -> MCX3 -> Core -> Regime -> UI -> Remote -> Write-through -> Migration -> inline');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
-  INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) && INDEX.indexOf(MIGRATION_TAG) < inlineAt,
-  'Journal Remote loads synchronously before Write-through, Migration, and inline consumers');
+  INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) &&
+  INDEX.indexOf(MIGRATION_TAG) < INDEX.indexOf(MANUAL_TAG) &&
+  INDEX.indexOf(MANUAL_TAG) < inlineAt,
+  'Journal Remote loads synchronously before Write-through, Migration, Manual Import, and inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(REMOTE_TAG), 'Journal Remote tag is classic synchronous src-only form');
 eq(count(INDEX, REMOTE_MARKER), 0, 'remote service marker has zero inline residue');
 eq(count(MODULE, REMOTE_MARKER), 1, 'remote service marker belongs to the module exactly once');
@@ -306,8 +312,8 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-backend-write-through.js',
-  'js/services/journal-migration.js',
-].sort(), 'production footprint is index.html + Journal Remote + later Write-through and Migration modules');
+  'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
+].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, and Manual Import modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,

@@ -1,13 +1,9 @@
 'use strict';
 
-// Read-only audit for the next extraction after Journal Migration (#402).
-// This file deliberately changes no production source. It derives the exact
-// three-declaration Journal manual-import owner, compares the two plausible
-// window-exposure strategies, selects the inert classic-service boundary, and
-// rejects the adjacent Backup/Restore UI as a separate DOM owner.
-//
-// The extraction PR must replace this temporary audit with a permanent boundary
-// contract plus a byte-exact undo helper.
+// Permanent boundary contract for the Journal Manual Import classic service.
+// It proves byte identity against the merged #403 audit, declarations-only
+// ownership, classic load order, unchanged inline window-exposure timing,
+// runtime import behavior, exact undo, and separation from Backup/Restore UI.
 
 const assert = require('assert');
 const crypto = require('crypto');
@@ -19,11 +15,13 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
 
 const ROOT = path.resolve(__dirname, '..');
-const BASE_SHA = 'b6c7f3102d230632d78f387055c58beb7ef2217d';
-const BASE_TREE = 'd833e2c951afd97bf5cc79f70b166789c11d8637';
+const BASE_SHA = '47391e8522c2d7a0c27b853d12d87350754a38b9';
+const BASE_TREE = '4510c2abf604eb781216571772f115b9f8a2ac16';
 const AUDIT_REL = 'tests/temporary-journal-manual-import-audit.test.js';
-const FUTURE_MODULE_REL = 'js/services/journal-manual-import.js';
-const FUTURE_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const MODULE_REL = 'js/services/journal-manual-import.js';
+const MODULE_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const CONTRACT_REL = 'tests/journal-manual-import-boundary-contract.test.js';
+const UNDO_REL = 'tests/lib/journal-manual-import-undo.js';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
@@ -59,28 +57,34 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const U = require('./lib/journal-manual-import-undo.js');
+const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT,
   encoding: 'utf8',
   maxBuffer: 32 * 1024 * 1024,
 });
-const manualAt = INDEX.indexOf(MANUAL_MARKER);
-const backupAt = INDEX.indexOf(BACKUP_MARKER);
-const inlineCloseAt = INDEX.indexOf('</script>', backupAt);
-const indexDeclarations = scanTopLevelDeclarations(INDEX);
+const manualAt = BASE.indexOf(MANUAL_MARKER);
+const backupAt = BASE.indexOf(BACKUP_MARKER);
+const inlineCloseAt = BASE.indexOf('</script>', backupAt);
+const indexDeclarations = scanTopLevelDeclarations(BASE);
 const lastDeclaration = indexDeclarations.find((entry) => entry.name === 'apexImportJournalTradesJson');
 const candidateEnd = lastDeclaration.end + 2; // Include the closing brace and its LF.
 const exposureEnd = backupAt - 1; // Keep one separator LF with Backup/Restore.
-const CANDIDATE = INDEX.slice(manualAt, candidateEnd);
-const EXPOSURE = INDEX.slice(candidateEnd, exposureEnd);
-const WHOLE_MANUAL = INDEX.slice(manualAt, exposureEnd);
-const BACKUP_ONLY = INDEX.slice(backupAt, inlineCloseAt);
+const CANDIDATE = BASE.slice(manualAt, candidateEnd);
+const EXPOSURE = BASE.slice(candidateEnd, exposureEnd);
+const WHOLE_MANUAL = BASE.slice(manualAt, exposureEnd);
+const BACKUP_ONLY = BASE.slice(backupAt, inlineCloseAt);
+const currentExposureAt = INDEX.indexOf(EXPOSURE_PREFIX);
+const currentBackupAt = INDEX.indexOf(BACKUP_MARKER);
 
 const APP_PARTS = APP_LOADER.loadOrderedScriptSources()
   .filter((part) => part.isAppJs && part.code != null)
   .map((part) => ({
     name: part.kind === 'inline' ? 'index.html:inline' : part.src,
-    code: part.kind === 'inline' ? part.code.replace(CANDIDATE, '\n') : part.code,
+    code: part.src === './js/services/journal-manual-import.js' ? '\n' : part.code,
   }));
 const OUTSIDE_APP = APP_PARTS.map((part) => part.code).join('\n');
 
@@ -234,7 +238,7 @@ function loadCandidate(source) {
   const sandbox = {};
   try {
     vm.createContext(sandbox);
-    vm.runInContext(source, sandbox, { filename: FUTURE_MODULE_REL });
+    vm.runInContext(source, sandbox, { filename: MODULE_REL });
     return { ok: true, error: null, sandbox };
   } catch (error) {
     return { ok: false, error: String(error && error.message || error), sandbox };
@@ -282,12 +286,12 @@ function boundaryViolations(source, outsideSource) {
 
 function moduleOrderViolations(html) {
   const violations = [];
-  if (countLiteral(html, FUTURE_TAG) !== 1) violations.push('tag-count');
+  if (countLiteral(html, MODULE_TAG) !== 1) violations.push('tag-count');
   const migrationAt = html.indexOf(MIGRATION_TAG);
-  const futureAt = html.indexOf(FUTURE_TAG);
+  const futureAt = html.indexOf(MODULE_TAG);
   const inlineAt = html.indexOf(INLINE_OPEN);
   if (!(migrationAt >= 0 && migrationAt < futureAt && futureAt < inlineAt)) violations.push('load-order');
-  if (countLiteral(html, MIGRATION_TAG + '\n' + FUTURE_TAG + '\n<script>') !== 1) {
+  if (countLiteral(html, MIGRATION_TAG + '\n' + MODULE_TAG + '\n<script>') !== 1) {
     violations.push('adjacency');
   }
   const tags = APP_LOADER.parseScriptTags(html)
@@ -298,40 +302,43 @@ function moduleOrderViolations(html) {
   return violations;
 }
 
-console.log('TEMPORARY JOURNAL MANUAL-IMPORT AUDIT');
+console.log('JOURNAL MANUAL-IMPORT BOUNDARY CONTRACT');
 console.log('base=' + BASE_SHA);
 
-section('1. Pinned post-#402 base and read-only scope');
+section('1. Pinned post-#403 base and exact extracted artifacts');
 eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{commit}'], {
   cwd: ROOT, encoding: 'utf8',
-}).trim(), BASE_SHA, 'merged #402 base resolves exactly');
+}).trim(), BASE_SHA, 'merged #403 audit base resolves exactly');
 eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{tree}'], {
   cwd: ROOT, encoding: 'utf8',
-}).trim(), BASE_TREE, 'merged #402 tree resolves exactly');
-eq(INDEX, BASE, 'working index is byte-identical to merged #402');
-eq(INDEX.length, 1951961, 'base index UTF-16 length is pinned');
-eq(sha256(INDEX), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
+}).trim(), BASE_TREE, 'merged #403 audit tree resolves exactly');
+eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
+eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
-eq(changedPaths(), [AUDIT_REL], 'audit change set contains exactly this read-only test');
+eq(INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
+eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+  'extracted index SHA-256 is the audited prediction');
+eq(MODULE, CANDIDATE, 'module is byte-identical to the audited declaration slice');
 
 section('2. Exact residual boundaries and ownership shape');
-eq(countLiteral(INDEX, MANUAL_MARKER), 1, 'manual-import marker is unique');
+eq(countLiteral(BASE, MANUAL_MARKER), 1, 'manual-import marker is unique in the audit base');
+eq(countLiteral(INDEX, MANUAL_MARKER), 0, 'manual-import declaration marker has zero inline residue');
 eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'Backup/Restore marker is unique');
 ok(manualAt >= 0 && manualAt < candidateEnd && candidateEnd < backupAt && backupAt < inlineCloseAt,
   'physical order is declarations -> exposure glue -> Backup/Restore UI');
 eq(manualAt, 1932685, 'candidate starts at exact post-#402 offset');
 eq(candidateEnd, 1940463, 'candidate ends at exact post-#402 offset');
-eq(lineAt(INDEX, manualAt), 34030, 'candidate starts on line 34030');
-eq(lineAt(INDEX, candidateEnd), 34170, 'candidate ends on line 34170');
-eq(CANDIDATE.length, 7778, 'selected declaration slice has exact UTF-16 length');
-eq(Buffer.byteLength(CANDIDATE, 'utf8'), 7840, 'selected declaration slice has exact UTF-8 byte length');
-eq(sha256(CANDIDATE), 'fc4ba6dcbe9869c99018754a870172f4ac9a24463964bf51a3061fe5c0918536',
-  'selected declaration slice byte identity is pinned');
-ok(CANDIDATE.endsWith('  return report;\n}\n'), 'candidate ends with the complete async importer and one LF');
-eq(topLevelShape(CANDIDATE), EXPECTED_SHAPE,
-  'candidate owns exactly three declarations with pinned forms and sizes');
-eq(topLevelResidue(CANDIDATE), '',
-  'candidate is declarations plus comments/whitespace only: no executable top-level residue');
+eq(lineAt(BASE, manualAt), 34030, 'candidate starts on line 34030 of the audit base');
+eq(lineAt(BASE, candidateEnd), 34170, 'candidate ends on line 34170 of the audit base');
+eq(MODULE.length, 7778, 'module has exact UTF-16 length');
+eq(Buffer.byteLength(MODULE, 'utf8'), 7840, 'module has exact UTF-8 byte length');
+eq(sha256(MODULE), 'fc4ba6dcbe9869c99018754a870172f4ac9a24463964bf51a3061fe5c0918536',
+  'module byte identity is pinned');
+ok(MODULE.endsWith('  return report;\n}\n'), 'module ends with the complete async importer and one LF');
+eq(topLevelShape(MODULE), EXPECTED_SHAPE,
+  'module owns exactly three declarations with pinned forms and sizes');
+eq(topLevelResidue(MODULE), '',
+  'module is declarations plus comments/whitespace only: no executable top-level residue');
 
 section('3. Window strategy is derived, not assumed');
 eq(EXPOSURE.length, 625, 'inline window/bootstrap glue has exact UTF-16 length');
@@ -341,35 +348,34 @@ ok(EXPOSURE.startsWith(EXPOSURE_PREFIX), 'exposure slice starts at the explicit 
 ok(topLevelResidue(WHOLE_MANUAL).includes('window.apexImportJournalTradesJson = apexImportJournalTradesJson') &&
    topLevelResidue(WHOLE_MANUAL).includes('console.log('),
   'moving the whole adjacent block would also move the executable window/log exposure glue');
-eq(observeTopLevel(CANDIDATE), [], 'declarations-only strategy performs zero load-time action');
+eq(observeTopLevel(MODULE), [], 'declarations-only module performs zero load-time action');
 eq(observeTopLevel(WHOLE_MANUAL), ['window.apexImportJournalTradesJson', 'console.log'],
   'whole-block strategy advances one window write and one console log into the module');
 eq(directEffects(EXPOSURE).window, 1, 'exposure glue owns exactly one window write');
 eq((maskLiterals(EXPOSURE).match(/\bconsole\s*\.\s*log\s*\(/g) || []).length, 1,
   'exposure glue owns exactly one availability log');
-eq(EXPOSURE + '\n' + BACKUP_MARKER, INDEX.slice(candidateEnd, backupAt + BACKUP_MARKER.length),
-  'declarations-only split leaves exposure timing and the next marker text byte-exactly inline');
+eq(INDEX.slice(currentExposureAt, currentBackupAt - 1), EXPOSURE,
+  'exposure glue remains byte-exactly inline after extraction');
+eq(INDEX.slice(currentBackupAt, currentBackupAt + BACKUP_MARKER.length), BACKUP_MARKER,
+  'the adjacent Backup/Restore marker remains byte-exact');
 
-const indexWithoutCandidate = INDEX.slice(0, manualAt) + INDEX.slice(candidateEnd);
-const FUTURE_INDEX = indexWithoutCandidate.replace(
+const indexWithoutCandidate = BASE.slice(0, manualAt) + BASE.slice(candidateEnd);
+const EXTRACTED_INDEX = indexWithoutCandidate.replace(
   MIGRATION_TAG + '\n<script>',
-  MIGRATION_TAG + '\n' + FUTURE_TAG + '\n<script>'
+  MIGRATION_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-eq(FUTURE_INDEX.length, 1944246, 'predicted post-extraction index UTF-16 length is exact');
-eq(sha256(FUTURE_INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
-  'predicted post-extraction index SHA-256 is exact');
-eq(countLiteral(FUTURE_INDEX, MANUAL_MARKER), 0, 'future inline monolith has zero declaration-marker residue');
-eq(countLiteral(FUTURE_INDEX, EXPOSURE_PREFIX), 1, 'future inline monolith retains the exposure exactly once');
-eq(moduleOrderViolations(FUTURE_INDEX), [],
-  'future classic service loads after Migration and immediately before the inline monolith');
-const futureWithoutTag = FUTURE_INDEX.replace(FUTURE_TAG + '\n', '');
-eq(futureWithoutTag.slice(0, manualAt) + CANDIDATE + futureWithoutTag.slice(manualAt), INDEX,
-  'tag removal plus byte-exact declaration insertion reconstructs #402');
+eq(EXTRACTED_INDEX, INDEX, 'audited extraction algorithm reproduces the shipped index byte-for-byte');
+eq(countLiteral(INDEX, EXPOSURE_PREFIX), 1, 'inline monolith retains the exposure exactly once');
+eq(moduleOrderViolations(INDEX), [],
+  'classic service loads after Migration and immediately before the inline monolith');
+const extractedWithoutTag = INDEX.replace(MODULE_TAG + '\n', '');
+eq(extractedWithoutTag.slice(0, manualAt) + MODULE + extractedWithoutTag.slice(manualAt), BASE,
+  'tag removal plus byte-exact declaration insertion reconstructs #403');
 
 section('4. Dependency, side-effect, and consumer boundary');
-eq(freeIdentifiers(CANDIDATE), EXPECTED_DEPENDENCIES,
-  'candidate call-time dependency inventory is exact');
-eq(directEffects(CANDIDATE), {
+eq(freeIdentifiers(MODULE), EXPECTED_DEPENDENCIES,
+  'module call-time dependency inventory is exact');
+eq(directEffects(MODULE), {
   document: 0,
   fetch: 0,
   ttCall: 3,
@@ -393,10 +399,10 @@ eq(externalUsage('apexImportJournalTradesJson'), [{ where: 'index.html:inline', 
   'public importer is consumed only by its inline window exposure (property plus value)');
 eq((maskLiterals(OUTSIDE_APP).match(/(?<![A-Za-z0-9_$.])apexImportJournalTradesJson\s*\(/g) || []).length, 0,
   'application source outside the owner never auto-invokes the manual importer');
-ok(!maskLiterals(CANDIDATE).includes('jMigrateApexTradesToBackend'),
+ok(!maskLiterals(MODULE).includes('jMigrateApexTradesToBackend'),
   'manual importer has zero coupling to automatic Journal Migration');
-const load = loadCandidate(CANDIDATE);
-ok(load.ok, 'candidate evaluates before its call-time dependencies exist: ' + load.error);
+const load = loadCandidate(MODULE);
+ok(load.ok, 'module evaluates before its call-time dependencies exist: ' + load.error);
 eq(typeof load.sandbox.apexImportJournalTradesJson, 'function', 'classic evaluation exposes the importer declaration');
 
 section('5. Existing behavioral proof is loader-aware and green');
@@ -426,7 +432,7 @@ eq(topLevelShape(BACKUP_ONLY).map((entry) => entry.name), [
 eq(directEffects(BACKUP_ONLY).document, 9, 'Backup/Restore owns its DOM mutations');
 eq(directEffects(BACKUP_ONLY).setTimeout, 4, 'Backup/Restore owns delayed status/recheck timers');
 eq(directEffects(BACKUP_ONLY).confirm, 3, 'Backup/Restore owns destructive-action confirmations');
-eq(boundaryViolations(CANDIDATE, OUTSIDE_APP), [],
+eq(boundaryViolations(MODULE, OUTSIDE_APP), [],
   'selected declarations-only owner passes every semantic boundary gate');
 
 section('7. Extraction fallout inventory');
@@ -452,64 +458,90 @@ const contractsToAdvance = [
 ];
 for (const rel of contractsToAdvance) {
   const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-  ok(source.includes('journal-migration.js') || source.includes('journal-migration\\.js') ||
-     source.includes('five Journal owners'),
-     rel + ' currently pins the five-owner Journal tail and must advance in the extraction PR');
+  ok(source.includes('journal-manual-import.js') ||
+     source.includes('journal-manual-import\\.js') ||
+     source.includes('six Journal owners'),
+     rel + ' recognizes the sixth Journal owner or the current classic-script tail');
 }
 ok(fs.readFileSync(path.join(ROOT, 'tests/lib/post-journal-mcx-pr3-undo.js'), 'utf8')
-  .includes('undoJournalMigration'),
-  'cumulative historical helper currently starts with Migration and must prepend Manual Import undo');
+  .includes('undoJournalManualImport'),
+  'cumulative historical helper starts by undoing Manual Import');
 
-section('8. Mutation-sensitive negative controls');
-ok(boundaryViolations(CANDIDATE.replace(
+section('8. Byte-exact undo and mutation-sensitive negative controls');
+const rebuilt = U.undoJournalManualImport(INDEX, MODULE);
+eq(rebuilt, BASE, 'Manual Import undo reconstructs merged #403 byte-for-byte');
+eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
+const preMigration = MIGRATION_U.undoJournalMigration(rebuilt, MIGRATION_MODULE);
+eq(preMigration.length, MIGRATION_U.BASE_CHARS, 'cumulative undo reaches the pre-Migration base');
+eq(sha256(preMigration), MIGRATION_U.BASE_SHA256, 'cumulative undo hash matches the pre-Migration base');
+assert.throws(() => U.undoJournalManualImport(INDEX, MODULE + ' '), /MODULE_IDENTITY/);
+pass++;
+assert.throws(() => U.undoJournalManualImport(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+  /TAG_IDENTITY/);
+pass++;
+assert.throws(() => U.undoJournalManualImport(INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
+pass++;
+
+ok(boundaryViolations(MODULE.replace(
   /function _journalImportPayload[\s\S]*?\n}\n\n\/\/ PUT/,
   '// PUT'
 ), OUTSIDE_APP).includes('manifest'), 'missing payload-helper mutant is rejected');
 ok(boundaryViolations(
-  CANDIDATE.replace(
+  MODULE.replace(
     'async function apexImportJournalTradesJson',
     'async function apexImportJournalTradesJsonV2'
   ), OUTSIDE_APP
 ).includes('manifest'), 'renamed public importer mutant is rejected');
-ok(boundaryViolations(CANDIDATE + '\ndocument.body;\n', OUTSIDE_APP).includes('top-level-effect'),
+ok(boundaryViolations(MODULE + '\ndocument.body;\n', OUTSIDE_APP).includes('top-level-effect'),
   'foreign top-level DOM mutant is rejected');
-ok(boundaryViolations(CANDIDATE + EXPOSURE, OUTSIDE_APP).includes('owner-overreach'),
+ok(boundaryViolations(MODULE + EXPOSURE, OUTSIDE_APP).includes('owner-overreach'),
   'whole-block/window-exposure strategy is rejected');
-ok(boundaryViolations(CANDIDATE + '\n' + BACKUP_ONLY, OUTSIDE_APP).includes('owner-overreach'),
+ok(boundaryViolations(MODULE + '\n' + BACKUP_ONLY, OUTSIDE_APP).includes('owner-overreach'),
   'Backup/Restore overreach mutant is rejected');
 ok(boundaryViolations(
-  CANDIDATE,
+  MODULE,
   OUTSIDE_APP + '\nasync function apexImportJournalTradesJson() {}\n'
 ).includes('competing-owner'), 'competing later importer owner mutant is rejected');
-ok(sha256(CANDIDATE.replace('var imported = 0', 'var imported = 1')) !== sha256(CANDIDATE),
+ok(sha256(MODULE.replace('var imported = 0', 'var imported = 1')) !== sha256(MODULE),
   'same-length behavior mutation is rejected by the identity pin');
-ok(moduleOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG + '\n', '')).includes('tag-count'),
-  'missing future tag mutant is rejected');
-ok(moduleOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG, FUTURE_TAG + '\n' + FUTURE_TAG))
-  .includes('tag-count'), 'duplicate future tag mutant is rejected');
-ok(moduleOrderViolations(FUTURE_INDEX.replace(
-  MIGRATION_TAG + '\n' + FUTURE_TAG,
-  FUTURE_TAG + '\n' + MIGRATION_TAG
+ok(moduleOrderViolations(INDEX.replace(MODULE_TAG + '\n', '')).includes('tag-count'),
+  'missing module tag mutant is rejected');
+ok(moduleOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG))
+  .includes('tag-count'), 'duplicate module tag mutant is rejected');
+ok(moduleOrderViolations(INDEX.replace(
+  MIGRATION_TAG + '\n' + MODULE_TAG,
+  MODULE_TAG + '\n' + MIGRATION_TAG
 )).includes('load-order'), 'Manual-Import-before-Migration mutant is rejected');
-ok(moduleOrderViolations(FUTURE_INDEX.replace(FUTURE_TAG, FUTURE_TAG.replace('>', ' defer>')))
-  .includes('classic-tag'), 'deferred future tag mutant is rejected');
+ok(moduleOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG.replace('>', ' defer>')))
+  .includes('classic-tag'), 'deferred module tag mutant is rejected');
+
+section('9. Exact production scope');
+const changed = changedPaths();
+const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
+eq(changedProduction, ['index.html', MODULE_REL],
+  'production footprint is exactly index.html plus the Journal Manual Import owner');
+ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
+ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');
+ok(changed.indexOf(AUDIT_REL) >= 0, 'temporary audit removal is visible in the change set');
+ok(!changed.some((rel) => rel.startsWith('.github/')),
+  'no workflow or bootstrap script changed');
 
 const report = {
   base: {
     commit: BASE_SHA,
     tree: BASE_TREE,
-    indexChars: INDEX.length,
-    indexSha256: sha256(INDEX),
+    indexChars: BASE.length,
+    indexSha256: sha256(BASE),
   },
   selected: {
-    futureModule: FUTURE_MODULE_REL,
+    module: MODULE_REL,
     strategy: 'declarations-only; keep window exposure inline',
     start: manualAt,
     end: candidateEnd,
-    startLine: lineAt(INDEX, manualAt),
-    endLine: lineAt(INDEX, candidateEnd),
-    chars: CANDIDATE.length,
-    sha256: sha256(CANDIDATE),
+    startLine: lineAt(BASE, manualAt),
+    endLine: lineAt(BASE, candidateEnd),
+    chars: MODULE.length,
+    sha256: sha256(MODULE),
     owners: EXPECTED_SHAPE.map((entry) => entry.name),
     externalConsumers: externalUsage('apexImportJournalTradesJson'),
   },
@@ -522,19 +554,19 @@ const report = {
     wholeManualBlock: 'would advance one window write and one console log into module evaluation',
     backupPanel: 'separate DOM UI, destructive confirmation, timers, and backup transport owner',
   },
-  predictedExtraction: {
-    productionFiles: ['index.html', FUTURE_MODULE_REL],
-    permanentContract: 'tests/journal-manual-import-boundary-contract.test.js',
-    undoHelper: 'tests/lib/journal-manual-import-undo.js',
-    futureIndexChars: FUTURE_INDEX.length,
-    futureIndexSha256: sha256(FUTURE_INDEX),
+  extractionContract: {
+    productionFiles: ['index.html', MODULE_REL],
+    permanentContract: CONTRACT_REL,
+    undoHelper: UNDO_REL,
+    indexChars: INDEX.length,
+    indexSha256: sha256(INDEX),
     contractsToAdvance,
     loaderAwareConsumer: 'tests/journal-import-json.test.js',
   },
 };
 
-console.log('\nJOURNAL_MANUAL_IMPORT_AUDIT_BEGIN');
+console.log('\nJOURNAL_MANUAL_IMPORT_BOUNDARY_BEGIN');
 console.log(JSON.stringify(report, null, 2));
-console.log('JOURNAL_MANUAL_IMPORT_AUDIT_END');
+console.log('JOURNAL_MANUAL_IMPORT_BOUNDARY_END');
 console.log('\n' + pass + ' assertions passed');
-console.log('JOURNAL_MANUAL_IMPORT_AUDIT_OK');
+console.log('JOURNAL_MANUAL_IMPORT_BOUNDARY_OK');
