@@ -219,6 +219,7 @@ const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-backend-candles.js',
   './js/services/mcx-regime-policy.js',
   './js/ui/mcx-macro-check.js',
+  './js/ui/mcx-charts.js',
 ];
 const JOURNAL_EXTRACTION_SCRIPTS = [
   './js/services/journal-core.js',
@@ -2726,8 +2727,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 53,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, five MCX and seven Journal extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 54,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX and seven Journal extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2917,9 +2918,9 @@ function topLevelDeclarations(code) {
   deepEq(withTopLevel.map(function (p) { return p.name; }),
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat([
       './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
-      './js/services/journal-backend-write-through.js',
+      './js/services/journal-backend-write-through.js', './js/ui/mcx-charts.js',
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state and the audited Journal Write-through patches');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches and the MCX charts state owners');
   const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
   ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
   const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
@@ -3492,12 +3493,23 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   eq(SHIPPED_MODULES[0].fileBytes, 54514, 'Journal UI complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[0].declBytes > SIZE_CEILING,
      'the later whole-owner Journal UI intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[1].name, './js/ui/sfs-panel.js',
-     'the SFS UI panel is now the second-largest shipped module');
-  ok(SHIPPED_MODULES[1].declBytes <= SIZE_CEILING,
+  // The MCX charts/lifecycle owner is a later, independently audited relocation
+  // (owner-cohesive candidate C). Like Journal UI it is RECORDED here but must
+  // not feed back into the historical DSB ceiling — MCX_EXTRACTION_SCRIPTS
+  // excludes it from AUDIT_TIME_MODULES by exact name, so the 35,609 B ceiling
+  // is unchanged and options A–E keep their original ranking.
+  eq(SHIPPED_MODULES[1].name, './js/ui/mcx-charts.js',
+     'the later MCX charts owner is now the second-largest shipped module');
+  eq(SHIPPED_MODULES[1].declBytes, 40962, 'MCX charts declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[1].fileBytes, 44506, 'MCX charts complete file bytes are recorded separately');
+  ok(SHIPPED_MODULES[1].declBytes > SIZE_CEILING,
+     'the later whole-owner MCX charts module intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[2].name, './js/ui/sfs-panel.js',
+     'the SFS UI panel is now the third-largest shipped module');
+  ok(SHIPPED_MODULES[2].declBytes <= SIZE_CEILING,
      'the SFS UI panel remains under the unchanged historical ceiling');
-  eq(SHIPPED_MODULES[2].name, SERVICE_SRC,
-     'the DSB service is now the third-largest shipped module');
+  eq(SHIPPED_MODULES[3].name, SERVICE_SRC,
+     'the DSB service is now the fourth-largest shipped module');
 }
 note('secondary metric only — largest complete file: ' + LARGEST_SHIPPED.fileBytes +
      ' B; the ceiling above deliberately does NOT mix the two units');

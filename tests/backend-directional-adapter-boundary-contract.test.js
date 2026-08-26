@@ -660,8 +660,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(mcxMacroCheckTagIdx >= 0, 'tag order: the MCX macro-check owner is present');
   eq(journalBackupRestoreTagIdx, mcxMacroCheckTagIdx - 1,
      'tag order: Journal Backup/Restore is immediately before the MCX macro-check owner');
-  eq(mcxMacroCheckTagIdx, inlineTagIdx - 1,
-     'tag order: the MCX macro-check owner is the LAST external classic script before the inline monolith');
+  const mcxChartsTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-charts\.js$/.test(String(t.src || '')); });
+  ok(mcxChartsTagIdx >= 0, 'tag order: the MCX charts owner is present');
+  eq(mcxMacroCheckTagIdx, mcxChartsTagIdx - 1,
+     'tag order: the MCX macro-check owner is immediately before the MCX charts owner');
+  eq(mcxChartsTagIdx, inlineTagIdx - 1,
+     'tag order: the MCX charts owner is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -700,11 +704,12 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // modal that closed the family — were appended after them. Four MCX owners
 // (market context, VIX market context, backend candles, regime policy) and
 // Journal Core, Journal UI, Journal Remote, Journal Write-through and Journal
-// Migration, Manual Import and Backup/Restore were appended after those,
-// shifting these two by sixteen each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 21,
+// Migration, Manual Import and Backup/Restore were appended after those, then
+// the MCX macro-check owner and now the MCX charts/lifecycle owner, shifting
+// these two by eighteen each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 22,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 20,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 21,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
@@ -783,8 +788,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
   eq(mcxMacroCheckPart.length, 1, 'ORDER: the MCX macro-check owner is present exactly once');
   eq(PART_RANGES.indexOf(journalBackupRestorePart[0]), PART_RANGES.indexOf(mcxMacroCheckPart[0]) - 1,
      'ORDER: Journal Backup/Restore is immediately before the MCX macro-check owner');
-  eq(PART_RANGES.indexOf(mcxMacroCheckPart[0]), PART_RANGES.length - 2,
-     'ORDER: the MCX macro-check owner is the last application script before the inline monolith');
+  const mcxChartsPart = PART_RANGES.filter(function (r) { return /mcx-charts\.js$/.test(r.src); });
+  eq(mcxChartsPart.length, 1, 'ORDER: the MCX charts owner is present exactly once');
+  eq(PART_RANGES.indexOf(mcxMacroCheckPart[0]), PART_RANGES.indexOf(mcxChartsPart[0]) - 1,
+     'ORDER: the MCX macro-check owner is immediately before the MCX charts owner');
+  eq(PART_RANGES.indexOf(mcxChartsPart[0]), PART_RANGES.length - 2,
+     'ORDER: the MCX charts owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

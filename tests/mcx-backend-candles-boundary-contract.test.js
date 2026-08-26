@@ -23,6 +23,7 @@ const MODULE_REL = 'js/services/mcx-backend-candles.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
+const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
 });
@@ -51,6 +52,7 @@ const JOURNAL_MIGRATION_TAG = '<script src="./js/services/journal-migration.js">
 const JOURNAL_MANUAL_IMPORT_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const JOURNAL_BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
+const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -117,14 +119,24 @@ eq(count(INDEX, MCX2_TAG), 1, 'exactly one MCX2 tag');
 eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
-eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n' + JOURNAL_BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n',
-  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
+eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n' + JOURNAL_BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n',
+  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> inline');
 const journalAt = INDEX.indexOf(JOURNAL_TAG);
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'MCX3 loads synchronously after its predecessors and immediately before Journal Core');
 ok(!/\b(?:async|defer|type)\s*=/.test(MCX3_TAG), 'MCX3 tag is classic synchronous src-only form');
-eq(varDeclCount(INDEX, '_mcxBackendFetchInFlight'), 1, '_mcxBackendFetchInFlight remains inline exactly once');
+// _mcxBackendFetchInFlight was inline when this contract was written; the later
+// MCX charts/lifecycle relocation moved it, unchanged, into js/ui/mcx-charts.js
+// with the chart functions that read and write it. What this contract pins is
+// unchanged: MCX3 does not own it, and it still has exactly ONE declaration
+// app-wide.
 eq(varDeclCount(MODULE, '_mcxBackendFetchInFlight'), 0, '_mcxBackendFetchInFlight is not pulled into MCX3');
+eq(varDeclCount(MCX_CHARTS_MODULE, '_mcxBackendFetchInFlight'), 1,
+  '_mcxBackendFetchInFlight now lives in the MCX charts owner exactly once');
+eq(varDeclCount(APP, '_mcxBackendFetchInFlight'), 1,
+  '_mcxBackendFetchInFlight still has exactly one declaration app-wide');
+eq(varDeclCount(INDEX, '_mcxBackendFetchInFlight'), 0,
+  '_mcxBackendFetchInFlight has zero inline residue after the MCX charts relocation');
 eq(fnCount(INDEX, 'ffBackendCandlesMcxCharts'), 1, 'feature flag remains inline exactly once');
 eq(fnCount(MODULE, 'ffBackendCandlesMcxCharts'), 0, 'feature flag is not redeclared by MCX3');
 

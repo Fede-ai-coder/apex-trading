@@ -1407,12 +1407,16 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 53,
-     '4.9 index.html loads 53 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check owner');
-  eq(local[local.length - 1].src, './js/ui/mcx-macro-check.js',
-     '4.9a the MCX macro-check owner is the LAST local application script before the inline monolith');
+  eq(local.length, 54,
+     '4.9 index.html loads 54 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check and MCX charts owners');
+  eq(local[local.length - 2].src, './js/ui/mcx-macro-check.js',
+     '4.9a the MCX macro-check owner is immediately before the MCX charts owner');
   eq(local.filter((s) => s.src === './js/ui/mcx-macro-check.js').length, 1,
      '4.9b exactly one MCX macro-check tag, no duplicate');
+  eq(local[local.length - 1].src, './js/ui/mcx-charts.js',
+     '4.9c the MCX charts owner is the LAST local application script before the inline monolith');
+  eq(local.filter((s) => s.src === './js/ui/mcx-charts.js').length, 1,
+     '4.9d exactly one MCX charts tag, no duplicate');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
   eq(local.filter((s) => s.src === UI_PANEL_TAG).length, 1, '4.11 exactly one UI panel tag, no duplicate');
   eq(idx(UI_PANEL_TAG), idx('./js/services/sfs-candle-detail-4h.js') + 1,

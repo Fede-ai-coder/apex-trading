@@ -17,6 +17,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
@@ -392,21 +393,32 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
+const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
-// The MCX macro-check owner is the newest layer on top of Backup/Restore:
-// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
-// the exact document it was cut against. The helper re-verifies what it
-// hands back by length and SHA-256, so this hop is proved, not assumed.
-const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+// The MCX charts/lifecycle owner is the newest layer of all, sitting on top of
+// the MCX macro-check owner, which sits on top of Backup/Restore: peel them
+// NEWEST-FIRST, so each undo below still sees the exact document it was cut
+// against. Every helper re-verifies what it hands back by length and SHA-256,
+// so each hop is proved, not assumed.
+const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(INDEX, MCX_CHARTS_MODULE);
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
+eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
+  'peeling the MCX charts layer reaches the pinned post-#406 index length');
+eq(sha256(preMcxCharts), MCX_CHARTS_U.BASE_SHA256,
+  'peeling the MCX charts layer reaches the pinned post-#406 index hash');
+ok(MCX_CHARTS_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX charts layer being peeled');
+ok(!MCX_CHARTS_U.isApplied(preMcxCharts),
+  'the peeled document no longer carries the MCX charts tag');
 const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
 eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
 eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
-ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
-  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(MCX_MACRO_CHECK_U.isApplied(preMcxCharts),
+  'the charts-peeled index really does carry the MCX macro-check layer being peeled');
 ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
   'the peeled document no longer carries the MCX macro-check tag');
 
@@ -414,11 +426,16 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1928890, 'current post-MCX-macro-check index UTF-16 length is pinned');
-eq(sha256(INDEX), '00ffa331d568b3b81b1f5993a3a347adc4e6c8088de8be113048f85f9ba64d96',
-  'current post-MCX-macro-check index SHA-256 is pinned');
-// The post-Backup/Restore document those two lines used to pin is still pinned,
-// one layer down, by the preMcxMacroCheck assertions above.
+eq(INDEX.length, 1884429, 'current post-MCX-charts index UTF-16 length is pinned');
+eq(sha256(INDEX), 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e',
+  'current post-MCX-charts index SHA-256 is pinned');
+// The post-MCX-macro-check document those two lines used to pin is still
+// pinned, one layer down, by the preMcxCharts assertions above.
+eq(preMcxCharts.length, 1928890, 'post-MCX-macro-check index UTF-16 length is still pinned');
+eq(sha256(preMcxCharts), '00ffa331d568b3b81b1f5993a3a347adc4e6c8088de8be113048f85f9ba64d96',
+  'post-MCX-macro-check index SHA-256 is still pinned');
+// The post-Backup/Restore document is still pinned, one layer further down,
+// by the preMcxMacroCheck assertions above.
 eq(preMcxMacroCheck.length, 1933458, 'post-Backup/Restore index UTF-16 length is still pinned');
 eq(sha256(preMcxMacroCheck), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'post-Backup/Restore index SHA-256 is still pinned');
@@ -692,8 +709,8 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 eq(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
-  'js/ui/mcx-macro-check.js'
-].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore and MCX macro check');
+  'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js'
+].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check and MCX charts');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,
