@@ -46,6 +46,13 @@ const SLICE_START_LINE = 33910;
 const SLICE_END_LINE = 33997;
 const SLICE_HEAD = '// Backward-compat stub: selAgent still routes here from old code paths\n';
 const SLICE_TAIL = "    console.log('[MCX] macro check error:', e.message);\n  }\n}\n\n";
+// The last character of the removed range is the blank-line SEPARATOR between
+// the macro-check block and the EIC banner: document structure, not module
+// content. index.html gives up the whole range; the module carries all of it
+// but that one character, so it ends on a real line of code and `git diff
+// --check` sees no blank line at EOF. Reconstruction re-inserts it.
+const SEPARATOR = '\n';
+const MODULE_TAIL = "    console.log('[MCX] macro check error:', e.message);\n  }\n}\n";
 const EIC_MARKER = '// ══════════════════════════════════════════════════════════════\n// EARNINGS IRON CONDOR AGENT (EIC)\n';
 
 const BASE_CHARS = 1933458;
@@ -54,10 +61,14 @@ const BASE_INDEX_SHA256 = '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08e
 const INDEX_CHARS = 1928890;
 const INDEX_UTF8 = 1964320;
 const INDEX_SHA256 = '00ffa331d568b3b81b1f5993a3a347adc4e6c8088de8be113048f85f9ba64d96';
-const MODULE_CHARS = 4619;
-const MODULE_UTF8 = 4630;
-const MODULE_LF = 87;
-const MODULE_SHA256 = '22ccdf6e93dd73a3503973520955d345b8081a34cbdcba77ae57d247ed881ec7';
+const SLICE_CHARS = 4619;
+const SLICE_UTF8 = 4630;
+const SLICE_LF = 87;
+const SLICE_SHA256 = '22ccdf6e93dd73a3503973520955d345b8081a34cbdcba77ae57d247ed881ec7';
+const MODULE_CHARS = 4618;
+const MODULE_UTF8 = 4629;
+const MODULE_LF = 86;
+const MODULE_SHA256 = '3615d8cc98cd282b96fa8ba46d07665d52b48f6bf31523ab66009a950777fc49';
 const LOCAL_SCRIPT_COUNT = 53;
 
 const OWNER_NAMES = ['runMarketContextPanel', '_mcxRunMacroCheck', 'runMarketContextAnalysis'];
@@ -145,7 +156,8 @@ const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
 // backward-compat stub comment to the blank line before the EIC marker.
 const stubAt = BASE.indexOf(SLICE_HEAD);
 const eicAt = BASE.indexOf(EIC_MARKER, stubAt);
-const CANDIDATE = BASE.slice(stubAt, eicAt);
+const SLICE = BASE.slice(stubAt, eicAt);
+const CANDIDATE = SLICE.slice(0, -SEPARATOR.length);
 
 const APP_PARTS = APP_LOADER.loadOrderedScriptSources()
   .filter((part) => part.isAppJs && part.code != null)
@@ -504,9 +516,12 @@ eq(sha256(BASE), BASE_INDEX_SHA256, 'base index SHA-256 is pinned');
 eq(INDEX.length, INDEX_CHARS, 'extracted index UTF-16 length is the audited prediction');
 eq(Buffer.byteLength(INDEX, 'utf8'), INDEX_UTF8, 'extracted index UTF-8 byte length is the audited prediction');
 eq(sha256(INDEX), INDEX_SHA256, 'extracted index SHA-256 is the audited prediction');
-eq(INDEX.length, BASE.length - MODULE_CHARS + MODULE_TAG.length + 1,
-  'the whole index delta is exactly the removed slice plus the one added tag line');
-eq(MODULE, CANDIDATE, 'module is byte-identical to the slice derived from the base');
+eq(INDEX.length, BASE.length - SLICE_CHARS + MODULE_TAG.length + 1,
+  'the whole index delta is exactly the removed range plus the one added tag line');
+eq(MODULE, CANDIDATE,
+  'module is byte-identical to the slice derived from the base, minus its trailing separator');
+eq(MODULE + SEPARATOR, SLICE,
+  'the module plus the one separator character is exactly the removed range');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. Exact source boundary, module bytes and three-owner manifest');
@@ -515,15 +530,26 @@ eq(stubAt, SLICE_AT, 'slice starts at the exact pinned base offset');
 eq(eicAt, SLICE_END, 'slice ends at the exact pinned base offset, at the EIC marker');
 eq(lineAt(BASE, stubAt), SLICE_START_LINE, 'slice starts on line 33910 of the base');
 eq(lineAt(BASE, eicAt), SLICE_END_LINE, 'line 33997 of the base begins the EIC marker');
+eq(SLICE.length, SLICE_CHARS, 'the removed range has the exact pinned UTF-16 length');
+eq(Buffer.byteLength(SLICE, 'utf8'), SLICE_UTF8, 'the removed range has the exact pinned UTF-8 byte length');
+eq(countLiteral(SLICE, '\n'), SLICE_LF, 'the removed range carries exactly 87 LF characters');
+eq(sha256(SLICE), SLICE_SHA256, 'the removed range byte identity is pinned');
+ok(SLICE.endsWith(SLICE_TAIL),
+  'the removed range ends with the complete runMarketContextAnalysis error path and two LFs');
+eq(SLICE.slice(-SEPARATOR.length), SEPARATOR,
+  'the last character of the removed range is the structural separator');
 eq(MODULE.length, MODULE_CHARS, 'module has the exact pinned UTF-16 length');
 eq(Buffer.byteLength(MODULE, 'utf8'), MODULE_UTF8, 'module has the exact pinned UTF-8 byte length');
-eq(countLiteral(MODULE, '\n'), MODULE_LF, 'module carries exactly 87 LF characters');
+eq(countLiteral(MODULE, '\n'), MODULE_LF, 'module carries exactly 86 LF characters');
 eq(sha256(MODULE), MODULE_SHA256, 'module byte identity is pinned');
 ok(MODULE.startsWith(SLICE_HEAD), 'module starts at the backward-compat stub comment');
-ok(MODULE.endsWith(SLICE_TAIL),
-  'module ends with the complete runMarketContextAnalysis error path and two LFs');
-ok(MODULE.endsWith('\n\n'), 'module ends with exactly the two pinned trailing LF characters');
-ok(!MODULE.endsWith('\n\n\n'), 'module adds no third trailing LF');
+ok(MODULE.endsWith(MODULE_TAIL),
+  'module ends with the complete runMarketContextAnalysis error path and its own final LF');
+ok(MODULE.endsWith('}\n'), 'module ends on a real line of code, newline-terminated');
+ok(!MODULE.endsWith('\n\n'),
+  'module has NO blank line at EOF: the separator stays out, so git diff --check is clean');
+eq(MODULE_CHARS, SLICE_CHARS - SEPARATOR.length,
+  'module length is the removed range minus exactly the one separator character');
 eq(topLevelShape(MODULE), EXPECTED_SHAPE,
   'module owns exactly three declarations with pinned order, forms and sizes');
 eq(topLevelShape(MODULE).map((entry) => entry.name), OWNER_NAMES,
@@ -550,6 +576,7 @@ eq(countLiteral(MODULE, '\r'), 0, 'module carries no CR: the slice is LF-only, a
 section('3. Zero inline residue and no competing declaration app-wide');
 eq(countLiteral(INDEX, SLICE_HEAD), 0, 'the stub comment has zero inline residue after extraction');
 eq(countLiteral(INDEX, SLICE_TAIL), 0, 'the error-path tail has zero inline residue after extraction');
+eq(countLiteral(INDEX, MODULE_TAIL), 0, 'the module tail has zero inline residue after extraction');
 OWNER_NAMES.forEach((name) => {
   eq((maskLiterals(INDEX).match(new RegExp('^\\s*(?:async\\s+)?function\\s+' + escapeRegExp(name) + '\\s*\\(', 'gm')) || []).length, 0,
     'index.html declares no inline ' + name);
@@ -637,6 +664,7 @@ eq(inertHarness.log, [],
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('8. Byte-exact forward transform and reverse reconstruction of #405');
+// index.html gives up the WHOLE range, separator included.
 const withoutSlice = BASE.slice(0, SLICE_AT) + BASE.slice(SLICE_END);
 const FORWARD = withoutSlice.replace(
   BACKUP_RESTORE_TAG + '\n<script>',
@@ -645,8 +673,10 @@ const FORWARD = withoutSlice.replace(
 eq(FORWARD, INDEX, 'the extraction algorithm reproduces the shipped index byte-for-byte');
 eq(sha256(FORWARD), INDEX_SHA256, 'the forward transform hashes to the audited prediction');
 const withoutTag = INDEX.replace(MODULE_TAG + '\n', '');
-eq(withoutTag.slice(0, SLICE_AT) + MODULE + withoutTag.slice(SLICE_AT), BASE,
-  'tag removal plus byte-exact declaration reinsertion reconstructs #405');
+eq(withoutTag.slice(0, SLICE_AT) + MODULE + SEPARATOR + withoutTag.slice(SLICE_AT), BASE,
+  'tag removal plus module plus the one separator character reconstructs #405');
+ok(withoutTag.slice(0, SLICE_AT) + MODULE + withoutTag.slice(SLICE_AT) !== BASE,
+  'reinserting the module WITHOUT the separator does not reconstruct #405 — the separator is load-bearing');
 const rebuilt = U.undoMcxMacroCheck(INDEX, MODULE);
 eq(rebuilt, BASE, 'the undo helper reconstructs merged #405 byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the pinned base hash');
@@ -656,6 +686,11 @@ eq(U.SLICE_AT, SLICE_AT, 'undo helper pins the exact reinsertion offset');
 eq(U.SLICE_END, SLICE_END, 'undo helper pins the exact slice end offset');
 eq(U.MODULE_CHARS, MODULE_CHARS, 'undo helper pins the module length');
 eq(U.MODULE_SHA256, sha256(MODULE), 'undo helper pins the module hash');
+eq(U.SEPARATOR, SEPARATOR, 'undo helper pins the one-character structural separator');
+eq(U.SLICE_CHARS, SLICE_CHARS, 'undo helper pins the removed range length');
+eq(U.SLICE_SHA256, SLICE_SHA256, 'undo helper pins the removed range hash');
+eq(U.MODULE_CHARS + U.SEPARATOR.length, U.SLICE_CHARS,
+  'undo helper module + separator accounts for the whole removed range');
 eq(U.BASE_CHARS, BASE_CHARS, 'undo helper pins the base length');
 eq(U.EXTRACTED_CHARS, INDEX.length, 'undo helper pins the extracted length');
 eq(U.EXTRACTED_SHA256, sha256(INDEX), 'undo helper pins the extracted hash');
@@ -978,6 +1013,11 @@ section('10. Exact prompt construction and success transcript');
     'a same-length truncation mutation is rejected by the identity pin');
   ok(sha256(MODULE.replace("var riskColor=riskLevel==='CRITICAL'?'var(--rd)'", "var riskColor=riskLevel==='CRITICAL'?'var(--am)'")) !== MODULE_SHA256,
     'a same-length risk-color mutation is rejected by the identity pin');
+  // The separator must not drift back into the module, in either direction.
+  throws(() => U.undoMcxMacroCheck(INDEX, MODULE + SEPARATOR), /MODULE_IDENTITY/,
+    'a module that re-absorbed the separator is rejected');
+  throws(() => U.undoMcxMacroCheck(INDEX, MODULE.slice(0, -1)), /MODULE_IDENTITY/,
+    'a module missing its own final LF is rejected');
   ok(moduleOrderViolations(INDEX.replace(MODULE_TAG + '\n', '')).includes('tag-count'),
     'missing module tag mutant is rejected');
   ok(moduleOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG)).includes('tag-count'),
@@ -1076,6 +1116,11 @@ section('10. Exact prompt construction and success transcript');
       end: SLICE_END,
       startLine: SLICE_START_LINE,
       endLine: SLICE_END_LINE - 1,
+      removedRangeChars: SLICE.length,
+      removedRangeUtf8Bytes: Buffer.byteLength(SLICE, 'utf8'),
+      removedRangeLf: countLiteral(SLICE, '\n'),
+      removedRangeSha256: sha256(SLICE),
+      separator: 'the final LF of the removed range is the MCX/EIC structural separator, re-inserted on undo',
       chars: MODULE.length,
       utf8Bytes: Buffer.byteLength(MODULE, 'utf8'),
       lf: countLiteral(MODULE, '\n'),
