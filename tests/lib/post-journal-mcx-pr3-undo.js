@@ -1,12 +1,14 @@
 'use strict';
-// Current-app reconstruction bridge after Manual Import + Journal Migration +
-// Write-through + Journal Remote + Journal UI + Regime Policy + Journal Core.
-// Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Manual Import relocation first, then Migration, Write-through, Journal
-// Remote, Journal UI, Regime Policy, Journal Core, and finally delegate to the
-// original MCX3 identity guard. All layers remain independently fail-closed.
+// Current-app reconstruction bridge after Backup/Restore + Manual Import +
+// Journal Migration + Write-through + Journal Remote + Journal UI + Regime
+// Policy + Journal Core. Historical contracts that need to reach the pre-MCX3
+// tree must undo the newest Backup/Restore relocation first, then Manual
+// Import, Migration, Write-through, Journal Remote, Journal UI, Regime Policy,
+// Journal Core, and finally delegate to the original MCX3 identity guard. All
+// layers remain independently fail-closed.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_BACKUP_RESTORE = require('./journal-backup-restore-undo.js');
 const JOURNAL_MANUAL_IMPORT = require('./journal-manual-import-undo.js');
 const JOURNAL_MIGRATION = require('./journal-migration-undo.js');
 const JOURNAL_WRITE_THROUGH = require('./journal-backend-write-through-undo.js');
@@ -16,6 +18,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_BACKUP_RESTORE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'journal-backup-restore.js'),
+  'utf8'
+);
 const JOURNAL_MANUAL_IMPORT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-manual-import.js'),
   'utf8'
@@ -46,9 +52,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preManualImport = JOURNAL_MANUAL_IMPORT.isApplied(html)
-    ? JOURNAL_MANUAL_IMPORT.undoJournalManualImport(html, JOURNAL_MANUAL_IMPORT_SOURCE)
+  const preBackupRestore = JOURNAL_BACKUP_RESTORE.isApplied(html)
+    ? JOURNAL_BACKUP_RESTORE.undoJournalBackupRestore(html, JOURNAL_BACKUP_RESTORE_SOURCE)
     : html;
+  const preManualImport = JOURNAL_MANUAL_IMPORT.isApplied(preBackupRestore)
+    ? JOURNAL_MANUAL_IMPORT.undoJournalManualImport(preBackupRestore, JOURNAL_MANUAL_IMPORT_SOURCE)
+    : preBackupRestore;
   const preMigration = JOURNAL_MIGRATION.isApplied(preManualImport)
     ? JOURNAL_MIGRATION.undoJournalMigration(preManualImport, JOURNAL_MIGRATION_SOURCE)
     : preManualImport;

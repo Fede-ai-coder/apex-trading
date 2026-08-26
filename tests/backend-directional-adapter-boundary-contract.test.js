@@ -652,8 +652,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(journalManualImportTagIdx >= 0, 'tag order: the Journal Manual Import owner is present');
   eq(journalMigrationTagIdx, journalManualImportTagIdx - 1,
      'tag order: Journal Migration is immediately before Journal Manual Import');
-  eq(journalManualImportTagIdx, inlineTagIdx - 1,
-     'tag order: Journal Manual Import is the LAST external classic script before the inline monolith');
+  const journalBackupRestoreTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /journal-backup-restore\.js$/.test(String(t.src || '')); });
+  ok(journalBackupRestoreTagIdx >= 0, 'tag order: the Journal Backup/Restore owner is present');
+  eq(journalManualImportTagIdx, journalBackupRestoreTagIdx - 1,
+     'tag order: Journal Manual Import is immediately before Journal Backup/Restore');
+  eq(journalBackupRestoreTagIdx, inlineTagIdx - 1,
+     'tag order: Journal Backup/Restore is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -692,10 +696,11 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // modal that closed the family — were appended after them. Four MCX owners
 // (market context, VIX market context, backend candles, regime policy) and
 // Journal Core, Journal UI, Journal Remote, Journal Write-through and Journal
-// Migration and Manual Import were appended after those, shifting these two by fifteen each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 19,
+// Migration, Manual Import and Backup/Restore were appended after those,
+// shifting these two by sixteen each.
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 20,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 18,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 19,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
@@ -764,8 +769,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 18,
   eq(journalManualImportPart.length, 1, 'ORDER: the Journal Manual Import owner is present exactly once');
   eq(PART_RANGES.indexOf(journalMigrationPart[0]), PART_RANGES.indexOf(journalManualImportPart[0]) - 1,
      'ORDER: Journal Migration is immediately before Journal Manual Import');
-  eq(PART_RANGES.indexOf(journalManualImportPart[0]), PART_RANGES.length - 2,
-     'ORDER: Journal Manual Import is the last application script before the inline monolith');
+  const journalBackupRestorePart = PART_RANGES.filter(function (r) { return /journal-backup-restore\.js$/.test(r.src); });
+  eq(journalBackupRestorePart.length, 1, 'ORDER: the Journal Backup/Restore owner is present exactly once');
+  eq(PART_RANGES.indexOf(journalManualImportPart[0]), PART_RANGES.indexOf(journalBackupRestorePart[0]) - 1,
+     'ORDER: Journal Manual Import is immediately before Journal Backup/Restore');
+  eq(PART_RANGES.indexOf(journalBackupRestorePart[0]), PART_RANGES.length - 2,
+     'ORDER: Journal Backup/Restore is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

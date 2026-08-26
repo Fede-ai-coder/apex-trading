@@ -57,6 +57,12 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
+const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
+// Backup/Restore is the seventh Journal owner and was extracted after this one.
+// Undoing it yields the index exactly as THIS extraction shipped it, so every
+// Manual-Import-layer assertion below stays pinned to its own byte identity.
+const POST_MANUAL_INDEX = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-manual-import-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
@@ -77,8 +83,8 @@ const CANDIDATE = BASE.slice(manualAt, candidateEnd);
 const EXPOSURE = BASE.slice(candidateEnd, exposureEnd);
 const WHOLE_MANUAL = BASE.slice(manualAt, exposureEnd);
 const BACKUP_ONLY = BASE.slice(backupAt, inlineCloseAt);
-const currentExposureAt = INDEX.indexOf(EXPOSURE_PREFIX);
-const currentBackupAt = INDEX.indexOf(BACKUP_MARKER);
+const currentExposureAt = POST_MANUAL_INDEX.indexOf(EXPOSURE_PREFIX);
+const currentBackupAt = POST_MANUAL_INDEX.indexOf(BACKUP_MARKER);
 
 const APP_PARTS = APP_LOADER.loadOrderedScriptSources()
   .filter((part) => part.isAppJs && part.code != null)
@@ -315,15 +321,20 @@ eq(execFileSync('git', ['rev-parse', BASE_SHA + '^{tree}'], {
 eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
-eq(INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
+eq(INDEX.length, 1933458, 'current index UTF-16 length is the post-Backup/Restore value');
+eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
+  'current index SHA-256 is the post-Backup/Restore value');
+eq(countLiteral(INDEX, '<script src="./js/ui/journal-backup-restore.js"></script>'), 1,
+  'the seventh Journal owner loads exactly once in the current index');
+eq(sha256(POST_MANUAL_INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
   'extracted index SHA-256 is the audited prediction');
 eq(MODULE, CANDIDATE, 'module is byte-identical to the audited declaration slice');
 
 section('2. Exact residual boundaries and ownership shape');
 eq(countLiteral(BASE, MANUAL_MARKER), 1, 'manual-import marker is unique in the audit base');
-eq(countLiteral(INDEX, MANUAL_MARKER), 0, 'manual-import declaration marker has zero inline residue');
-eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'Backup/Restore marker is unique');
+eq(countLiteral(POST_MANUAL_INDEX, MANUAL_MARKER), 0, 'manual-import declaration marker has zero inline residue');
+eq(countLiteral(POST_MANUAL_INDEX, BACKUP_MARKER), 1, 'Backup/Restore marker is unique');
 ok(manualAt >= 0 && manualAt < candidateEnd && candidateEnd < backupAt && backupAt < inlineCloseAt,
   'physical order is declarations -> exposure glue -> Backup/Restore UI');
 eq(manualAt, 1932685, 'candidate starts at exact post-#402 offset');
@@ -354,9 +365,9 @@ eq(observeTopLevel(WHOLE_MANUAL), ['window.apexImportJournalTradesJson', 'consol
 eq(directEffects(EXPOSURE).window, 1, 'exposure glue owns exactly one window write');
 eq((maskLiterals(EXPOSURE).match(/\bconsole\s*\.\s*log\s*\(/g) || []).length, 1,
   'exposure glue owns exactly one availability log');
-eq(INDEX.slice(currentExposureAt, currentBackupAt - 1), EXPOSURE,
+eq(POST_MANUAL_INDEX.slice(currentExposureAt, currentBackupAt - 1), EXPOSURE,
   'exposure glue remains byte-exactly inline after extraction');
-eq(INDEX.slice(currentBackupAt, currentBackupAt + BACKUP_MARKER.length), BACKUP_MARKER,
+eq(POST_MANUAL_INDEX.slice(currentBackupAt, currentBackupAt + BACKUP_MARKER.length), BACKUP_MARKER,
   'the adjacent Backup/Restore marker remains byte-exact');
 
 const indexWithoutCandidate = BASE.slice(0, manualAt) + BASE.slice(candidateEnd);
@@ -364,11 +375,11 @@ const EXTRACTED_INDEX = indexWithoutCandidate.replace(
   MIGRATION_TAG + '\n<script>',
   MIGRATION_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-eq(EXTRACTED_INDEX, INDEX, 'audited extraction algorithm reproduces the shipped index byte-for-byte');
-eq(countLiteral(INDEX, EXPOSURE_PREFIX), 1, 'inline monolith retains the exposure exactly once');
-eq(moduleOrderViolations(INDEX), [],
+eq(EXTRACTED_INDEX, POST_MANUAL_INDEX, 'audited extraction algorithm reproduces the shipped index byte-for-byte');
+eq(countLiteral(POST_MANUAL_INDEX, EXPOSURE_PREFIX), 1, 'inline monolith retains the exposure exactly once');
+eq(moduleOrderViolations(POST_MANUAL_INDEX), [],
   'classic service loads after Migration and immediately before the inline monolith');
-const extractedWithoutTag = INDEX.replace(MODULE_TAG + '\n', '');
+const extractedWithoutTag = POST_MANUAL_INDEX.replace(MODULE_TAG + '\n', '');
 eq(extractedWithoutTag.slice(0, manualAt) + MODULE + extractedWithoutTag.slice(manualAt), BASE,
   'tag removal plus byte-exact declaration insertion reconstructs #403');
 
@@ -460,26 +471,29 @@ for (const rel of contractsToAdvance) {
   const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
   ok(source.includes('journal-manual-import.js') ||
      source.includes('journal-manual-import\\.js') ||
-     source.includes('six Journal owners'),
-     rel + ' recognizes the sixth Journal owner or the current classic-script tail');
+     source.includes('six Journal owners') ||
+     source.includes('journal-backup-restore.js') ||
+     source.includes('journal-backup-restore\\.js') ||
+     source.includes('seven Journal owners'),
+     rel + ' recognizes the sixth or seventh Journal owner, or the current classic-script tail');
 }
 ok(fs.readFileSync(path.join(ROOT, 'tests/lib/post-journal-mcx-pr3-undo.js'), 'utf8')
   .includes('undoJournalManualImport'),
   'cumulative historical helper starts by undoing Manual Import');
 
 section('8. Byte-exact undo and mutation-sensitive negative controls');
-const rebuilt = U.undoJournalManualImport(INDEX, MODULE);
+const rebuilt = U.undoJournalManualImport(POST_MANUAL_INDEX, MODULE);
 eq(rebuilt, BASE, 'Manual Import undo reconstructs merged #403 byte-for-byte');
 eq(sha256(rebuilt), U.BASE_SHA256, 'round-trip SHA-256 is the audited base hash');
 const preMigration = MIGRATION_U.undoJournalMigration(rebuilt, MIGRATION_MODULE);
 eq(preMigration.length, MIGRATION_U.BASE_CHARS, 'cumulative undo reaches the pre-Migration base');
 eq(sha256(preMigration), MIGRATION_U.BASE_SHA256, 'cumulative undo hash matches the pre-Migration base');
-assert.throws(() => U.undoJournalManualImport(INDEX, MODULE + ' '), /MODULE_IDENTITY/);
+assert.throws(() => U.undoJournalManualImport(POST_MANUAL_INDEX, MODULE + ' '), /MODULE_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalManualImport(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+assert.throws(() => U.undoJournalManualImport(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
   /TAG_IDENTITY/);
 pass++;
-assert.throws(() => U.undoJournalManualImport(INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
+assert.throws(() => U.undoJournalManualImport(POST_MANUAL_INDEX.replace(MODULE_TAG, ''), MODULE), /TAG_IDENTITY/);
 pass++;
 
 ok(boundaryViolations(MODULE.replace(
@@ -504,22 +518,22 @@ ok(boundaryViolations(
 ).includes('competing-owner'), 'competing later importer owner mutant is rejected');
 ok(sha256(MODULE.replace('var imported = 0', 'var imported = 1')) !== sha256(MODULE),
   'same-length behavior mutation is rejected by the identity pin');
-ok(moduleOrderViolations(INDEX.replace(MODULE_TAG + '\n', '')).includes('tag-count'),
+ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG + '\n', '')).includes('tag-count'),
   'missing module tag mutant is rejected');
-ok(moduleOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG))
+ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG))
   .includes('tag-count'), 'duplicate module tag mutant is rejected');
-ok(moduleOrderViolations(INDEX.replace(
+ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(
   MIGRATION_TAG + '\n' + MODULE_TAG,
   MODULE_TAG + '\n' + MIGRATION_TAG
 )).includes('load-order'), 'Manual-Import-before-Migration mutant is rejected');
-ok(moduleOrderViolations(INDEX.replace(MODULE_TAG, MODULE_TAG.replace('>', ' defer>')))
+ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replace('>', ' defer>')))
   .includes('classic-tag'), 'deferred module tag mutant is rejected');
 
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the Journal Manual Import owner');
+eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/journal-backup-restore.js'],
+  'production footprint is exactly index.html plus the Journal Manual Import and Backup/Restore owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'temporary audit removal is visible in the change set');
@@ -558,8 +572,8 @@ const report = {
     productionFiles: ['index.html', MODULE_REL],
     permanentContract: CONTRACT_REL,
     undoHelper: UNDO_REL,
-    indexChars: INDEX.length,
-    indexSha256: sha256(INDEX),
+    indexChars: POST_MANUAL_INDEX.length,
+    indexSha256: sha256(POST_MANUAL_INDEX),
     contractsToAdvance,
     loaderAwareConsumer: 'tests/journal-import-json.test.js',
   },

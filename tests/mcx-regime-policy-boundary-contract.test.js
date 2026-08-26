@@ -18,6 +18,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -83,6 +84,7 @@ const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -149,11 +151,13 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n',
-  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n',
+  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&
-  migrationAt > writeAt && INDEX.indexOf(MANUAL_TAG) > migrationAt && inlineAt > INDEX.indexOf(MANUAL_TAG),
+  migrationAt > writeAt && INDEX.indexOf(MANUAL_TAG) > migrationAt &&
+  INDEX.indexOf(BACKUP_RESTORE_TAG) > INDEX.indexOf(MANUAL_TAG) &&
+  inlineAt > INDEX.indexOf(BACKUP_RESTORE_TAG),
   'Regime Policy loads before Journal UI / Journal Remote / Write-through / Migration / residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(REGIME_TAG), 'Regime Policy tag is classic synchronous src-only form');
 for (const name of INLINE_TRANSITION.concat(INLINE_RENDER)) {
@@ -223,7 +227,10 @@ section('5. regime classification and conditional-risk semantics are unchanged')
 
 section('6. byte-exact undo and mutation-sensitive negative controls');
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
-const preManual = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
+// The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+const preManual = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const preMigration = MIGRATION_U.undoJournalMigration(preManual, MIGRATION_MODULE);
 const preWrite = WRITE_U.undoJournalBackendWriteThrough(preMigration, WRITE_MODULE);
 const preRemote = REMOTE_U.undoJournalRemotePersistence(preWrite, REMOTE_MODULE);

@@ -20,6 +20,7 @@ const BASE_TREE = '55dd52392c00956e4893d195e6edd7f6636c6e14';
 const MODULE_REL = 'js/services/journal-migration.js';
 const MODULE_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const CONTRACT_REL = 'tests/journal-migration-boundary-contract.test.js';
 const UNDO_REL = 'tests/lib/journal-migration-undo.js';
 
@@ -62,7 +63,11 @@ const EXPECTED_DEPENDENCIES = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
+const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
+const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
+// The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
 const MANUAL_MODULE = fs.readFileSync(
   path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8'
 );
@@ -383,8 +388,11 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1944246, 'post-Manual-Import index UTF-16 length is pinned');
-eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+eq(INDEX.length, 1933458, 'current post-Backup/Restore index UTF-16 length is pinned');
+eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
+  'current post-Backup/Restore index SHA-256 is pinned');
+eq(preBackupRestore.length, 1944246, 'post-Manual-Import index UTF-16 length is pinned');
+eq(sha256(preBackupRestore), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
   'post-Manual-Import index SHA-256 is pinned');
 eq(countLiteral(INDEX, MODULE_TAG), 1, 'index loads the migration module exactly once');
 
@@ -430,7 +438,12 @@ eq(ownerDeclarationCounts(OUTSIDE_APP), { state: 0, migrate: 0 },
 eq(countLiteral(INDEX, MIGRATION_MARKER), 0, 'migration marker has zero inline residue');
 eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 0, 'manual-import marker has zero inline residue');
 eq(countLiteral(MANUAL_MODULE, MANUAL_IMPORT_MARKER), 1, 'manual-import marker lives in its module exactly once');
-eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'Backup/Restore marker remains inline exactly once');
+eq(countLiteral(INDEX, BACKUP_MARKER), 0,
+  'Backup/Restore marker has zero inline residue now that it is the seventh Journal owner');
+eq(countLiteral(preBackupRestore, BACKUP_MARKER), 1,
+  'Backup/Restore marker was inline exactly once before its extraction');
+eq(countLiteral(BACKUP_RESTORE_MODULE, BACKUP_MARKER), 1,
+  'Backup/Restore marker lives in its module exactly once');
 
 section('3. Inert classic evaluation, exact load order, and reconstruction');
 const load = loadCandidate(MODULE);
@@ -438,11 +451,11 @@ ok(load.ok, 'module evaluates with zero call-time dependencies present: ' + load
 eq(load.sandbox._jMigrationDone, false, 'classic evaluation initializes only the false session latch');
 eq(typeof load.sandbox.jMigrateApexTradesToBackend, 'function', 'classic evaluation exposes the async owner');
 
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n<script>'), 1,
-  'Migration loads after Write-through and immediately before Manual Import');
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n<script>'), 1,
+  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then the inline monolith');
 eq(moduleOrderViolations(INDEX), [],
   'order is Core -> UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
-const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const indexWithoutTag = preManualIndex.replace(
   WRITE_TAG + '\n' + MODULE_TAG + '\n<script>',
   WRITE_TAG + '\n<script>'
@@ -605,8 +618,11 @@ for (const rel of contractsToAdvance) {
   const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
   ok(source.includes('journal-manual-import.js') ||
      source.includes('journal-manual-import\\.js') ||
-     source.includes('six Journal owners'),
-     rel + ' recognizes the sixth Journal owner or the current classic-script tail');
+     source.includes('six Journal owners') ||
+     source.includes('journal-backup-restore.js') ||
+     source.includes('journal-backup-restore\\.js') ||
+     source.includes('seven Journal owners'),
+     rel + ' recognizes the sixth or seventh Journal owner, or the current classic-script tail');
 }
 
 section('7. Byte-exact undo and mutation-sensitive negative controls');
@@ -662,8 +678,9 @@ eq(identifierCountMasked(maskLiterals(
 section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/journal-manual-import.js', MODULE_REL],
-  'production footprint includes index.html plus Migration and the later Manual Import owner');
+eq(changedProduction, ['index.html', 'js/services/journal-manual-import.js', MODULE_REL,
+  'js/ui/journal-backup-restore.js'],
+  'production footprint includes index.html plus Migration and the later Manual Import and Backup/Restore owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Journal Migration contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Journal Migration undo helper is part of the change');
 ok(changed.indexOf('tests/temporary-journal-migration-audit.test.js') >= 0,

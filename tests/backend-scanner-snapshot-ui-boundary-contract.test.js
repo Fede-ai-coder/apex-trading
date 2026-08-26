@@ -1109,6 +1109,7 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   const JOURNAL_WRITE_THROUGH_REL = './js/services/journal-backend-write-through.js';
   const JOURNAL_MIGRATION_REL = './js/services/journal-migration.js';
   const JOURNAL_MANUAL_IMPORT_REL = './js/services/journal-manual-import.js';
+  const JOURNAL_BACKUP_RESTORE_REL = './js/ui/journal-backup-restore.js';
   eq(idx(PRETRADE_MODAL_REL), idx(MCX_REL) - 1, 'the PRETRADE risk-modal owner is immediately before the MCX market-context owner');
   eq(idx(MCX_REL), idx(MCX_VIX_REL) - 1, 'the MCX market-context owner is immediately before the MCX VIX owner');
   eq(idx(MCX_VIX_REL), idx(MCX_BACKEND_REL) - 1, 'the MCX VIX owner is immediately before the MCX backend-candle owner');
@@ -1122,8 +1123,10 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      'Journal Write-through is immediately before Journal Migration');
   eq(idx(JOURNAL_MIGRATION_REL), idx(JOURNAL_MANUAL_IMPORT_REL) - 1,
      'Journal Migration is immediately before Journal Manual Import');
-  eq(idx(JOURNAL_MANUAL_IMPORT_REL), SCRIPT_ORDER.length - 2,
-     'Journal Manual Import is the last external script before the monolith');
+  eq(idx(JOURNAL_MANUAL_IMPORT_REL), idx(JOURNAL_BACKUP_RESTORE_REL) - 1,
+     'Journal Manual Import is immediately before Journal Backup/Restore');
+  eq(idx(JOURNAL_BACKUP_RESTORE_REL), SCRIPT_ORDER.length - 2,
+     'Journal Backup/Restore is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1134,7 +1137,7 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, '(inline)'],
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, '(inline)'],
          'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX and all Journal owners before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
@@ -3375,6 +3378,7 @@ section('29. script order');
     './js/services/journal-backend-write-through.js',
     './js/services/journal-migration.js',
     './js/services/journal-manual-import.js',
+    './js/ui/journal-backup-restore.js',
   ];
   const REGIME_POLICY_EXTRACTION_SCRIPTS = ['./js/services/mcx-regime-policy.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS

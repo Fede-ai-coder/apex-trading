@@ -49,6 +49,7 @@ const JOURNAL_REMOTE_TAG = '<script src="./js/services/journal-remote-persistenc
 const JOURNAL_WRITE_THROUGH_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const JOURNAL_MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const JOURNAL_MANUAL_IMPORT_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const JOURNAL_BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -115,8 +116,8 @@ eq(count(INDEX, MCX2_TAG), 1, 'exactly one MCX2 tag');
 eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
-eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n',
-  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> inline');
+eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n' + JOURNAL_BACKUP_RESTORE_TAG + '\n',
+  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
 const journalAt = INDEX.indexOf(JOURNAL_TAG);
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'MCX3 loads synchronously after its predecessors and immediately before Journal Core');

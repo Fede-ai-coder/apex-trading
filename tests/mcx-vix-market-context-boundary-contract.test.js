@@ -23,6 +23,7 @@ const JOURNAL_REMOTE_REL = 'js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js';
 const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
 const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
+const JOURNAL_BACKUP_RESTORE_REL = 'js/ui/journal-backup-restore.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -235,8 +236,16 @@ const journalManualImportAt = INDEX.indexOf(journalManualImportTag);
 const afterManualAt = INDEX.indexOf('<script', journalManualImportAt + journalManualImportTag.length);
 const afterManualEnd = afterManualAt >= 0 ? INDEX.indexOf('>', afterManualAt) : -1;
 const afterManualTag = afterManualEnd >= 0 ? INDEX.slice(afterManualAt, afterManualEnd + 1) : '';
-ok(journalManualImportAt > journalMigrationAt && !/\bsrc\s*=/i.test(afterManualTag),
-  'Journal Manual Import loads immediately before the residual inline application script');
+ok(journalManualImportAt > journalMigrationAt &&
+   afterManualTag === '<script src="./' + JOURNAL_BACKUP_RESTORE_REL + '">',
+  'Journal Manual Import loads immediately before Journal Backup/Restore');
+const journalBackupRestoreTag = '<script src="./' + JOURNAL_BACKUP_RESTORE_REL + '"></script>';
+const journalBackupRestoreAt = INDEX.indexOf(journalBackupRestoreTag);
+const afterBackupAt = INDEX.indexOf('<script', journalBackupRestoreAt + journalBackupRestoreTag.length);
+const afterBackupEnd = afterBackupAt >= 0 ? INDEX.indexOf('>', afterBackupAt) : -1;
+const afterBackupTag = afterBackupEnd >= 0 ? INDEX.slice(afterBackupAt, afterBackupEnd + 1) : '';
+ok(journalBackupRestoreAt > journalManualImportAt && !/\bsrc\s*=/i.test(afterBackupTag),
+  'Journal Backup/Restore loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.
