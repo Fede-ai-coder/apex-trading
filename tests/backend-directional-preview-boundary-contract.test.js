@@ -137,6 +137,7 @@ const JOURNAL_WRITE_THROUGH_REL = './js/services/journal-backend-write-through.j
 const JOURNAL_MIGRATION_REL = './js/services/journal-migration.js';
 const JOURNAL_MANUAL_IMPORT_REL = './js/services/journal-manual-import.js';
 const JOURNAL_BACKUP_RESTORE_REL = './js/ui/journal-backup-restore.js';
+const MCX_MACRO_CHECK_REL = './js/ui/mcx-macro-check.js';
 
 // ── Test harness ─────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -2348,8 +2349,12 @@ section('30. physical script order');
   ok(iJournalBackupRestore >= 0, 'index.html loads the Journal Backup/Restore script');
   eq(iJournalManualImport, iJournalBackupRestore - 1,
      'ORDER: Journal Manual Import is immediately before Journal Backup/Restore');
-  eq(iJournalBackupRestore, srcs.length - 2,
-     'ORDER: Journal Backup/Restore is the LAST external script before the inline monolith');
+  const iMcxMacroCheck = srcs.indexOf(MCX_MACRO_CHECK_REL);
+  ok(iMcxMacroCheck >= 0, 'index.html loads the MCX macro-check script');
+  eq(iJournalBackupRestore, iMcxMacroCheck - 1,
+     'ORDER: Journal Backup/Restore is immediately before the MCX macro-check owner');
+  eq(iMcxMacroCheck, srcs.length - 2,
+     'ORDER: the MCX macro-check owner is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2436,8 +2441,12 @@ section('30. physical script order');
   ok(journalBackupRestoreTagIdx >= 0, 'tag order: the Journal Backup/Restore owner is present');
   eq(journalManualImportTagIdx, journalBackupRestoreTagIdx - 1,
      'tag order: Journal Manual Import is immediately before Journal Backup/Restore');
-  eq(journalBackupRestoreTagIdx, inlineTagIdx - 1,
-     'tag order: Journal Backup/Restore is the LAST script tag before the inline monolith');
+  const mcxMacroCheckTagIdx = TAGS.findIndex(function (t) { return /mcx-macro-check\.js$/.test(clean(t.src)); });
+  ok(mcxMacroCheckTagIdx >= 0, 'tag order: the MCX macro-check owner is present');
+  eq(journalBackupRestoreTagIdx, mcxMacroCheckTagIdx - 1,
+     'tag order: Journal Backup/Restore is immediately before the MCX macro-check owner');
+  eq(mcxMacroCheckTagIdx, inlineTagIdx - 1,
+     'tag order: the MCX macro-check owner is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
@@ -2487,8 +2496,8 @@ section('30. physical script order');
   }).map(function (p) { return String(p.src); }).sort(),
      [BSS_PANEL_REL, DSB_PANEL_REL, PREVIEW_REL, SFS_PANEL_REL, PESS_BATCH_PANEL_REL, PESS_UI_PANEL_REL,
       EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL, PRETRADE_RISK_MODAL_REL, JOURNAL_UI_REL,
-      JOURNAL_BACKUP_RESTORE_REL].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly twelve named scripts, including the later Journal UI and Backup/Restore owners');
+      JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly thirteen named scripts, including the later Journal UI, Backup/Restore and MCX macro-check owners');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');

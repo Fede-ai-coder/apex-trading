@@ -656,8 +656,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(journalBackupRestoreTagIdx >= 0, 'tag order: the Journal Backup/Restore owner is present');
   eq(journalManualImportTagIdx, journalBackupRestoreTagIdx - 1,
      'tag order: Journal Manual Import is immediately before Journal Backup/Restore');
-  eq(journalBackupRestoreTagIdx, inlineTagIdx - 1,
-     'tag order: Journal Backup/Restore is the LAST external classic script before the inline monolith');
+  const mcxMacroCheckTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /mcx-macro-check\.js$/.test(String(t.src || '')); });
+  ok(mcxMacroCheckTagIdx >= 0, 'tag order: the MCX macro-check owner is present');
+  eq(journalBackupRestoreTagIdx, mcxMacroCheckTagIdx - 1,
+     'tag order: Journal Backup/Restore is immediately before the MCX macro-check owner');
+  eq(mcxMacroCheckTagIdx, inlineTagIdx - 1,
+     'tag order: the MCX macro-check owner is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -698,10 +702,12 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // Journal Core, Journal UI, Journal Remote, Journal Write-through and Journal
 // Migration, Manual Import and Backup/Restore were appended after those,
 // shifting these two by sixteen each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 20,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 21,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 19,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 20,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
+   'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
 {
   const dsbAdapterPart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-adapter\.js$/.test(r.src); });
   const dsbServicePart = PART_RANGES.filter(function (r) { return /backend-directional-snapshot-service\.js$/.test(r.src); });
@@ -773,8 +779,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 19,
   eq(journalBackupRestorePart.length, 1, 'ORDER: the Journal Backup/Restore owner is present exactly once');
   eq(PART_RANGES.indexOf(journalManualImportPart[0]), PART_RANGES.indexOf(journalBackupRestorePart[0]) - 1,
      'ORDER: Journal Manual Import is immediately before Journal Backup/Restore');
-  eq(PART_RANGES.indexOf(journalBackupRestorePart[0]), PART_RANGES.length - 2,
-     'ORDER: Journal Backup/Restore is the last application script before the inline monolith');
+  const mcxMacroCheckPart = PART_RANGES.filter(function (r) { return /mcx-macro-check\.js$/.test(r.src); });
+  eq(mcxMacroCheckPart.length, 1, 'ORDER: the MCX macro-check owner is present exactly once');
+  eq(PART_RANGES.indexOf(journalBackupRestorePart[0]), PART_RANGES.indexOf(mcxMacroCheckPart[0]) - 1,
+     'ORDER: Journal Backup/Restore is immediately before the MCX macro-check owner');
+  eq(PART_RANGES.indexOf(mcxMacroCheckPart[0]), PART_RANGES.length - 2,
+     'ORDER: the MCX macro-check owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

@@ -18,6 +18,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
@@ -85,6 +86,7 @@ const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js">
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
+const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -151,7 +153,7 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n',
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n',
   'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&
@@ -227,9 +229,24 @@ section('5. regime classification and conditional-risk semantics are unchanged')
 
 section('6. byte-exact undo and mutation-sensitive negative controls');
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
-const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+// The MCX macro-check owner is the newest layer on top of Backup/Restore:
+// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
+// the exact document it was cut against. The helper re-verifies what it
+// hands back by length and SHA-256, so this hop is proved, not assumed.
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
+eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
+eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
+ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
+  'the peeled document no longer carries the MCX macro-check tag');
+
 const preManual = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const preMigration = MIGRATION_U.undoJournalMigration(preManual, MIGRATION_MODULE);
 const preWrite = WRITE_U.undoJournalBackendWriteThrough(preMigration, WRITE_MODULE);

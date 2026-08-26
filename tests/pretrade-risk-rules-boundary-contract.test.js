@@ -337,7 +337,7 @@ const JOURNAL_REMOTE_REL='js/services/journal-remote-persistence.js';
 const JOURNAL_WRITE_THROUGH_REL='js/services/journal-backend-write-through.js';
 const JOURNAL_MIGRATION_REL='js/services/journal-migration.js';
 const JOURNAL_MANUAL_IMPORT_REL='js/services/journal-manual-import.js';
-const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL,JOURNAL_MIGRATION_REL,JOURNAL_MANUAL_IMPORT_REL, 'js/ui/journal-backup-restore.js'];
+const allowedProduction=['index.html',MODULE_REL,TECHNICALS_REL,MODAL_REL,MCX_MODULE_REL,MCX_VIX_MODULE_REL,MCX_BACKEND_CANDLES_REL,JOURNAL_CORE_REL,'js/services/mcx-regime-policy.js','js/ui/journal-ui.js',JOURNAL_REMOTE_REL,JOURNAL_WRITE_THROUGH_REL,JOURNAL_MIGRATION_REL,JOURNAL_MANUAL_IMPORT_REL, 'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js'];
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
 same(changedProduction,allowedProduction.slice().sort(),'production footprint is exactly index.html + all three stacked PRETRADE owners + all four MCX owners + seven Journal owners');
 const maintenanceScopeChanged=execFileSync('git',['diff','--name-only','9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);

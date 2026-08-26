@@ -1125,8 +1125,11 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      'Journal Migration is immediately before Journal Manual Import');
   eq(idx(JOURNAL_MANUAL_IMPORT_REL), idx(JOURNAL_BACKUP_RESTORE_REL) - 1,
      'Journal Manual Import is immediately before Journal Backup/Restore');
-  eq(idx(JOURNAL_BACKUP_RESTORE_REL), SCRIPT_ORDER.length - 2,
-     'Journal Backup/Restore is the last external script before the monolith');
+  const MCX_MACRO_CHECK_REL = './js/ui/mcx-macro-check.js';
+  eq(idx(JOURNAL_BACKUP_RESTORE_REL), idx(MCX_MACRO_CHECK_REL) - 1,
+     'Journal Backup/Restore is immediately before the MCX macro-check owner');
+  eq(idx(MCX_MACRO_CHECK_REL), SCRIPT_ORDER.length - 2,
+     'the MCX macro-check owner is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1137,8 +1140,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX and all Journal owners before inline');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX, all Journal owners and the MCX macro-check owner before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -3370,6 +3373,7 @@ section('29. script order');
     './js/services/mcx-market-context.js',
     './js/services/mcx-vix-market-context.js',
     './js/services/mcx-backend-candles.js',
+    './js/ui/mcx-macro-check.js',
   ];
   const JOURNAL_EXTRACTION_SCRIPTS = [
     './js/services/journal-core.js',
