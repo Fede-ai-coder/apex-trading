@@ -90,6 +90,75 @@ const B_PREDICTED_INDEX_UTF8 = 1919647;
 const B_PREDICTED_INDEX_SHA256 = '0cc1582946efff6596d5cd21b9e2a256a8a0d464ae7d954b878d5b42f5adc3b6';
 const B_PREDICTED_TAGS = 54;
 
+// ── CANDIDATE C: owner-cohesive split (RECOMMENDED) ─────────────────────────
+// Reviewer-proposed boundary. It moves the 13 MCX state owners WITH the
+// chart/lifecycle functions that read and write them, and keeps behind exactly
+// the listener plus the one variable that is private to it.
+//
+// The document is cut into six fragments. Three move, two stay, one is the
+// structural separator:
+//
+//   1 [1882013,1882239)  MOVED     banner + state owners up to the timer
+//   2 [1882239,1882272)  RETAINED  var _mcxResizeTimer = null;
+//   3 [1882272,1882838)  MOVED     the remaining state owners
+//   4 [1882838,1883014)  RETAINED  the resize listener, byte-for-byte
+//   5 [1883014,1926728)  MOVED     the declarations-only tail
+//   6 [1926728,1926729)  SEPARATOR one LF
+//
+// _mcxResizeTimer is listener-private: declared once, referenced only by this
+// listener. Moving it would create a cross-boundary mutable-state write for no
+// gain, so it stays with the listener that owns it.
+const C_FRAGMENTS = [
+  { name: 'movedPrefix1', moved: true, start: 1882013, end: 1882239, chars: 226,
+    sha256: '56b2567b3f52c8b8f1017a5e8d1ffa68ec2a5b92997e43a19b61c6619f9f60fb' },
+  { name: 'retainedTimerDecl', moved: false, start: 1882239, end: 1882272, chars: 33,
+    sha256: 'b425ae3f21ef5671d0206b13498a14c354905fb199530a6764c4eaf2570e8504' },
+  { name: 'movedPrefix2', moved: true, start: 1882272, end: 1882838, chars: 566,
+    sha256: 'c1ec4d1f30c17d6dbf52f0daba7b539fa8e64d7ee90d9221ccb712a34b7d24cd' },
+  { name: 'retainedListener', moved: false, start: 1882838, end: 1883014, chars: 176,
+    sha256: '5194c5dd7a320f3ffe42efa9ca7e4eed28b37cb0977c3ac1be0fb71a2ec2a3ff' },
+  { name: 'movedTail', moved: true, start: 1883014, end: 1926728, chars: 43714,
+    sha256: 'daa0a165ef06abc401238ed2eb84a70d3e41a0439d070ad26e540220d0a0897d' },
+];
+const C_SEPARATOR_AT = 1926728;
+const C_MODULE_CHARS = 44506;
+const C_MODULE_UTF8 = 45766;
+const C_MODULE_LF = 861;
+const C_MODULE_SHA256 = '7337dba0ea08e5850899b539471003d4d7aa5dcb67006e0a3b49f187a1a98daa';
+const C_OWNERS = 51;
+const C_DEPENDENCIES = 44;
+const C_GLUE_CHARS = 209;
+const C_GLUE_UTF8 = 209;
+const C_GLUE_LF = 7;
+const C_GLUE_SHA256 = 'bca3dcbe07f48d7dfa0b640eb81bd6fa30bf8a035b324c354ab47e6c580eed62';
+// Weave points inside the module: 226 = |fragment 1|, 792 = |fragment 1| + |fragment 3|.
+const C_WEAVE_1 = 226;
+const C_WEAVE_2 = 792;
+const C_PREDICTED_INDEX_CHARS = 1884429;
+const C_PREDICTED_INDEX_UTF8 = 1918599;
+const C_PREDICTED_INDEX_LF = 33097;
+const C_PREDICTED_INDEX_SHA256 = 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e';
+const C_PREDICTED_TAGS = 54;
+
+const C_EXPECTED_DEPENDENCIES = [
+  'Date', 'JSON', 'Math', 'Object', 'Promise', 'ResizeObserver', 'S', '_REGIME_CONTENT',
+  '_REGIME_LABEL', '_activeView', '_drawCandleChart', '_ensure30MSubscription',
+  '_ensureCandleSubscription', '_mcxFetchBackendCandlesForChart', '_mcxGetBackendCandleEntry',
+  '_mcxGetCachedBackendCandles', '_mcxRefreshVixData', '_mcxRegimeOf',
+  '_mcxRenderBackendTechnicalSummary', '_mcxStoreBackendCandleEntry', '_patchLivePrice',
+  '_recordBackendCandleProvenance', '_regimeCompactVixNotes', '_regimeDynForbidden',
+  'clearInterval', 'clearTimeout', 'computeCandleIndicators', 'console', 'document',
+  'ffBackendCandlesMcxCharts', 'getCandleDataSource', 'getDailyCandles', 'getFourHourCandles',
+  'isFinite', 'localStorage', 'logEv', 'prepareHiDPICanvas', 'refreshSharedMarketRegime',
+  'requestAnimationFrame', 'setAS', 'setInterval', 'setTimeout', 'smA', 'window',
+];
+
+const MCX_STATE_OWNERS = [
+  '_mcxOverlay', '_mcxSqzState', '_mcxSpy4hTimer', '_mcxSpy4hCount', '_mcxVi3m4hTimer',
+  '_mcxVi3m4hCount', '_mcxAutoRefreshTimer', '_mcxRefreshBusy', '_mcxResizeObs',
+  '_mcxLiveCache', '_mcxLiveThrottle', '_mcxBackendFetchInFlight', '_mcxSpySqzCache',
+];
+
 const PROPOSED_TAG = '<script src="./js/ui/mcx-charts.js"></script>\n';
 const ANCHOR_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>\n';
 
@@ -223,6 +292,7 @@ function effects(src) {
 }
 
 console.log('MCX CHARTS / LIFECYCLE — TEMPORARY PRE-IMPLEMENTATION AUDIT');
+console.log('candidates: A (rejected) · B (rejected) · C (recommended)');
 console.log('base=' + BASE_SHA);
 
 section('1. Pinned base identity');
@@ -420,6 +490,164 @@ ok(all.every((r) => r.startsWith('tests/')), 'every changed path is a test artif
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/mcx-charts.js')),
   'the proposed module does not exist yet');
 
+section('11. CANDIDATE C — the owner-cohesive split (RECOMMENDED)');
+// Every fragment is re-derived from the live blob and checked against its pin.
+// A single drifted byte fails here rather than downstream.
+const cSlices = {};
+C_FRAGMENTS.forEach((f) => {
+  const text = INDEX.slice(f.start, f.end);
+  cSlices[f.name] = text;
+  eq(text.length, f.chars, 'fragment ' + f.name + ' has its pinned UTF-16 length');
+  eq(sha256(text), f.sha256, 'fragment ' + f.name + ' has its pinned SHA-256');
+});
+eq(INDEX.slice(C_SEPARATOR_AT, C_SEPARATOR_AT + 1), SEPARATOR,
+  'fragment 6 is exactly one LF: the structural separator');
+// The six fragments tile the MCX section with no gap and no overlap.
+eq(C_FRAGMENTS[0].start, A_START, 'the fragments start where the MCX section starts');
+eq(C_SEPARATOR_AT + 1, A_END, 'the separator ends where the EIC banner begins');
+C_FRAGMENTS.slice(1).forEach((f, i) => {
+  eq(f.start, C_FRAGMENTS[i].end, 'fragment ' + f.name + ' begins exactly where the previous ends');
+});
+eq(C_FRAGMENTS[C_FRAGMENTS.length - 1].end, C_SEPARATOR_AT,
+  'the last moved fragment ends exactly at the separator');
+eq(C_FRAGMENTS.reduce((a, f) => a + f.chars, 0) + 1, A_RANGE_CHARS,
+  'the six fragments account for every character of the MCX section');
+
+const C_MODULE = C_FRAGMENTS.filter((f) => f.moved).map((f) => cSlices[f.name]).join('');
+const C_GLUE = C_FRAGMENTS.filter((f) => !f.moved).map((f) => cSlices[f.name]).join('');
+eq(C_MODULE.length, C_MODULE_CHARS, 'candidate C module UTF-16 length');
+eq(Buffer.byteLength(C_MODULE, 'utf8'), C_MODULE_UTF8, 'candidate C module UTF-8 byte length');
+eq(count(C_MODULE, '\n'), C_MODULE_LF, 'candidate C module LF count');
+eq(sha256(C_MODULE), C_MODULE_SHA256, 'candidate C module SHA-256');
+eq(C_WEAVE_1, C_FRAGMENTS[0].chars, 'first weave point is the length of fragment 1');
+eq(C_WEAVE_2, C_FRAGMENTS[0].chars + C_FRAGMENTS[2].chars,
+  'second weave point is fragments 1 + 3');
+
+const cShape = shape(C_MODULE);
+eq(cShape.length, C_OWNERS, 'candidate C owns exactly 51 top-level declarations');
+eq(cShape[0].name, '_mcxOverlay', 'candidate C opens on _mcxOverlay');
+eq(cShape[C_OWNERS - 1].name, '_mcxInit', 'candidate C closes on _mcxInit');
+eq(residue(C_MODULE), '', 'candidate C is declarations-only: zero executable top-level residue');
+eq(effects(C_MODULE).addEventListener, 0, 'candidate C registers no listener at load time');
+const cLoad = loadInEmptyVm(C_MODULE);
+ok(cLoad.ok, 'candidate C evaluates in a completely empty VM: ' + cLoad.error);
+eq(cLoad.globals.length, C_OWNERS, 'evaluation defines exactly the 51 owners and nothing else');
+eq(cLoad.globals.slice().sort(), cShape.map((e) => e.name).sort(),
+  'the globals it defines are exactly its declared owners');
+
+section('12. Candidate C keeps mutable MCX state on ONE side of the boundary');
+const cDeps = freeIdentifiers(C_MODULE);
+eq(cDeps, C_EXPECTED_DEPENDENCIES, 'candidate C free dependency inventory is exact');
+eq(cDeps.length, C_DEPENDENCIES, 'candidate C needs exactly 44 call-time globals');
+MCX_STATE_OWNERS.forEach((n) => {
+  ok(cShape.some((e) => e.name === n), n + ' is OWNED by candidate C, not read across the boundary');
+  eq(cDeps.indexOf(n), -1, n + ' is no longer a free dependency');
+});
+eq(MCX_STATE_OWNERS.filter((n) => cDeps.indexOf(n) >= 0), [],
+  'NONE of the 13 MCX state variables remains a cross-boundary read');
+// This is the whole point of C over B: B read 13 of them from inline.
+eq(B_EXPECTED_DEPENDENCIES.filter((n) => MCX_STATE_OWNERS.indexOf(n) >= 0).length, 13,
+  'for contrast: candidate B read 13 of them across the boundary');
+eq(bDeps.length - cDeps.length, 13,
+  'C is exactly 13 dependencies narrower than B — the state it absorbed');
+
+section('13. The retained glue: listener-private state stays with its listener');
+eq(C_GLUE.length, C_GLUE_CHARS, 'retained glue UTF-16 length');
+eq(Buffer.byteLength(C_GLUE, 'utf8'), C_GLUE_UTF8, 'retained glue UTF-8 byte length');
+eq(count(C_GLUE, '\n'), C_GLUE_LF, 'retained glue LF count');
+eq(sha256(C_GLUE), C_GLUE_SHA256, 'retained glue SHA-256');
+ok(/^var\s+_mcxResizeTimer\s+=\s+null;\n/.test(C_GLUE),
+  'the glue opens on the _mcxResizeTimer declaration');
+ok(C_GLUE.indexOf("window.addEventListener('resize', function(){") > 0,
+  'the glue carries the resize listener, unwrapped and unrenamed');
+eq(count(INDEX, 'var _mcxResizeTimer'), 1, '_mcxResizeTimer is declared exactly once');
+const timerRefsAll = (maskLiterals(INDEX)
+  .match(/(?:^|[^A-Za-z0-9_$.])_mcxResizeTimer(?![A-Za-z0-9_$])/gm) || []).length;
+const timerRefsGlue = (maskLiterals(C_GLUE)
+  .match(/(?:^|[^A-Za-z0-9_$.])_mcxResizeTimer(?![A-Za-z0-9_$])/gm) || []).length;
+eq(timerRefsGlue, 3, 'the glue holds all three _mcxResizeTimer references');
+eq(timerRefsAll, timerRefsGlue,
+  '_mcxResizeTimer is referenced ONLY inside the retained glue — it is listener-private');
+eq(count(C_MODULE, '_mcxResizeTimer'), 0,
+  'the module neither declares nor references _mcxResizeTimer, not even in a comment');
+ok(C_GLUE.indexOf('_mcxRenderCharts') > 0,
+  'the listener still calls the classic global _mcxRenderCharts across the boundary');
+eq(cShape.filter((e) => e.name === '_mcxRenderCharts').length, 1,
+  '…which candidate C owns and exposes as a classic global');
+// No other mutable MCX state is left behind.
+const retainedAfter = INDEX.slice(0, A_START) + C_GLUE + INDEX.slice(A_END);
+MCX_STATE_OWNERS.forEach((n) => {
+  ok(!declaresTopLevelVar(retainedAfter, n), n + ' no longer stays inline under candidate C');
+});
+eq(shape(C_GLUE).map((e) => e.name), ['_mcxResizeTimer'],
+  'the retained glue declares exactly one thing: the listener-private timer');
+
+section('14. Candidate C forward transform and byte-exact reverse reconstruction');
+const cKept = INDEX.slice(0, A_START) + C_GLUE + INDEX.slice(A_END);
+eq(count(cKept, ANCHOR_TAG), 1, 'the macro-check tag is the unique anchor for the new tag');
+const cPredicted = cKept.replace(ANCHOR_TAG, ANCHOR_TAG + PROPOSED_TAG);
+eq(cPredicted.length, C_PREDICTED_INDEX_CHARS, 'predicted index UTF-16 length');
+eq(Buffer.byteLength(cPredicted, 'utf8'), C_PREDICTED_INDEX_UTF8, 'predicted index UTF-8 byte length');
+eq(count(cPredicted, '\n'), C_PREDICTED_INDEX_LF, 'predicted index LF count');
+eq(sha256(cPredicted), C_PREDICTED_INDEX_SHA256, 'predicted index SHA-256');
+eq(APP_LOADER.parseScriptTags(cPredicted).filter((t) => t.src && /^\.\//.test(t.src)).length,
+  C_PREDICTED_TAGS, 'predicted local application script count is 54');
+eq(count(cPredicted, ANCHOR_TAG + PROPOSED_TAG), 1,
+  'the new tag sits immediately after mcx-macro-check.js');
+
+// REVERSE. Drop the tag, then weave the module fragments back around the two
+// retained fragments and restore the separator.
+function weave(html, moduleSource, glue) {
+  const untagged = html.replace(PROPOSED_TAG, '');
+  const head = untagged.slice(0, A_START);
+  const tail = untagged.slice(A_START + glue.length);
+  return head
+    + moduleSource.slice(0, C_WEAVE_1)
+    + cSlices.retainedTimerDecl
+    + moduleSource.slice(C_WEAVE_1, C_WEAVE_2)
+    + cSlices.retainedListener
+    + moduleSource.slice(C_WEAVE_2)
+    + SEPARATOR
+    + tail;
+}
+eq(cPredicted.replace(PROPOSED_TAG, ''), cKept, 'removing the new tag restores the tag-free document');
+eq(weave(cPredicted, C_MODULE, C_GLUE), INDEX,
+  'interleaving module fragments with the retained glue reconstructs this base byte-for-byte');
+eq(sha256(weave(cPredicted, C_MODULE, C_GLUE)), INDEX_SHA256,
+  'the reconstruction hashes to the pinned base SHA-256');
+
+section('15. Candidate C negative controls');
+// Absorbed listener.
+ok(residue(C_MODULE + '\n' + cSlices.retainedListener) !== '',
+  'a module that absorbed the listener is detected as top-level residue');
+ok(!loadInEmptyVm(C_MODULE + '\n' + cSlices.retainedListener).ok,
+  '…and stops evaluating in an empty VM');
+// Absorbed timer.
+const absorbedTimer = cSlices.retainedTimerDecl + C_MODULE;
+ok(shape(absorbedTimer).some((e) => e.name === '_mcxResizeTimer'),
+  'a module that absorbed the timer declaration is detected by the manifest');
+ok(shape(absorbedTimer).length !== C_OWNERS, '…and its owner count no longer matches');
+// Missing separator.
+const untagged = cPredicted.replace(PROPOSED_TAG, '');
+const noSeparator = untagged.slice(0, A_START)
+  + C_MODULE.slice(0, C_WEAVE_1) + cSlices.retainedTimerDecl
+  + C_MODULE.slice(C_WEAVE_1, C_WEAVE_2) + cSlices.retainedListener
+  + C_MODULE.slice(C_WEAVE_2) + untagged.slice(A_START + C_GLUE.length);
+ok(noSeparator !== INDEX, 'dropping the separator does NOT reconstruct — it is load-bearing');
+eq(INDEX.length - noSeparator.length, 1, '…and it is short by exactly the one separator character');
+// Renamed owner.
+ok(shape(C_MODULE.replace('function _mcxInit', 'function _mcxInitV2'))
+  .map((e) => e.name).indexOf('_mcxInit') < 0, 'a renamed owner is detected by the manifest');
+// Altered fragment order.
+const swapped = cSlices.movedPrefix2 + cSlices.movedPrefix1 + cSlices.movedTail;
+ok(sha256(swapped) !== C_MODULE_SHA256, 'reordering the moved fragments changes the module hash');
+ok(shape(swapped)[0].name !== '_mcxOverlay', '…and the manifest no longer opens on _mcxOverlay');
+ok(weave(cPredicted, swapped, C_GLUE) !== INDEX, '…and reconstruction from it fails');
+// The recommendation is not vacuous: C differs from both A and B.
+ok(sha256(C_MODULE) !== sha256(A_MODULE) && sha256(C_MODULE) !== sha256(B_MODULE),
+  'candidate C is a distinct byte sequence from both A and B');
+eq([A_OWNERS, B_OWNERS, C_OWNERS], [52, 38, 51], 'the three candidates own 52, 38 and 51 declarations');
+
 const report = {
   base: { commit: BASE_SHA, tree: BASE_TREE, subject: BASE_SUBJECT,
           indexChars: INDEX.length, indexSha256: sha256(INDEX), localScripts: LOCAL_SCRIPTS },
@@ -453,6 +681,42 @@ const report = {
     predictedLocalScripts: B_PREDICTED_TAGS,
     verdict: 'preserves the invariant, at the cost of a 57-name dependency surface and 13 ' +
              'MCX state variables left behind inline',
+  },
+  candidateC: {
+    label: 'owner-cohesive split (RECOMMENDED)',
+    fragments: C_FRAGMENTS.map((f) => ({
+      name: f.name, moved: f.moved, range: [f.start, f.end], chars: f.chars, sha256: f.sha256,
+    })),
+    separatorAt: C_SEPARATOR_AT,
+    moduleChars: C_MODULE.length, moduleUtf8: Buffer.byteLength(C_MODULE, 'utf8'),
+    moduleLf: count(C_MODULE, '\n'), moduleSha256: sha256(C_MODULE),
+    owners: C_OWNERS, firstOwner: cShape[0].name, lastOwner: cShape[C_OWNERS - 1].name,
+    declarationsOnly: true,
+    evaluatesBeforeDependencies: true,
+    freeDependencies: cDeps.length,
+    mcxStateOwnedByModule: MCX_STATE_OWNERS.length,
+    mcxStateReadAcrossBoundary: 0,
+    retainedGlue: {
+      chars: C_GLUE.length, utf8: Buffer.byteLength(C_GLUE, 'utf8'),
+      lf: count(C_GLUE, '\n'), sha256: sha256(C_GLUE),
+      declares: ['_mcxResizeTimer'],
+      rationale: '_mcxResizeTimer is listener-private: declared once, referenced only by this ' +
+                 'listener. Moving it would create a cross-boundary mutable-state write.',
+    },
+    weavePoints: [C_WEAVE_1, C_WEAVE_2],
+    predictedIndexChars: C_PREDICTED_INDEX_CHARS,
+    predictedIndexUtf8: C_PREDICTED_INDEX_UTF8,
+    predictedIndexLf: C_PREDICTED_INDEX_LF,
+    predictedIndexSha256: C_PREDICTED_INDEX_SHA256,
+    predictedLocalScripts: C_PREDICTED_TAGS,
+    verdict: 'load-time inert like B, but 13 dependencies narrower: all module-owned MCX state ' +
+             'moves with the module, and only listener-private state stays inline',
+  },
+  recommendation: 'C',
+  rejections: {
+    A: 'registers a listener at module load and violates the load-time-inertness invariant',
+    B: 'leaves 13 mutable MCX state variables inline while the extracted module reads and ' +
+       'writes them',
   },
   productionChanged: [],
 };
