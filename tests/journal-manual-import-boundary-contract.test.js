@@ -57,12 +57,19 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
+const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // Backup/Restore is the seventh Journal owner and was extracted after this one.
 // Undoing it yields the index exactly as THIS extraction shipped it, so every
 // Manual-Import-layer assertion below stays pinned to its own byte identity.
-const POST_MANUAL_INDEX = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+// The MCX macro-check owner is the newest layer on top of Backup/Restore:
+// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
+// the exact document it was cut against. The helper re-verifies what it
+// hands back by length and SHA-256, so this hop is proved, not assumed.
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+const POST_MANUAL_INDEX = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-manual-import-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
@@ -322,9 +329,16 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1933458, 'current index UTF-16 length is the post-Backup/Restore value');
-eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
-  'current index SHA-256 is the post-Backup/Restore value');
+eq(INDEX.length, 1928890, 'current index UTF-16 length is the post-MCX-macro-check value');
+eq(sha256(INDEX), '00ffa331d568b3b81b1f5993a3a347adc4e6c8088de8be113048f85f9ba64d96',
+  'current index SHA-256 is the post-MCX-macro-check value');
+// The post-Backup/Restore document those two lines used to pin is still pinned,
+// one layer down, on the peeled preMcxMacroCheck reconstruction.
+eq(preMcxMacroCheck.length, 1933458, 'post-Backup/Restore index UTF-16 length is still pinned');
+eq(sha256(preMcxMacroCheck), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
+  'post-Backup/Restore index SHA-256 is still pinned');
+eq(countLiteral(INDEX, '<script src="./js/ui/mcx-macro-check.js"></script>'), 1,
+  'the MCX macro-check owner loads exactly once in the current index');
 eq(countLiteral(INDEX, '<script src="./js/ui/journal-backup-restore.js"></script>'), 1,
   'the seventh Journal owner loads exactly once in the current index');
 eq(sha256(POST_MANUAL_INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
@@ -477,6 +491,14 @@ for (const rel of contractsToAdvance) {
      source.includes('seven Journal owners'),
      rel + ' recognizes the sixth or seventh Journal owner, or the current classic-script tail');
 }
+eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
+eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
+ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
+  'the peeled document no longer carries the MCX macro-check tag');
 ok(fs.readFileSync(path.join(ROOT, 'tests/lib/post-journal-mcx-pr3-undo.js'), 'utf8')
   .includes('undoJournalManualImport'),
   'cumulative historical helper starts by undoing Manual Import');
@@ -532,8 +554,8 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/journal-backup-restore.js'],
-  'production footprint is exactly index.html plus the Journal Manual Import and Backup/Restore owners');
+eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js'],
+  'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore and MCX macro-check owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'temporary audit removal is visible in the change set');

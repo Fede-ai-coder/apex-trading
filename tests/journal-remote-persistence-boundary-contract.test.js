@@ -18,6 +18,7 @@ const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
@@ -52,6 +53,7 @@ const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js">
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
+const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -145,9 +147,24 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
-const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+// The MCX macro-check owner is the newest layer on top of Backup/Restore:
+// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
+// the exact document it was cut against. The helper re-verifies what it
+// hands back by length and SHA-256, so this hop is proved, not assumed.
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
+eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
+eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
+  'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
+ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
+  'the peeled document no longer carries the MCX macro-check tag');
+
 const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(preMigrationIndex, WRITE_MODULE);
@@ -178,7 +195,7 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n',
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n',
   'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
@@ -319,8 +336,8 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-backend-write-through.js',
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
-  'js/ui/journal-backup-restore.js',
-].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, and Backup/Restore modules');
+  'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js',
+].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, Backup/Restore and MCX macro-check modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,

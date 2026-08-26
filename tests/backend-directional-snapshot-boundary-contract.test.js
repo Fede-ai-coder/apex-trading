@@ -218,6 +218,7 @@ const MCX_EXTRACTION_SCRIPTS = [
   './js/services/mcx-vix-market-context.js',
   './js/services/mcx-backend-candles.js',
   './js/services/mcx-regime-policy.js',
+  './js/ui/mcx-macro-check.js',
 ];
 const JOURNAL_EXTRACTION_SCRIPTS = [
   './js/services/journal-core.js',
@@ -2725,8 +2726,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 52,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, four MCX and seven Journal extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 53,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, five MCX and seven Journal extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };

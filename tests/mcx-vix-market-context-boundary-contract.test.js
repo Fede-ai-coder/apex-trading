@@ -24,6 +24,7 @@ const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js'
 const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
 const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
 const JOURNAL_BACKUP_RESTORE_REL = 'js/ui/journal-backup-restore.js';
+const MCX_MACRO_CHECK_REL = 'js/ui/mcx-macro-check.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -244,8 +245,16 @@ const journalBackupRestoreAt = INDEX.indexOf(journalBackupRestoreTag);
 const afterBackupAt = INDEX.indexOf('<script', journalBackupRestoreAt + journalBackupRestoreTag.length);
 const afterBackupEnd = afterBackupAt >= 0 ? INDEX.indexOf('>', afterBackupAt) : -1;
 const afterBackupTag = afterBackupEnd >= 0 ? INDEX.slice(afterBackupAt, afterBackupEnd + 1) : '';
-ok(journalBackupRestoreAt > journalManualImportAt && !/\bsrc\s*=/i.test(afterBackupTag),
-  'Journal Backup/Restore loads immediately before the residual inline application script');
+ok(journalBackupRestoreAt > journalManualImportAt &&
+   afterBackupTag === '<script src="./' + MCX_MACRO_CHECK_REL + '">',
+  'Journal Backup/Restore loads immediately before the MCX macro-check owner');
+const mcxMacroCheckTag = '<script src="./' + MCX_MACRO_CHECK_REL + '"></script>';
+const mcxMacroCheckAt = INDEX.indexOf(mcxMacroCheckTag);
+const afterMacroAt = INDEX.indexOf('<script', mcxMacroCheckAt + mcxMacroCheckTag.length);
+const afterMacroEnd = afterMacroAt >= 0 ? INDEX.indexOf('>', afterMacroAt) : -1;
+const afterMacroTag = afterMacroEnd >= 0 ? INDEX.slice(afterMacroAt, afterMacroEnd + 1) : '';
+ok(mcxMacroCheckAt > journalBackupRestoreAt && !/\bsrc\s*=/i.test(afterMacroTag),
+  'the MCX macro-check owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.
