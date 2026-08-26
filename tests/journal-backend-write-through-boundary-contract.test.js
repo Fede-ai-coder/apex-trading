@@ -17,6 +17,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -390,12 +391,18 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
-const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
+// The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1944246, 'current post-Manual-Import index UTF-16 length is pinned');
-eq(sha256(INDEX), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
+eq(INDEX.length, 1933458, 'current post-Backup/Restore index UTF-16 length is pinned');
+eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
+  'current post-Backup/Restore index SHA-256 is pinned');
+eq(preBackupRestore.length, 1944246, 'current post-Manual-Import index UTF-16 length is pinned');
+eq(sha256(preBackupRestore), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba4790',
   'current post-Manual-Import index SHA-256 is pinned');
 eq(futureOrderViolations(INDEX), [],
   'order is Core -> UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
@@ -405,7 +412,12 @@ eq(countLiteral(INDEX, MIGRATION_MARKER), 0, 'migration marker has zero inline r
 eq(countLiteral(MIGRATION_MODULE, MIGRATION_MARKER), 1, 'migration marker lives in its later module exactly once');
 eq(countLiteral(INDEX, MANUAL_IMPORT_MARKER), 0, 'manual import marker has zero inline residue');
 eq(countLiteral(MANUAL_MODULE, MANUAL_IMPORT_MARKER), 1, 'manual import marker lives in its module exactly once');
-eq(countLiteral(INDEX, BACKUP_MARKER), 1, 'backup UI marker remains inline exactly once');
+eq(countLiteral(INDEX, BACKUP_MARKER), 0,
+  'backup UI marker has zero inline residue now that Backup/Restore is its own owner');
+eq(countLiteral(preBackupRestore, BACKUP_MARKER), 1,
+  'backup UI marker was inline exactly once before the Backup/Restore extraction');
+eq(countLiteral(BACKUP_RESTORE_MODULE, BACKUP_MARKER), 1,
+  'backup UI marker now lives exactly once in the Backup/Restore owner');
 
 section('4. External ownership and consumers');
 eq(externalUsage('_jAddTradeOrig'), [], 'legacy add alias has no outside consumer');
@@ -658,8 +670,8 @@ const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 eq(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-migration.js',
-  'js/services/journal-manual-import.js'
-].sort(), 'production footprint is index.html plus Write-through, Migration, and Manual Import');
+  'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js'
+].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, and Backup/Restore');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,

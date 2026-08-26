@@ -18,6 +18,7 @@ const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
@@ -50,6 +51,7 @@ const REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></
 const WRITE_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
 const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
+const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -143,7 +145,10 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
-const preManualIndex = MANUAL_U.undoJournalManualImport(INDEX, MANUAL_MODULE);
+const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
+// The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
+const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(INDEX, BACKUP_RESTORE_MODULE);
+const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL_MODULE);
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 const preWriteIndex = WRITE_U.undoJournalBackendWriteThrough(preMigrationIndex, WRITE_MODULE);
 eq(preWriteIndex, expectedIndex, 'newest undo reaches exactly base minus Remote slice plus its classic tag');
@@ -173,13 +178,14 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n',
-  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> inline');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
   INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) &&
   INDEX.indexOf(MIGRATION_TAG) < INDEX.indexOf(MANUAL_TAG) &&
-  INDEX.indexOf(MANUAL_TAG) < inlineAt,
+  INDEX.indexOf(MANUAL_TAG) < INDEX.indexOf(BACKUP_RESTORE_TAG) &&
+  INDEX.indexOf(BACKUP_RESTORE_TAG) < inlineAt,
   'Journal Remote loads synchronously before Write-through, Migration, Manual Import, and inline consumers');
 ok(!/\b(?:async|defer|type)\s*=/.test(REMOTE_TAG), 'Journal Remote tag is classic synchronous src-only form');
 eq(count(INDEX, REMOTE_MARKER), 0, 'remote service marker has zero inline residue');
@@ -313,7 +319,8 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-backend-write-through.js',
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
-].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, and Manual Import modules');
+  'js/ui/journal-backup-restore.js',
+].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, and Backup/Restore modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,
