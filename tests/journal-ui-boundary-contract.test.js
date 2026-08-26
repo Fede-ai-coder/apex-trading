@@ -273,8 +273,8 @@ same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-remote-persistence.js',
   'js/services/journal-backend-write-through.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
-  'js/ui/mcx-macro-check.js',
-].sort(), 'production footprint includes Journal UI plus later Remote, Write-through, Migration, Manual Import, Backup/Restore and MCX macro-check modules');
+  'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',
+].sort(), 'production footprint includes Journal UI plus later Remote, Write-through, Migration, Manual Import, Backup/Restore, MCX macro-check and MCX charts modules');
 ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 

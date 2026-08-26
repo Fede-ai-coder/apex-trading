@@ -349,8 +349,8 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-backend-write-through.js',
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
-  'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js',
-].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, Backup/Restore and MCX macro-check modules');
+  'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',
+].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, Backup/Restore, MCX macro-check and MCX charts modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-remote-post-ui-audit.test.js')), false,
