@@ -25,6 +25,7 @@ const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
 const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
 const JOURNAL_BACKUP_RESTORE_REL = 'js/ui/journal-backup-restore.js';
 const MCX_MACRO_CHECK_REL = 'js/ui/mcx-macro-check.js';
+const MCX_CHARTS_REL = 'js/ui/mcx-charts.js';
 const EXPECTED_MODULE_GIT_BLOB = '33234d066296387ec72eb2f6fb43a876784111f0';
 const MODULE = fs.readFileSync(path.join(__dirname, '..', MODULE_REL), 'utf8');
 const INDEX = loadIndexHtml();
@@ -253,8 +254,16 @@ const mcxMacroCheckAt = INDEX.indexOf(mcxMacroCheckTag);
 const afterMacroAt = INDEX.indexOf('<script', mcxMacroCheckAt + mcxMacroCheckTag.length);
 const afterMacroEnd = afterMacroAt >= 0 ? INDEX.indexOf('>', afterMacroAt) : -1;
 const afterMacroTag = afterMacroEnd >= 0 ? INDEX.slice(afterMacroAt, afterMacroEnd + 1) : '';
-ok(mcxMacroCheckAt > journalBackupRestoreAt && !/\bsrc\s*=/i.test(afterMacroTag),
-  'the MCX macro-check owner loads immediately before the residual inline application script');
+ok(mcxMacroCheckAt > journalBackupRestoreAt &&
+   afterMacroTag === '<script src="./' + MCX_CHARTS_REL + '">',
+  'the MCX macro-check owner loads immediately before the MCX charts owner');
+const mcxChartsTag = '<script src="./' + MCX_CHARTS_REL + '"></script>';
+const mcxChartsAt = INDEX.indexOf(mcxChartsTag);
+const afterChartsAt = mcxChartsAt >= 0 ? INDEX.indexOf('<script', mcxChartsAt + mcxChartsTag.length) : -1;
+const afterChartsEnd = afterChartsAt >= 0 ? INDEX.indexOf('>', afterChartsAt) : -1;
+const afterChartsTag = afterChartsEnd >= 0 ? INDEX.slice(afterChartsAt, afterChartsEnd + 1) : '';
+ok(mcxChartsAt > mcxMacroCheckAt && !/\bsrc\s*=/i.test(afterChartsTag),
+  'the MCX charts owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

@@ -1,13 +1,15 @@
 'use strict';
-// Current-app reconstruction bridge after MCX macro check + Backup/Restore +
-// Manual Import + Journal Migration + Write-through + Journal Remote + Journal
-// UI + Regime Policy + Journal Core. Historical contracts that need to reach
-// the pre-MCX3 tree must undo the newest MCX macro-check relocation first, then
-// Backup/Restore, Manual Import, Migration, Write-through, Journal Remote,
-// Journal UI, Regime Policy, Journal Core, and finally delegate to the original
-// MCX3 identity guard. All layers remain independently fail-closed.
+// Current-app reconstruction bridge after MCX charts + MCX macro check +
+// Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
+// Remote + Journal UI + Regime Policy + Journal Core. Historical contracts that
+// need to reach the pre-MCX3 tree must undo the newest MCX charts relocation
+// first, then MCX macro check, Backup/Restore, Manual Import, Migration,
+// Write-through, Journal Remote, Journal UI, Regime Policy, Journal Core, and
+// finally delegate to the original MCX3 identity guard. All layers remain
+// independently fail-closed.
 const fs = require('fs');
 const path = require('path');
+const MCX_CHARTS = require('./mcx-charts-undo.js');
 const MCX_MACRO_CHECK = require('./mcx-macro-check-undo.js');
 const JOURNAL_BACKUP_RESTORE = require('./journal-backup-restore-undo.js');
 const JOURNAL_MANUAL_IMPORT = require('./journal-manual-import-undo.js');
@@ -19,6 +21,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const MCX_CHARTS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'mcx-charts.js'),
+  'utf8'
+);
 const MCX_MACRO_CHECK_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'ui', 'mcx-macro-check.js'),
   'utf8'
@@ -57,9 +63,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preMcxMacroCheck = MCX_MACRO_CHECK.isApplied(html)
-    ? MCX_MACRO_CHECK.undoMcxMacroCheck(html, MCX_MACRO_CHECK_SOURCE)
+  const preMcxCharts = MCX_CHARTS.isApplied(html)
+    ? MCX_CHARTS.undoMcxCharts(html, MCX_CHARTS_SOURCE)
     : html;
+  const preMcxMacroCheck = MCX_MACRO_CHECK.isApplied(preMcxCharts)
+    ? MCX_MACRO_CHECK.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_SOURCE)
+    : preMcxCharts;
   const preBackupRestore = JOURNAL_BACKUP_RESTORE.isApplied(preMcxMacroCheck)
     ? JOURNAL_BACKUP_RESTORE.undoJournalBackupRestore(preMcxMacroCheck, JOURNAL_BACKUP_RESTORE_SOURCE)
     : preMcxMacroCheck;

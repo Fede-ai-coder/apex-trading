@@ -25,9 +25,16 @@ const path = require('path');
 
 // Residual full-document reader: this test verifies markup, inline CSS
 // (@keyframes / :hover / :focus tooltip rules) and static DOM placement of the
-// VIX-context badge — all of which live in index.html, not in extracted JS — so
-// it deliberately loads the whole document via the centralized loader.
-const SRC = require('./lib/load-app-source').loadIndexHtml();
+// VIX-context badge — all of which live in index.html — so it deliberately
+// loads the whole document via the centralized loader.
+const APP_LOADER = require('./lib/load-app-source');
+const SRC = APP_LOADER.loadIndexHtml();
+// The JavaScript half of the badge — the shared _VIX_CTX_BADGE constant and
+// _regimeRenderCompact — moved out of the inline monolith with the MCX
+// charts/lifecycle owner (js/ui/mcx-charts.js). Reading it through the
+// reconstructed application source keeps these assertions pointed at the real
+// code in browser load order, wherever the owner happens to live.
+const JS = APP_LOADER.loadAppJavaScriptSource();
 
 let passed = 0;
 const failures = [];
@@ -37,17 +44,17 @@ function check(name, cond) {
 }
 // Extract a function body by brace matching, starting at `function <name>`.
 function fnBody(name) {
-  const start = SRC.indexOf('function ' + name);
+  const start = JS.indexOf('function ' + name);
   if (start === -1) return '';
-  const open = SRC.indexOf('{', start);
+  const open = JS.indexOf('{', start);
   if (open === -1) return '';
   let depth = 0;
-  for (let i = open; i < SRC.length; i++) {
-    const c = SRC[i];
+  for (let i = open; i < JS.length; i++) {
+    const c = JS[i];
     if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return SRC.slice(start, i + 1); }
+    else if (c === '}') { depth--; if (depth === 0) return JS.slice(start, i + 1); }
   }
-  return SRC.slice(start);
+  return JS.slice(start);
 }
 
 // Source uses the &#9888; HTML entity for the ⚠ warning sign; the test asserts
@@ -87,10 +94,10 @@ check('re-render references the shared badge constant', renderBody.includes('_VI
 const badgeRefs = (renderBody.match(/_VIX_CTX_BADGE/g) || []).length;
 check('badge re-emitted in both render branches (awaiting + live regime)', badgeRefs >= 2);
 check('badge constant is defined before _regimeRenderCompact (no ReferenceError)',
-  SRC.indexOf('var _VIX_CTX_BADGE') !== -1 &&
-  SRC.indexOf('var _VIX_CTX_BADGE') < SRC.indexOf('function _regimeRenderCompact'));
+  JS.indexOf('var _VIX_CTX_BADGE') !== -1 &&
+  JS.indexOf('var _VIX_CTX_BADGE') < JS.indexOf('function _regimeRenderCompact'));
 check('shared badge constant carries badge + tooltip text',
-  /var _VIX_CTX_BADGE\s*=/.test(SRC) && SRC.includes(BADGE_TEXT_SRC) && SRC.includes(TOOLTIP_TEXT));
+  /var _VIX_CTX_BADGE\s*=/.test(JS) && JS.includes(BADGE_TEXT_SRC) && JS.includes(TOOLTIP_TEXT));
 
 // 4. Coexistence with existing regime banner features (PR #278 + SPY squeeze) -
 // The badge must be additive: it must NOT remove the low-VIX naked-call notes
@@ -134,9 +141,9 @@ check('badge is focusable for tap/keyboard access', SRC.includes('class="vix-ctx
 
 // 8. Pure UI: no backend / API / VIX-calculation changes ---------------------
 check('badge markup does not touch fetch/XHR (frontend only)',
-  !/_VIX_CTX_BADGE[^;]*fetch\(/.test(SRC));
+  !/_VIX_CTX_BADGE[^;]*fetch\(/.test(JS));
 check('badge constant is a plain string literal (no API call)',
-  /var _VIX_CTX_BADGE\s*=\s*'/.test(SRC));
+  /var _VIX_CTX_BADGE\s*=\s*'/.test(JS));
 
 // ---------------------------------------------------------------------------
 console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

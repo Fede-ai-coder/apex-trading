@@ -141,7 +141,17 @@ const RISK_COLORS = {
   NONE: 'var(--gr)',
 };
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
+const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
+// THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
+// later MCX charts/lifecycle owner sits on top of it, so peel that layer first,
+// newest-first, and every assertion below keeps meaning exactly what it meant
+// before the charts extraction existed. The helper re-verifies its output by
+// length and SHA-256, so the hop is proved rather than assumed.
+const INDEX = MCX_CHARTS_U.isApplied(LIVE_INDEX)
+  ? MCX_CHARTS_U.undoMcxCharts(LIVE_INDEX, MCX_CHARTS_MODULE)
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_U = require('./lib/journal-backup-restore-undo.js');
@@ -513,6 +523,14 @@ eq(execFileSync('git', ['log', '-1', '--format=%s', BASE_SHA], { cwd: ROOT, enco
 eq(BASE.length, BASE_CHARS, 'base index UTF-16 length is pinned');
 eq(Buffer.byteLength(BASE, 'utf8'), BASE_UTF8, 'base index UTF-8 byte length is pinned');
 eq(sha256(BASE), BASE_INDEX_SHA256, 'base index SHA-256 is pinned');
+eq(MCX_CHARTS_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later MCX charts layer');
+eq(LIVE_INDEX.length, 1884429, 'the current shipped index UTF-16 length is the post-MCX-charts value');
+eq(sha256(LIVE_INDEX), 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e',
+  'the current shipped index SHA-256 is the post-MCX-charts value');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
+  'the current shipped index carries exactly 54 local application scripts');
+eq(countLiteral(LIVE_INDEX, MODULE_TAG + '\n<script src="./js/ui/mcx-charts.js"></script>'), 1,
+  'the MCX charts owner loads immediately after this owner in the shipped index');
 eq(INDEX.length, INDEX_CHARS, 'extracted index UTF-16 length is the audited prediction');
 eq(Buffer.byteLength(INDEX, 'utf8'), INDEX_UTF8, 'extracted index UTF-8 byte length is the audited prediction');
 eq(sha256(INDEX), INDEX_SHA256, 'extracted index SHA-256 is the audited prediction');
@@ -1059,8 +1077,8 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the MCX macro-check owner');
+  eq(changedProduction, ['index.html', 'js/ui/mcx-charts.js', MODULE_REL],
+    'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts owner');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
@@ -1069,7 +1087,8 @@ section('10. Exact prompt construction and success transcript');
   ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
-  ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
+  ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/ui/mcx-charts.js' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 
   const contractsToAdvance = [

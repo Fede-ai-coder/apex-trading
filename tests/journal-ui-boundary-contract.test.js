@@ -19,6 +19,7 @@ const U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
@@ -77,6 +78,7 @@ const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
+const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -161,8 +163,8 @@ const writeTagAt = INDEX.indexOf(WRITE_TAG);
 const migrationTagAt = INDEX.indexOf(MIGRATION_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n',
-  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> inline');
 ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt &&
   writeTagAt > remoteTagAt && migrationTagAt > writeTagAt && inlineAt > migrationTagAt,
   'Journal UI loads synchronously before later Remote + Write-through + Migration + inline consumers');
@@ -218,21 +220,32 @@ eq((MODULE.match(/\b(?:new\s+)?WebSocket\b/g) || []).length, 0, 'Journal UI owns
 
 section('5. byte-exact undo and mutation-sensitive negative controls');
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
-// The MCX macro-check owner is the newest layer on top of Backup/Restore:
-// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
-// the exact document it was cut against. The helper re-verifies what it
-// hands back by length and SHA-256, so this hop is proved, not assumed.
-const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+// The MCX charts/lifecycle owner is the newest layer of all, sitting on top of
+// the MCX macro-check owner, which sits on top of Backup/Restore: peel them
+// NEWEST-FIRST, so each undo below still sees the exact document it was cut
+// against. Every helper re-verifies what it hands back by length and SHA-256,
+// so each hop is proved, not assumed.
+const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(INDEX, MCX_CHARTS_MODULE);
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
+eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
+  'peeling the MCX charts layer reaches the pinned post-#406 index length');
+eq(sha256(preMcxCharts), MCX_CHARTS_U.BASE_SHA256,
+  'peeling the MCX charts layer reaches the pinned post-#406 index hash');
+ok(MCX_CHARTS_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX charts layer being peeled');
+ok(!MCX_CHARTS_U.isApplied(preMcxCharts),
+  'the peeled document no longer carries the MCX charts tag');
 const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
 eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
 eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
-ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
-  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(MCX_MACRO_CHECK_U.isApplied(preMcxCharts),
+  'the charts-peeled index really does carry the MCX macro-check layer being peeled');
 ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
   'the peeled document no longer carries the MCX macro-check tag');
 
@@ -260,8 +273,8 @@ same(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-remote-persistence.js',
   'js/services/journal-backend-write-through.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
-  'js/ui/mcx-macro-check.js',
-].sort(), 'production footprint includes Journal UI plus later Remote, Write-through, Migration, Manual Import, Backup/Restore and MCX macro-check modules');
+  'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',
+].sort(), 'production footprint includes Journal UI plus later Remote, Write-through, Migration, Manual Import, Backup/Restore, MCX macro-check and MCX charts modules');
 ok(!changed.some((p) => p.startsWith('.github/') || p.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 

@@ -18,6 +18,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
@@ -32,6 +33,15 @@ const WRITE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-backen
 const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 const INDEX = APP_LOADER.loadIndexHtml();
 const APP = APP_LOADER.loadAppJavaScriptSource();
+// The MCX charts/lifecycle owner is the NEWEST layer on this document, sitting
+// on top of the MCX macro-check owner, which sits on top of Backup/Restore. It
+// carries the regime transition/render owners this extraction deliberately left
+// behind, so both the ownership section and the undo chain below need it: peel
+// NEWEST-FIRST so every later undo sees the exact document it was cut against.
+// The helper re-verifies what it hands back by length and SHA-256, so this hop
+// is proved, not assumed.
+const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
+const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(INDEX, MCX_CHARTS_MODULE);
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
 });
@@ -62,15 +72,21 @@ const MANIFEST = [
   '_VIX_LOW_IV_STRATEGY_MAX',
   '_regimeCompactVixNotes',
 ];
-const INLINE_TRANSITION = [
+// The regime transition / render / state owners this extraction deliberately
+// did NOT pull into the policy core. They were inline when this contract was
+// written; the later MCX charts/lifecycle relocation moved every one of them,
+// unchanged, into js/ui/mcx-charts.js. What this contract pins is unchanged and
+// is checked more strictly below: the policy core owns none of them, and each
+// still has exactly ONE declaration app-wide — now in the charts owner.
+const OUTSIDE_TRANSITION = [
   '_regimeReadState', '_regimeWriteState', '_regimeDayStart',
   '_regimeUpdateTransition', '_regimeTransitionStatus', '_regimeRenderTransition',
 ];
-const INLINE_RENDER = [
+const OUTSIDE_RENDER = [
   '_regimeSections', '_regimeRenderMain', '_regimeRenderCompact', '_regimeRefresh',
   '_mcxSpySqzBadgeHtml', '_mcxRenderSpySqzBadge', '_mcxRenderCharts', '_mcxInit',
 ];
-const INLINE_STATE = [
+const OUTSIDE_STATE = [
   '_REGIME_LS_KEY', '_regimeMainKey', '_regimeCompactKey', '_regimeTransKey',
   '_mcxSpySqzCache', '_mcxBackendFetchInFlight',
 ];
@@ -87,6 +103,7 @@ const MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script
 const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
+const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -153,8 +170,8 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n',
-  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n',
+  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&
   migrationAt > writeAt && INDEX.indexOf(MANUAL_TAG) > migrationAt &&
@@ -162,13 +179,23 @@ ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && re
   inlineAt > INDEX.indexOf(BACKUP_RESTORE_TAG),
   'Regime Policy loads before Journal UI / Journal Remote / Write-through / Migration / residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(REGIME_TAG), 'Regime Policy tag is classic synchronous src-only form');
-for (const name of INLINE_TRANSITION.concat(INLINE_RENDER)) {
-  eq(fnCount(INDEX, name), 1, name + ' deliberately remains inline exactly once');
+for (const name of OUTSIDE_TRANSITION.concat(OUTSIDE_RENDER)) {
   eq(fnCount(MODULE, name), 0, name + ' is not pulled into the policy core');
+  eq(fnCount(APP, name), 1, name + ' still has exactly one declaration app-wide');
+  eq(fnCount(MCX_CHARTS_MODULE, name), 1,
+    name + ' now lives in the MCX charts owner, unchanged, exactly once');
+  eq(fnCount(INDEX, name), 0, name + ' has zero inline residue after the MCX charts relocation');
+  eq(fnCount(preMcxCharts, name), 1,
+    name + ' was inline exactly once before the MCX charts relocation');
 }
-for (const name of INLINE_STATE) {
-  eq(varDeclCount(INDEX, name), 1, name + ' state deliberately remains inline exactly once');
+for (const name of OUTSIDE_STATE) {
   eq(varDeclCount(MODULE, name), 0, name + ' state is not pulled into the policy core');
+  eq(varDeclCount(APP, name), 1, name + ' state still has exactly one declaration app-wide');
+  eq(varDeclCount(MCX_CHARTS_MODULE, name), 1,
+    name + ' state now lives in the MCX charts owner, unchanged, exactly once');
+  eq(varDeclCount(INDEX, name), 0, name + ' state has zero inline residue after the MCX charts relocation');
+  eq(varDeclCount(preMcxCharts, name), 1,
+    name + ' state was inline exactly once before the MCX charts relocation');
 }
 
 section('4. classic-script evaluation and side-effect boundary');
@@ -232,18 +259,22 @@ const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manua
 const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
-// The MCX macro-check owner is the newest layer on top of Backup/Restore:
-// peel it FIRST, newest-first, so the Backup/Restore undo below still sees
-// the exact document it was cut against. The helper re-verifies what it
-// hands back by length and SHA-256, so this hop is proved, not assumed.
-const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(INDEX, MCX_MACRO_CHECK_MODULE);
+const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
+eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
+  'peeling the MCX charts layer reaches the pinned post-#406 index length');
+eq(sha256(preMcxCharts), MCX_CHARTS_U.BASE_SHA256,
+  'peeling the MCX charts layer reaches the pinned post-#406 index hash');
+ok(MCX_CHARTS_U.isApplied(INDEX),
+  'the shipped index really does carry the MCX charts layer being peeled');
+ok(!MCX_CHARTS_U.isApplied(preMcxCharts),
+  'the peeled document no longer carries the MCX charts tag');
 const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
 eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index length');
 eq(sha256(preMcxMacroCheck), MCX_MACRO_CHECK_U.BASE_SHA256,
   'peeling the MCX macro-check layer reaches the pinned post-#405 index hash');
-ok(MCX_MACRO_CHECK_U.isApplied(INDEX),
-  'the shipped index really does carry the MCX macro-check layer being peeled');
+ok(MCX_MACRO_CHECK_U.isApplied(preMcxCharts),
+  'the charts-peeled index really does carry the MCX macro-check layer being peeled');
 ok(!MCX_MACRO_CHECK_U.isApplied(preMcxMacroCheck),
   'the peeled document no longer carries the MCX macro-check tag');
 
