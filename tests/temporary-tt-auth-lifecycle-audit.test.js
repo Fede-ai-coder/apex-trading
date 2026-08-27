@@ -25,10 +25,25 @@
 //
 // _apexPostAuthInit has a second, independent caller — the NORMAL login path,
 // ~986k characters earlier in the document — that has nothing to do with the
-// reconnect feature. It touches no DOM, no storage, no timer and no network of
-// its own; it orchestrates twelve lifecycle entry points, and only three of
-// those twelve are Tastytrade/DXLink. It is a shared lifecycle owner that the
-// reconnect action CONSUMES, not a member of the reconnect feature.
+// reconnect feature. It performs no DIRECT DOM, storage, timer or network work;
+// it orchestrates twelve lifecycle entry points, which do. It is a shared
+// lifecycle owner that the reconnect action CONSUMES, not a member of the
+// reconnect feature.
+//
+// DIRECT IS NOT TRANSITIVE. §6 measures both and never conflates them. Of the
+// twelve entry points, THREE are directly DXLink-specific owners; SIX more are
+// TT-session- or DXLink-readiness-coupled, proved by a bounded call-graph walk
+// over the reconstructed application source (for example _ensureVixFamily →
+// _fetchVixFamilyBackendFirst, which falls back to a direct frontend DXLink
+// websocket under S.ttConnected); and THREE reach no TT/DXLink evidence within
+// that walk. So _apexPostAuthInit orchestrates network calls, timers and DOM
+// writes even though it makes none of them itself, and the audit says so.
+//
+// THE SEPARATOR MODEL. This series extracts `moduleBody + structuralSeparator`,
+// where the separator is exactly one LF. BOTH are removed from index.html; only
+// moduleBody is written to the module file (every shipped module in this series
+// ends `}\n`); the undo reinserts `moduleBody + separator`. The separator never
+// remains in the extracted index — §7 and §10 prove that in both directions.
 //
 // Measured dependency overlap between the three fragments:
 //     showReconnectPanel ∩ _apexPostAuthInit  = 0 names
@@ -183,16 +198,72 @@ const S_READS = {
 const LOCALSTORAGE_KEYS = ['apex_tt_session'];
 const DOM_IDS_READ = ['rtu', 'rtp', 'rttStatus', 'ttPill', 'accBtn', 'reconnectTTBtn', 'dataPill'];
 const DOM_IDS_RENDERED = ['rtu', 'rtp', 'rttStatus'];
-// The twelve lifecycle entry points _apexPostAuthInit orchestrates, and the
-// three of them that are Tastytrade/DXLink-backed. 9 of 12 are not Tastytrade
-// at all — the measurement that decides candidate A's naming question.
+// The twelve lifecycle entry points _apexPostAuthInit orchestrates. Their
+// TT/DXLink coupling is DERIVED in §6b by a call walk over the base tree, not
+// declared here; the tier lists below exist only so that derivation has
+// something to be checked against.
 const LIFECYCLE_CALLS = [
   '_resetBackendApiAuthState', 'startDxlinkConnectOnce', 'startDxlinkStatusPolling',
   '_renderDxlinkDiag', 'refreshSharedMarketRegime', '_ensureVixFamily', 'postCandleContext',
   'bssStartPolling', 'dsbStartAutoRefresh', 'dsbEnrichVisibleRowsLive',
   'jMigrateApexTradesToBackend', '_swingHydrateFromBackend',
 ];
-const TASTYTRADE_LIFECYCLE_CALLS = ['startDxlinkConnectOnce', 'startDxlinkStatusPolling', '_renderDxlinkDiag'];
+// TIER 1 — directly DXLink-specific owners. Not a judgement call: each is a
+// DXLink-named entry point whose OWN body operates the DXLink subsystem
+// (POST /dxlink/connect · setInterval(pollDxlinkStatus) · the #dxlinkDiag node).
+const DXLINK_DIRECT_CALLS = ['startDxlinkConnectOnce', 'startDxlinkStatusPolling', '_renderDxlinkDiag'];
+// TIER 2 — TT-session- or DXLink-readiness-coupled, derived in §6 by a bounded
+// call-graph walk rather than declared. Listed here only so the derivation has
+// something to be checked against.
+const TT_DXLINK_COUPLED_CALLS = [
+  '_ensureVixFamily', 'dsbEnrichVisibleRowsLive', 'dsbStartAutoRefresh',
+  'jMigrateApexTradesToBackend', 'refreshSharedMarketRegime', '_swingHydrateFromBackend',
+];
+// TIER 3 — reach no TT-session gate and no DXLink token within the same walk.
+const GENERIC_LIFECYCLE_CALLS = ['_resetBackendApiAuthState', 'bssStartPolling', 'postCandleContext'];
+// The coupling each tier-2 name is reached through, and at what call depth.
+// `depth` 0 means the evidence is in the entry point's own body.
+const COUPLING_EVIDENCE = {
+  startDxlinkConnectOnce: { depth: 0, via: 'startDxlinkConnectOnce', evidence: ['dxlink-token'] },
+  startDxlinkStatusPolling: { depth: 0, via: 'startDxlinkStatusPolling', evidence: ['dxlink-token'] },
+  _renderDxlinkDiag: { depth: 0, via: '_renderDxlinkDiag', evidence: ['dxlink-token'] },
+  refreshSharedMarketRegime: { depth: 0, via: 'refreshSharedMarketRegime', evidence: ['tt-session-gate'] },
+  dsbEnrichVisibleRowsLive: { depth: 0, via: 'dsbEnrichVisibleRowsLive', evidence: ['dxlink-token'] },
+  _ensureVixFamily: { depth: 1, via: '_fetchVixFamilyBackendFirst', evidence: ['dxlink-token', 'tt-session-gate'] },
+  dsbStartAutoRefresh: { depth: 1, via: 'dsbEnrichVisibleRowsLive', evidence: ['dxlink-token'] },
+  jMigrateApexTradesToBackend: { depth: 1, via: 'ttCall', evidence: ['tt-session-gate'] },
+  _swingHydrateFromBackend: { depth: 1, via: '_backendCandleGateReason', evidence: ['tt-session-gate'] },
+};
+// The named call edges the tier-2 classification rests on, each proved against
+// the real definition at the pinned base rather than asserted from its name.
+const COUPLING_PROOFS = [
+  { owner: '_ensureVixFamily', callee: '_fetchVixFamilyBackendFirst',
+    calleeMustContain: ['fetchVixFamily(', 'S.ttConnected'],
+    why: 'backend-first VIX with a TT-gated DIRECT frontend DXLink websocket fallback' },
+  { owner: 'refreshSharedMarketRegime', callee: '_ensureVixFamily',
+    ownerMustContain: ['S.ttConnected'],
+    calleeMustContain: ['_fetchVixFamilyBackendFirst'],
+    why: 'invokes the TT-gated VIX path' },
+  { owner: 'dsbEnrichVisibleRowsLive', callee: 'dsbLiveEnrichReadiness',
+    ownerMustContain: ['subscribeDxlinkQuotes'],
+    calleeMustContain: ['_backendCandleGateOpen', 'S.dxlinkConnectStarted', 'S.dxlinkStatus'],
+    why: 'requires TT/backend-auth AND a DXLink feed in state ready before any live call' },
+  { owner: 'dsbStartAutoRefresh', callee: 'dsbEnrichVisibleRowsLive',
+    calleeMustContain: ['subscribeDxlinkQuotes'],
+    why: 'invokes the live enrichment path, on open and on every interval tick' },
+  { owner: 'jMigrateApexTradesToBackend', callee: 'ttCall',
+    calleeMustContain: ['S.ttSessionId'],
+    why: 'the migration read is a Tastytrade session-bound call' },
+  { owner: '_swingHydrateFromBackend', callee: '_backendCandleGateReason',
+    calleeMustContain: ['S.ttConnected', 'S.ttSessionId'],
+    why: 'hydration is gated on a live TT session' },
+];
+// _apexPostAuthInit's own direct effect surface, and the surface of what it
+// orchestrates. The gap between these two rows IS the direct/transitive
+// distinction, and §6 asserts both rather than only the flattering one.
+const COUPLING_MAX_DEPTH = 4;
+const OWN_DIRECT_EFFECTS = { fetch: 0, setInterval: 0, setTimeout: 0, document: 0, localStorage: 0 };
+const ORCHESTRATED_DIRECT_EFFECTS = { fetch: 1, setInterval: 3, setTimeout: 2, document: 1, localStorage: 0 };
 
 // ── Candidates ───────────────────────────────────────────────────────────────
 const ANCHOR_SRC = './js/ui/mcx-charts.js';
@@ -205,6 +276,8 @@ const CAND = {
     modules: [{ src: './js/ui/tt-auth-lifecycle.js', frags: ['reconnectPanel', 'postAuthLifecycle', 'reconnectAction'],
       chars: 9224, utf8: 9312, lf: 148,
       sha256: '4f9a574656094fb548da47206dd9cced087b93916d9c46fbee22e94ba77ccb34',
+      bodyChars: 9223, bodyUtf8: 9311, bodyLf: 147,
+      bodySha256: '40aa88b9a46a13bffd0b77444d3a04d77e5af786cf85a3224f1446b9d87a6e30',
       owners: ['showReconnectPanel', '_apexPostAuthInit', 'doReconnectTT'] }],
     predicted: { chars: 1875258, utf8: 1909340, lf: 32950,
       sha256: '5d41450422cc4106aad3937996459529e2c9910dbd668568a235b239346faa03', scripts: 55 },
@@ -213,8 +286,9 @@ const CAND = {
     strongestAdvantage: 'the whole 9,224-unit block leaves the monolith in one contiguous cut, with one '
       + 'module, one tag and the simplest possible reverse transform',
     strongestDrawback: 'the module name and its js/ui/ layer describe only part of what it owns: '
-      + '_apexPostAuthInit performs no DOM access and 9 of the 12 lifecycle entry points it orchestrates '
-      + 'are not Tastytrade',
+      + '_apexPostAuthInit is a SHARED orchestrator with a second consumer outside the reconnect feature, '
+      + 'it performs no direct DOM or credential-form work, and it shares zero free dependencies with '
+      + 'showReconnectPanel',
   },
   B: {
     label: 'two contiguous modules preserving source order',
@@ -222,10 +296,14 @@ const CAND = {
       { src: './js/ui/tt-reconnect-panel.js', frags: ['reconnectPanel'],
         chars: 2073, utf8: 2113, lf: 35,
         sha256: '215bc4ce13d4a67fee081e296b9532356c39afb55bb5e420691b4cafc5b82862',
+        bodyChars: 2072, bodyUtf8: 2112, bodyLf: 34,
+        bodySha256: '65790b3159d9835c0b51f538fb05271926406ca430ad3b0cb8357d7bcf0772c8',
         owners: ['showReconnectPanel'] },
       { src: './js/ui/tt-auth-lifecycle.js', frags: ['postAuthLifecycle', 'reconnectAction'],
         chars: 7151, utf8: 7199, lf: 113,
         sha256: '33a5762821d8f1d0900fc5697d708a00e23c65d1e03361ce73ac406cd1bd3d8b',
+        bodyChars: 7150, bodyUtf8: 7198, bodyLf: 112,
+        bodySha256: 'd9add9ff6adcb1837394704c63b11509e84a1b2eb24c89fd1ec1713bb0ba0ef6',
         owners: ['_apexPostAuthInit', 'doReconnectTT'] },
     ],
     predicted: { chars: 1875312, utf8: 1909394, lf: 32951,
@@ -241,8 +319,13 @@ const CAND = {
   C: {
     label: 'extract only the shared post-auth lifecycle',
     modules: [{ src: './js/services/apex-post-auth-init.js', frags: ['postAuthLifecycle'],
+      // RAW source fragment [1874908,1879379) — evidence, not the shipped file.
       chars: 4471, utf8: 4519, lf: 62,
       sha256: 'ed3bb60ec58df251b6b46b38c5f9d0501e11b51a1cfea25032c5ac05a31f5e25',
+      // SHIPPABLE module body [1874908,1879378) — raw minus the structural LF.
+      bodyRange: [1874908, 1879378], separatorRange: [1879378, 1879379],
+      bodyChars: 4470, bodyUtf8: 4518, bodyLf: 61,
+      bodySha256: '690e47ce4d9ad8b656d5d95f0297a0e473847250a1186674d91caa1cd5297cd9',
       owners: ['_apexPostAuthInit'] }],
     predicted: { chars: 1880019, utf8: 1914141, lf: 33036,
       sha256: '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1', scripts: 55 },
@@ -259,6 +342,8 @@ const CAND = {
     modules: [{ src: './js/ui/tt-reconnect.js', frags: ['reconnectPanel', 'reconnectAction'],
       chars: 4753, utf8: 4793, lf: 86,
       sha256: '53fba09f64e9663d3bcdbecd94fcbd75ef5bb389a6cbe6a69af56cd88b71093e',
+      bodyChars: 4752, bodyUtf8: 4792, bodyLf: 85,
+      bodySha256: 'c380be901aeb8f60ab188707526754597f9f3f9dd73c20b624ac68b5b920ca05',
       owners: ['showReconnectPanel', 'doReconnectTT'] }],
     predicted: { chars: 1879724, utf8: 1913854, lf: 33012,
       sha256: 'd1effa6ae10ddab7727869dc082eea0dd562378ab9994f44fad88fa82767f5e8', scripts: 55 },
@@ -273,15 +358,33 @@ const CAND = {
   },
 };
 
-// The shipped convention in this series is a module ending `}\n`, with the
-// final LF left behind in index.html as a structural separator. Every pinned
-// module above ends on a blank line instead, so §12 records the corrected
-// candidate-A identity separately rather than silently substituting it.
+// The RAW fragment identities above are source evidence: they are what the
+// pinned blob actually contains. They are NOT the shippable module identities.
+// Under the separator model each module file is the raw fragment minus its
+// final LF, and the complete raw range — body AND separator — leaves
+// index.html, so every predicted index identity above stands unchanged.
+const SEPARATOR = '\n';
+
+// Candidate A stated in the model's own terms, for the record. The predicted
+// index is IDENTICAL to CAND.A.predicted: removing body+separator removes the
+// whole raw range, so no byte is left behind.
 const A_SEPARATOR_CORRECTED = {
+  rawRange: [1872835, 1882059],
+  bodyRange: [1872835, 1882058],
+  separatorRange: [1882058, 1882059],
   moduleChars: 9223, moduleUtf8: 9311, moduleLf: 147,
   moduleSha256: '40aa88b9a46a13bffd0b77444d3a04d77e5af786cf85a3224f1446b9d87a6e30',
+  predictedChars: 1875258, predictedUtf8: 1909340, predictedLf: 32950,
+  predictedSha256: '5d41450422cc4106aad3937996459529e2c9910dbd668568a235b239346faa03',
+  predictedScripts: 55,
+};
+// The REJECTED alternative: leaving the separator inline instead of removing
+// it. It is one byte longer and hashes differently; §8 proves it differs from
+// the selected transform rather than leaving the number lying around unlabelled.
+const A_LF_LEFT_INLINE_REJECTED = {
   predictedChars: 1875259, predictedUtf8: 1909341, predictedLf: 32951,
   predictedSha256: '946d004204f980651d2f037cb867e203b1a00d8d1e58f72493f3c78335906a41',
+  status: 'REJECTED — not the convention this series ships',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -392,6 +495,80 @@ function sPropsReferenced(source) {
   while ((x = r.exec(m))) out.add(x[1]);
   return Array.from(out).sort();
 }
+// ── The reconstructed application, for the call-graph walk in §6b ──────────
+// The same loader the rest of the suite uses, so an owner that has already
+// moved into js/** is still found. Bodies are indexed once by declared name.
+const APP_SRC = APP_LOADER.loadAppJavaScriptSource();
+const APP_BODIES = (function () {
+  const out = {};
+  scanTopLevelDeclarations(APP_SRC).forEach((d) => {
+    if (!(d.name in out)) out[d.name] = APP_SRC.slice(d.start, d.end + 1);
+  });
+  return out;
+})();
+function appBody(name) { return APP_BODIES[name] || ''; }
+// Comments blanked, STRING LITERALS KEPT. maskLiterals is wrong here: it
+// destroys '/dxlink/connect' and 'dxlinkDiag', which are the real evidence.
+// stripComments keeps them while still refusing to count a prose mention.
+function codeOnly(src) { return stripComments(src); }
+function calleesOf(name) {
+  const body = codeOnly(appBody(name));
+  const out = new Set();
+  let m;
+  const re = /(?:^|[^A-Za-z0-9_$.])([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g;
+  while ((m = re.exec(body))) {
+    if (m[1] !== name && Object.prototype.hasOwnProperty.call(APP_BODIES, m[1])) out.add(m[1]);
+  }
+  return Array.from(out).sort();
+}
+const DXLINK_TOKEN = /dxlink/i;
+const TT_SESSION_GATE = /\bS\.tt(?:Connected|SessionId)\b/;
+function couplingEvidenceIn(body) {
+  const e = [];
+  if (DXLINK_TOKEN.test(body)) e.push('dxlink-token');
+  if (TT_SESSION_GATE.test(body)) e.push('tt-session-gate');
+  return e;
+}
+// Breadth-first from the entry point's own body. Returns the SHALLOWEST hop
+// carrying evidence, or null when the bounded walk finds none.
+function couplingOf(name, maxDepth) {
+  let frontier = [name];
+  const seen = new Set([name]);
+  for (let depth = 0; depth <= maxDepth && frontier.length; depth++) {
+    const next = [];
+    for (const n of frontier) {
+      const body = codeOnly(appBody(n));
+      if (!body) continue;
+      const ev = couplingEvidenceIn(body);
+      if (ev.length) return { depth: depth, via: n, evidence: ev };
+      for (const c of calleesOf(n)) if (!seen.has(c)) { seen.add(c); next.push(c); }
+    }
+    frontier = next;
+  }
+  return null;
+}
+const EFFECT_PROBES = {
+  fetch: /\bfetch\s*\(/g, setInterval: /\bsetInterval\s*\(/g, setTimeout: /\bsetTimeout\s*\(/g,
+  document: /\bdocument\s*\./g, localStorage: /\blocalStorage\s*\./g,
+};
+function effectSurface(src) {
+  const m = maskLiterals(src);
+  const out = {};
+  Object.keys(EFFECT_PROBES).forEach((k) => {
+    out[k] = (m.match(new RegExp(EFFECT_PROBES[k].source, 'g')) || []).length;
+  });
+  return out;
+}
+function sumEffects(sources) {
+  const out = {};
+  Object.keys(EFFECT_PROBES).forEach((k) => { out[k] = 0; });
+  sources.forEach((src) => {
+    const e = effectSurface(src);
+    Object.keys(e).forEach((k) => { out[k] += e[k]; });
+  });
+  return out;
+}
+
 function bareAssignmentTargets(source) {
   const m = maskLiterals(source);
   const out = new Set();
@@ -602,13 +779,50 @@ function vModuleIdentity(src, pin) {
   return out;
 }
 
-function vPredictedIndex(html, pin) {
+// THE SEPARATOR MODEL. The raw fragment is `moduleBody + structuralSeparator`.
+// Only the body is written to the module file; both leave index.html; the undo
+// reinserts body + separator. A body that swallowed the separator, or one that
+// ends on a blank line, is rejected here — `git diff --check`, which CI runs,
+// reports "new blank line at EOF".
+function vModuleBody(body, raw, pin) {
+  const out = [];
+  if (body.length !== pin.bodyChars) out.push(pin.src + ' body UTF-16 length is ' + body.length);
+  if (Buffer.byteLength(body, 'utf8') !== pin.bodyUtf8) out.push(pin.src + ' body UTF-8 byte length differs');
+  if (count(body, '\n') !== pin.bodyLf) out.push(pin.src + ' body LF count differs');
+  if (sha256(body) !== pin.bodySha256) out.push(pin.src + ' body SHA-256 differs');
+  if (!body.endsWith('}\n')) out.push(pin.src + ' body does not end on a real line of code (`}\\n`)');
+  if (body.endsWith('\n\n')) out.push(pin.src + ' body ends on a blank line — git diff --check would flag it');
+  if (body + SEPARATOR !== raw) out.push(pin.src + ' body + separator does not reproduce the raw fragment');
+  if (raw.length - body.length !== 1) out.push(pin.src + ' separator is not exactly one unit long');
+  return out;
+}
+function vSeparator(text) {
+  const out = [];
+  if (text !== SEPARATOR) out.push('the structural separator is ' + JSON.stringify(text) + ', not exactly one LF');
+  if (text.length !== 1) out.push('separator UTF-16 length is ' + text.length);
+  if (Buffer.byteLength(text, 'utf8') !== 1) out.push('separator UTF-8 byte length is not 1');
+  if (count(text, '\n') !== 1) out.push('separator LF count is not 1');
+  return out;
+}
+
+// `movedRawChars` and `tagChars` make the length a DERIVED expectation rather
+// than a second pinned constant: a separator left behind in the extracted index
+// (or a body removed without its separator) fails the arithmetic even before
+// the hash is reached.
+function vPredictedIndex(html, pin, movedRawChars, tagChars) {
   const out = [];
   if (html.length !== pin.chars) out.push('predicted index UTF-16 length is ' + html.length);
   if (Buffer.byteLength(html, 'utf8') !== pin.utf8) out.push('predicted index UTF-8 byte length differs');
   if (count(html, '\n') !== pin.lf) out.push('predicted index LF count differs');
   if (sha256(html) !== pin.sha256) out.push('predicted index SHA-256 differs');
   if (localScriptCount(html) !== pin.scripts) out.push('predicted local script count is ' + localScriptCount(html));
+  if (movedRawChars != null && tagChars != null) {
+    const expected = INDEX_CHARS - movedRawChars + tagChars;
+    if (html.length !== expected) {
+      out.push('predicted index length ' + html.length + ' is not base − movedRaw + tags (' + expected
+        + '): a structural separator was left behind or dropped');
+    }
+  }
   return out;
 }
 
@@ -831,20 +1045,84 @@ eq(inter(fragDeps.reconnectPanel, fragDeps.reconnectAction), [],
   'showReconnectPanel and doReconnectTT share ZERO free dependencies');
 eq(inter(fragDeps.postAuthLifecycle, fragDeps.reconnectAction), ['S', 'console'],
   '_apexPostAuthInit and doReconnectTT share exactly two: S and console');
-// LAYER, MEASURED. The shared lifecycle owner is not UI and is mostly not Tastytrade.
+// LAYER, MEASURED. _apexPostAuthInit is not UI. That is a statement about its
+// DIRECT surface only, and the next block is careful to say so.
 LIFECYCLE_CALLS.forEach((n) => {
   ok(fragDeps.postAuthLifecycle.indexOf(n) >= 0, '_apexPostAuthInit orchestrates ' + n);
 });
 eq(LIFECYCLE_CALLS.length, 12, '_apexPostAuthInit orchestrates exactly twelve lifecycle entry points');
-eq(TASTYTRADE_LIFECYCLE_CALLS.filter((n) => LIFECYCLE_CALLS.indexOf(n) >= 0).length, 3,
-  '…of which exactly three are Tastytrade/DXLink-backed');
-eq(LIFECYCLE_CALLS.length - TASTYTRADE_LIFECYCLE_CALLS.length, 9,
-  '…so nine of twelve have nothing to do with Tastytrade');
-eq(matchesOf(FRAG.postAuthLifecycle, /\bdocument\s*\./).length, 0, '_apexPostAuthInit performs no DOM access at all');
-eq(matchesOf(FRAG.postAuthLifecycle, /\blocalStorage\s*\./).length, 0, '_apexPostAuthInit touches no storage');
-eq(matchesOf(FRAG.postAuthLifecycle, /\bset(?:Timeout|Interval)\s*\(/).length, 0, '_apexPostAuthInit creates no timer');
+eq(matchesOf(FRAG.postAuthLifecycle, /\bdocument\s*\./).length, 0, '_apexPostAuthInit performs no DIRECT DOM access');
+eq(matchesOf(FRAG.postAuthLifecycle, /\blocalStorage\s*\./).length, 0, '_apexPostAuthInit performs no DIRECT storage access');
+eq(matchesOf(FRAG.postAuthLifecycle, /\bset(?:Timeout|Interval)\s*\(/).length, 0, '_apexPostAuthInit creates no timer DIRECTLY');
 eq(matchesOf(FRAG.postAuthLifecycle, /\.innerHTML\s*=/).length, 0, '_apexPostAuthInit writes no innerHTML');
-eq(matchesOf(FRAG.postAuthLifecycle, /\b(?:fetch|XMLHttpRequest)\s*\(/).length, 0, '_apexPostAuthInit opens no network call');
+eq(matchesOf(FRAG.postAuthLifecycle, /\b(?:fetch|XMLHttpRequest|WebSocket)\s*\(?/).length, 0,
+  '_apexPostAuthInit opens no network call or socket DIRECTLY');
+
+// ── 6a. DIRECT versus ORCHESTRATED effects ──────────────────────────────────
+// "No network, no timer, no DOM" is true of the function's own body and FALSE
+// of what running it causes. Both are measured; neither is allowed to stand in
+// for the other.
+const ownEffects = effectSurface(FRAG.postAuthLifecycle);
+eq(ownEffects, OWN_DIRECT_EFFECTS, '_apexPostAuthInit direct effect surface is empty');
+const orchestratedEffects = sumEffects(LIFECYCLE_CALLS.map((n) => appBody(n)));
+eq(orchestratedEffects, ORCHESTRATED_DIRECT_EFFECTS,
+  'the twelve entry points it calls carry, in their OWN bodies, these effects');
+ok(orchestratedEffects.fetch > 0, 'so running _apexPostAuthInit DOES cause a network call — transitively');
+ok(orchestratedEffects.setInterval > 0, '…and DOES create repeating timers — transitively');
+ok(orchestratedEffects.document > 0, '…and DOES write the DOM — transitively');
+ok(ownEffects.fetch === 0 && orchestratedEffects.fetch > 0,
+  'direct and transitive effects genuinely differ: the audit may never conflate them');
+
+// ── 6b. TT / DXLink coupling, DERIVED from the base tree ────────────────────
+// Not a hand-written taxonomy. For each entry point the walk starts at its own
+// body and follows calls to other top-level declarations, looking for a DXLink
+// token or a TT-session gate. Comments are stripped and string literals KEPT,
+// because the real evidence includes '/dxlink/connect' and 'dxlinkDiag' — while
+// a prose mention of DXLink in a comment must never count.
+const coupling = {};
+LIFECYCLE_CALLS.forEach((n) => { coupling[n] = couplingOf(n, COUPLING_MAX_DEPTH); });
+const tier1 = LIFECYCLE_CALLS.filter((n) => /dxlink/i.test(n));
+const tier2 = LIFECYCLE_CALLS.filter((n) => !/dxlink/i.test(n) && coupling[n] !== null);
+const tier3 = LIFECYCLE_CALLS.filter((n) => !/dxlink/i.test(n) && coupling[n] === null);
+eq(tier1.slice().sort(), DXLINK_DIRECT_CALLS.slice().sort(),
+  'TIER 1 — exactly three entry points are directly DXLink-specific owners');
+eq(tier2.slice().sort(), TT_DXLINK_COUPLED_CALLS.slice().sort(),
+  'TIER 2 — six more are TT-session- or DXLink-readiness-coupled, derived by the call walk');
+eq(tier3.slice().sort(), GENERIC_LIFECYCLE_CALLS.slice().sort(),
+  'TIER 3 — three reach no TT/DXLink evidence within the bounded walk');
+eq(tier1.length + tier2.length + tier3.length, 12, 'the three tiers partition all twelve entry points');
+eq(tier1.length, 3, 'the defensible direct claim is 3 of 12, and only that');
+eq(tier1.length + tier2.length, 9, 'NINE of twelve are TT/DXLink direct-or-coupled — the opposite of "9 are not TT"');
+eq(tier3.length, 3, 'only three are generic backend/UI lifecycle');
+tier1.forEach((n) => {
+  ok(/dxlink/i.test(codeOnly(appBody(n))),
+    'TIER 1 is not name-only: ' + n + ' operates the DXLink subsystem in its own body');
+  eq(coupling[n].depth, 0, '…with the evidence at call depth 0');
+});
+LIFECYCLE_CALLS.filter((n) => coupling[n] !== null).forEach((n) => {
+  eq({ depth: coupling[n].depth, via: coupling[n].via, evidence: coupling[n].evidence },
+    COUPLING_EVIDENCE[n], 'coupling for ' + n + ' is reached exactly as pinned');
+});
+tier3.forEach((n) => {
+  eq(coupling[n], null, n + ' reaches no TT-session gate and no DXLink token within depth ' + COUPLING_MAX_DEPTH);
+});
+// The named call edges, each checked against the real definition rather than
+// inferred from a function's name.
+COUPLING_PROOFS.forEach((pr) => {
+  ok(calleesOf(pr.owner).indexOf(pr.callee) >= 0, pr.owner + ' really calls ' + pr.callee);
+  (pr.ownerMustContain || []).forEach((t) => {
+    ok(codeOnly(appBody(pr.owner)).indexOf(t) >= 0, pr.owner + ' body carries ' + JSON.stringify(t));
+  });
+  (pr.calleeMustContain || []).forEach((t) => {
+    ok(codeOnly(appBody(pr.callee)).indexOf(t) >= 0, pr.callee + ' body carries ' + JSON.stringify(t));
+  });
+  ok(pr.why.length > 0, pr.owner + ' → ' + pr.callee + ': ' + pr.why);
+});
+// Negative control for the walk itself: a comment-only mention must NOT couple.
+ok(/DXLink/.test(appBody('_ensureVixFamily')),
+  '_ensureVixFamily mentions DXLink in prose…');
+ok(!/dxlink/i.test(codeOnly(appBody('_ensureVixFamily'))),
+  '…but not in code, so its coupling is transitive (depth 1) and never claimed as direct');
 // State: what each fragment owns, orchestrates and writes across the boundary.
 FRAGMENTS.forEach((f) => {
   eq(sPropsWritten(FRAG[f.name]), S_WRITES[f.name], f.name + ' writes exactly these S.* properties');
@@ -880,9 +1158,12 @@ section('7. Candidates — forward transform, load order and reverse reconstruct
 // below is written anywhere: §13 proves the repository is untouched.
 function buildCandidate(key) {
   const c = CAND[key];
-  const modules = c.modules.map((m) => ({
-    src: m.src, pin: m, code: m.frags.map((n) => FRAG[n]).join(''),
-  }));
+  // `raw` is what leaves index.html; `code` is what the module file would
+  // actually contain — raw minus its final LF, the structural separator.
+  const modules = c.modules.map((m) => {
+    const raw = m.frags.map((n) => FRAG[n]).join('');
+    return { src: m.src, pin: m, raw: raw, code: raw.slice(0, -1), separator: raw.slice(-1) };
+  });
   const movedNames = new Set();
   c.modules.forEach((m) => m.frags.forEach((n) => movedNames.add(n)));
   const kept = FRAGMENTS.filter((f) => !movedNames.has(f.name));
@@ -904,7 +1185,14 @@ Object.keys(BUILT).forEach((k) => {
   section('7.' + k + ' Candidate ' + k + ' — ' + b.cand.label);
   // Module identity and ownership.
   b.modules.forEach((m) => {
-    mustHold('vModuleIdentity', vModuleIdentity(m.code, m.pin), 'candidate ' + k + ' module ' + m.src + ' has its pinned identity');
+    // The RAW fragment — source evidence, what leaves index.html.
+    mustHold('vModuleIdentity', vModuleIdentity(m.raw, m.pin), 'candidate ' + k + ' RAW fragment for ' + m.src + ' has its pinned identity');
+    // The SHIPPABLE body — what the module file would contain.
+    mustHold('vModuleBody', vModuleBody(m.code, m.raw, m.pin), 'candidate ' + k + ' module body ' + m.src + ' has its pinned shippable identity');
+    mustHold('vSeparator', vSeparator(m.separator), 'candidate ' + k + ': ' + m.src + ' carries exactly one structural separator LF');
+    ok(m.code.endsWith('}\n') && !m.code.endsWith('\n\n'),
+      'candidate ' + k + ' module ' + m.src + ' ends `}\\n` — git diff --check clean, like every module this series ships');
+    eq(m.code + m.separator, m.raw, 'candidate ' + k + ': body + separator reproduces the raw fragment for ' + m.src);
     const expected = m.pin.owners.map((n) => OWNERS.filter((o) => o.name === n)[0]);
     mustHold('vOwners', vOwners(m.code, expected), 'candidate ' + k + ' module ' + m.src + ' owns exactly ' + JSON.stringify(m.pin.owners));
     const load = loadInEmptyVm(m.code);
@@ -915,7 +1203,15 @@ Object.keys(BUILT).forEach((k) => {
       '…and it parses standalone as a classic script');
   });
   // Predicted document.
-  mustHold('vPredictedIndex', vPredictedIndex(b.predicted, b.cand.predicted), 'candidate ' + k + ' predicted index.html has its pinned identity');
+  const movedRawChars = b.modules.reduce((a, m) => a + m.raw.length, 0);
+  const tagChars = b.modules.reduce((a, m) => a + tagFor(m.src).length, 0);
+  mustHold('vPredictedIndex', vPredictedIndex(b.predicted, b.cand.predicted, movedRawChars, tagChars),
+    'candidate ' + k + ' predicted index.html has its pinned identity, and body AND separator both left it');
+  eq(b.predicted.length, INDEX_CHARS - movedRawChars + tagChars,
+    'candidate ' + k + ': no structural separator was stranded in the extracted index');
+  b.modules.forEach((m) => {
+    eq(count(b.predicted, m.code), 0, 'candidate ' + k + ': ' + m.src + ' body no longer appears in the extracted index');
+  });
   mustHold('vTags', vTags(b.predicted, b.modules.map((m) => m.src)),
     'candidate ' + k + ' tags are unique, classic, src-only, in order after mcx-charts.js and before the inline monolith');
   eq(localScriptCount(b.predicted), b.cand.predicted.scripts,
@@ -951,6 +1247,8 @@ Object.keys(BUILT).forEach((k) => {
     eq(count(m.code, 'import '), 0, '…and no import');
   });
   // Reverse transform: byte-for-byte back to the pinned base.
+  // Every undo reinserts moduleBody + SEPARATOR. The separator is never in the
+  // extracted index; it exists only in the reconstruction.
   let rebuilt;
   if (k === 'D') {
     const untagged = b.predicted.replace(tagFor(b.modules[0].src), '');
@@ -958,17 +1256,17 @@ Object.keys(BUILT).forEach((k) => {
     const w = b.cand.weavePoint;
     eq(w, FRAG.reconnectPanel.length, 'candidate D weave point is exactly |reconnectPanel|');
     rebuilt = untagged.slice(0, RANGE_START)
-      + mod.slice(0, w) + FRAG.postAuthLifecycle + mod.slice(w)
+      + mod.slice(0, w) + FRAG.postAuthLifecycle + mod.slice(w) + SEPARATOR
       + untagged.slice(RANGE_START + FRAG.postAuthLifecycle.length);
   } else if (k === 'C') {
     const untagged = b.predicted.replace(tagFor(b.modules[0].src), '');
     const at = RANGE_START + FRAG.reconnectPanel.length;
-    rebuilt = untagged.slice(0, at) + b.modules[0].code + untagged.slice(at);
+    rebuilt = untagged.slice(0, at) + b.modules[0].code + SEPARATOR + untagged.slice(at);
   } else {
     let untagged = b.predicted;
     b.modules.forEach((m) => { untagged = untagged.replace(tagFor(m.src), ''); });
     rebuilt = untagged.slice(0, RANGE_START)
-      + b.modules.map((m) => m.code).join('')
+      + b.modules.map((m) => m.code + SEPARATOR).join('')
       + untagged.slice(RANGE_START);
   }
   eq(b.predicted.replace(new RegExp(b.modules.map((m) => esc(tagFor(m.src))).join('|'), 'g'), ''), b.untagged,
@@ -980,21 +1278,43 @@ Object.keys(BUILT).forEach((k) => {
 
 // Candidate-specific structure the generic loop cannot state.
 eq(BUILT.B.modules.length, 2, 'candidate B is two modules');
-eq(BUILT.B.modules[0].code + BUILT.B.modules[1].code, WHOLE,
-  'candidate B reconstructs the original block as B1 + B2, in source order');
-eq(BUILT.A.modules[0].code, WHOLE, 'candidate A moves the one whole module at the unique source boundary');
-eq(BUILT.C.modules[0].code, FRAG.postAuthLifecycle, 'candidate C moves only the shared post-auth lifecycle');
-eq(BUILT.D.modules[0].code, FRAG.reconnectPanel + FRAG.reconnectAction,
+eq(BUILT.B.modules[0].code + SEPARATOR + BUILT.B.modules[1].code + SEPARATOR, WHOLE,
+  'candidate B reconstructs the original block as B1 + separator + B2 + separator, in source order');
+eq(BUILT.B.modules[0].raw + BUILT.B.modules[1].raw, WHOLE,
+  '…equivalently, as the two raw fragments back to back');
+eq(BUILT.A.modules[0].raw, WHOLE, 'candidate A moves the one whole raw range at the unique source boundary');
+eq(BUILT.A.modules[0].code + SEPARATOR, WHOLE, '…and its shippable body plus one separator restores it');
+eq(BUILT.C.modules[0].raw, FRAG.postAuthLifecycle, 'candidate C moves only the shared post-auth lifecycle');
+eq(BUILT.C.modules[0].code + SEPARATOR, FRAG.postAuthLifecycle,
+  '…as body [1874908,1879378) plus the separator at [1879378,1879379)');
+eq(BUILT.C.modules[0].code, INDEX.slice(1874908, 1879378), 'candidate C body is exactly the pinned half-open range');
+mustHold('vSeparator', vSeparator(INDEX.slice(1879378, 1879379)),
+  'the candidate C structural separator at [1879378,1879379) is exactly one LF');
+eq(BUILT.D.modules[0].raw, FRAG.reconnectPanel + FRAG.reconnectAction,
   'candidate D moves the two non-contiguous reconnect fragments, in source order');
 eq(BUILT.D.cand.weavePoint, 2073, 'candidate D uses the exact weave point 2073');
+// The candidate A body/separator ranges, stated as ranges and checked as bytes.
+eq(BUILT.A.modules[0].code, INDEX.slice(A_SEPARATOR_CORRECTED.bodyRange[0], A_SEPARATOR_CORRECTED.bodyRange[1]),
+  'candidate A body is exactly [1872835,1882058)');
+mustHold('vSeparator', vSeparator(INDEX.slice(A_SEPARATOR_CORRECTED.separatorRange[0], A_SEPARATOR_CORRECTED.separatorRange[1])),
+  'the candidate A structural separator at [1882058,1882059) is exactly one LF');
 
 // THE CENTRAL FINDING. What candidate C leaves behind is, byte for byte,
 // candidate D's module — contiguous and adjacent, needing no weave at all.
 const cTagLen = tagFor(CAND.C.modules[0].src).length;
 const cLeftInline = BUILT.C.predicted.slice(RANGE_START + cTagLen, RANGE_START + cTagLen + CAND.D.modules[0].chars);
-eq(cLeftInline, BUILT.D.modules[0].code,
-  'C leaves the two reconnect fragments CONTIGUOUS — byte-identical to candidate D\'s module');
-eq(sha256(cLeftInline), CAND.D.modules[0].sha256, '…hashing to candidate D\'s pinned module SHA-256');
+// Because C removes body AND separator — the complete raw fragment — the
+// remainder is the full RAW reconnect pair, not one byte short of it.
+eq(cLeftInline, BUILT.D.modules[0].raw,
+  'C leaves the two reconnect fragments CONTIGUOUS — byte-identical to candidate D\'s RAW fragment');
+eq(cLeftInline.length, CAND.D.modules[0].chars, '…4,753 UTF-16 units');
+eq(Buffer.byteLength(cLeftInline, 'utf8'), CAND.D.modules[0].utf8, '…4,793 UTF-8 bytes');
+eq(count(cLeftInline, '\n'), CAND.D.modules[0].lf, '…86 LF');
+eq(sha256(cLeftInline), CAND.D.modules[0].sha256, '…hashing to candidate D\'s pinned raw SHA-256');
+// The incompatibility this follow-up removes: had C left its separator inline,
+// the remainder would be one byte longer and would NOT match D.
+ok((SEPARATOR + cLeftInline) !== BUILT.D.modules[0].raw,
+  'leaving the separator inline would break the contiguity result by exactly one byte');
 ok(BUILT.C.predicted.indexOf(FRAG.reconnectPanel + FRAG.reconnectAction) > 0,
   '…so the follow-up reconnect-UI extraction is a plain contiguous cut, no weave');
 ok(BUILT.D.predicted.indexOf(FRAG.postAuthLifecycle) > 0,
@@ -1118,23 +1438,51 @@ shippedModules.forEach((rel) => {
   const t = fs.readFileSync(path.join(ROOT, rel), 'utf8');
   ok(t.endsWith('}\n') && !t.endsWith('\n\n'), rel + ' ends `}\\n` — no blank line at EOF');
 });
+// The raw fragments DO end on a blank line. That is precisely why a structural
+// separator exists: it is carved off the body, and it leaves index.html with it.
 Object.keys(BUILT).forEach((k) => {
   BUILT[k].modules.forEach((m) => {
-    ok(m.code.endsWith('\n\n'),
-      'candidate ' + k + ' module ' + m.src + ' as pinned ends on a blank line — `git diff --check` would flag it in phase 2');
+    ok(m.raw.endsWith('\n\n'), 'candidate ' + k + ' RAW fragment for ' + m.src + ' ends on a blank line');
+    ok(m.code.endsWith('}\n') && !m.code.endsWith('\n\n'),
+      '…and its shippable body does NOT — candidate ' + k + ' module ' + m.src + ' is git diff --check clean');
   });
 });
-const aCorrected = WHOLE.slice(0, -1);
-const aCorrectedIndex = (INDEX.slice(0, RANGE_START) + '\n' + INDEX.slice(RANGE_END))
+
+// Candidate A restated in the model's own terms. Every field is asserted, and
+// the predicted index is IDENTICAL to CAND.A.predicted because body AND
+// separator both leave the document.
+const aBody = INDEX.slice(A_SEPARATOR_CORRECTED.bodyRange[0], A_SEPARATOR_CORRECTED.bodyRange[1]);
+const aSeparator = INDEX.slice(A_SEPARATOR_CORRECTED.separatorRange[0], A_SEPARATOR_CORRECTED.separatorRange[1]);
+const aSelectedIndex = (INDEX.slice(0, RANGE_START) + INDEX.slice(RANGE_END))
   .replace(ANCHOR_TAG, ANCHOR_TAG + tagFor(CAND.A.modules[0].src));
-eq(aCorrected.length, A_SEPARATOR_CORRECTED.moduleChars, 'separator-corrected candidate A module UTF-16 length');
-eq(Buffer.byteLength(aCorrected, 'utf8'), A_SEPARATOR_CORRECTED.moduleUtf8, 'separator-corrected candidate A module UTF-8 byte length');
-eq(count(aCorrected, '\n'), A_SEPARATOR_CORRECTED.moduleLf, 'separator-corrected candidate A module LF count');
-eq(sha256(aCorrected), A_SEPARATOR_CORRECTED.moduleSha256, 'separator-corrected candidate A module SHA-256');
-eq(aCorrectedIndex.length, A_SEPARATOR_CORRECTED.predictedChars, 'separator-corrected candidate A predicted index UTF-16 length');
-eq(sha256(aCorrectedIndex), A_SEPARATOR_CORRECTED.predictedSha256, 'separator-corrected candidate A predicted index SHA-256');
-ok(aCorrected.endsWith('}\n') && sha256(aCorrected) !== CAND.A.modules[0].sha256,
-  'the separator-corrected module is a DIFFERENT byte sequence — the pinned prediction is not silently reused for it');
+eq(aBody.length, A_SEPARATOR_CORRECTED.moduleChars, 'separator-corrected candidate A module UTF-16 length');
+eq(Buffer.byteLength(aBody, 'utf8'), A_SEPARATOR_CORRECTED.moduleUtf8, 'separator-corrected candidate A module UTF-8 byte length');
+eq(count(aBody, '\n'), A_SEPARATOR_CORRECTED.moduleLf, 'separator-corrected candidate A module LF count');
+eq(sha256(aBody), A_SEPARATOR_CORRECTED.moduleSha256, 'separator-corrected candidate A module SHA-256');
+mustHold('vSeparator', vSeparator(aSeparator), 'the candidate A separator is exactly one LF');
+eq(aBody + aSeparator, WHOLE, 'candidate A body + separator is the complete raw range');
+eq(aSelectedIndex.length, A_SEPARATOR_CORRECTED.predictedChars, 'separator-corrected candidate A predicted index UTF-16 length');
+eq(Buffer.byteLength(aSelectedIndex, 'utf8'), A_SEPARATOR_CORRECTED.predictedUtf8, 'separator-corrected candidate A predicted index UTF-8 byte length');
+eq(count(aSelectedIndex, '\n'), A_SEPARATOR_CORRECTED.predictedLf, 'separator-corrected candidate A predicted index LF count');
+eq(sha256(aSelectedIndex), A_SEPARATOR_CORRECTED.predictedSha256, 'separator-corrected candidate A predicted index SHA-256');
+eq(localScriptCount(aSelectedIndex), A_SEPARATOR_CORRECTED.predictedScripts, 'separator-corrected candidate A predicted local script count');
+eq(aSelectedIndex, BUILT.A.predicted,
+  'the separator-corrected transform and the pinned candidate A prediction are the SAME document');
+ok(aBody.endsWith('}\n') && sha256(aBody) !== CAND.A.modules[0].sha256,
+  'the shippable body is a different byte sequence from the raw fragment — neither is substituted for the other');
+
+// THE REJECTED ALTERNATIVE: leave the separator inline instead of removing it.
+const aLfLeftInline = (INDEX.slice(0, RANGE_START) + SEPARATOR + INDEX.slice(RANGE_END))
+  .replace(ANCHOR_TAG, ANCHOR_TAG + tagFor(CAND.A.modules[0].src));
+eq(aLfLeftInline.length, A_LF_LEFT_INLINE_REJECTED.predictedChars, 'rejected LF-left-inline candidate A index UTF-16 length');
+eq(Buffer.byteLength(aLfLeftInline, 'utf8'), A_LF_LEFT_INLINE_REJECTED.predictedUtf8, 'rejected LF-left-inline candidate A index UTF-8 byte length');
+eq(count(aLfLeftInline, '\n'), A_LF_LEFT_INLINE_REJECTED.predictedLf, 'rejected LF-left-inline candidate A index LF count');
+eq(sha256(aLfLeftInline), A_LF_LEFT_INLINE_REJECTED.predictedSha256, 'rejected LF-left-inline candidate A index SHA-256');
+ok(aLfLeftInline !== aSelectedIndex,
+  'the rejected alternative is NOT the selected transform — it differs, and is labelled rejected rather than reported as the prediction');
+eq(aLfLeftInline.length - aSelectedIndex.length, 1, '…by exactly the one stranded separator byte');
+mustCatch(vPredictedIndex(aLfLeftInline, CAND.A.predicted, WHOLE.length, tagFor(CAND.A.modules[0].src).length),
+  'a candidate A index that stranded its structural separator inline');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('9. What each candidate would leave inline');
@@ -1270,11 +1618,56 @@ mustCatch(vConsumers(INDEX.replace("_apexPostAuthInit('login');", "_apexPostAuth
 // (25) a foreign production change
 mustCatch(vProductionUntouched(['tests/temporary-tt-auth-lifecycle-audit.test.js', 'index.html']), 'a foreign index.html change');
 mustCatch(vProductionUntouched(['js/ui/tt-auth-lifecycle.js']), 'a foreign js/ module appearing in the change set');
+// (26) SEPARATOR-MODEL CONTROLS — the seven states this follow-up exists to reject.
+{
+  const c = BUILT.C.modules[0];
+  const pinC = CAND.C.modules[0];
+  const tagC = tagFor(pinC.src);
+  const untaggedC = BUILT.C.predicted.replace(tagC, '');
+  const atC = RANGE_START + FRAG.reconnectPanel.length;
+  // (a) the separator absorbed into the module body
+  mustCatch(vModuleBody(c.raw, c.raw, pinC), 'a module body that absorbed its structural separator');
+  // (b) a module body ending on a blank line
+  mustCatch(vModuleBody(c.code + SEPARATOR, c.raw, pinC), 'a module body ending \\n\\n');
+  // (c) the separator left behind in the predicted index
+  const strandedC = (INDEX.slice(0, 1874908) + SEPARATOR + INDEX.slice(1879379)).replace(ANCHOR_TAG, ANCHOR_TAG + tagC);
+  mustCatch(vPredictedIndex(strandedC, CAND.C.predicted, c.raw.length, tagC.length),
+    'a candidate C index that left its structural separator inline');
+  eq(strandedC.length - BUILT.C.predicted.length, 1, '…which is longer by exactly the one stranded byte');
+  // …and the stranded separator also breaks the contiguity result.
+  const strandedRemainder = strandedC.slice(RANGE_START + tagC.length,
+    RANGE_START + tagC.length + CAND.D.modules[0].chars);
+  ok(strandedRemainder !== BUILT.D.modules[0].raw,
+    '…and the reconnect remainder is then NOT byte-identical to candidate D');
+  // (d) missing separator during undo / reconstruction from the body alone
+  mustCatch(vReconstruction(untaggedC.slice(0, atC) + c.code + untaggedC.slice(atC)),
+    'an undo that reinserted the module body without its separator');
+  // (e) duplicated separator during undo / an extra separator
+  mustCatch(vReconstruction(untaggedC.slice(0, atC) + c.code + SEPARATOR + SEPARATOR + untaggedC.slice(atC)),
+    'an undo that reinserted a duplicated separator');
+  // (f) the same two failures for candidate A, whose separator sits at the tail
+  const a = BUILT.A.modules[0];
+  const untaggedA = BUILT.A.predicted.replace(tagFor(a.src), '');
+  mustCatch(vReconstruction(untaggedA.slice(0, RANGE_START) + a.code + untaggedA.slice(RANGE_START)),
+    'a candidate A undo with no separator');
+  mustCatch(vReconstruction(untaggedA.slice(0, RANGE_START) + a.code + SEPARATOR + SEPARATOR + untaggedA.slice(RANGE_START)),
+    'a candidate A undo with an extra separator');
+  // (g) a separator that is not exactly one LF
+  mustCatch(vSeparator('\n\n'), 'a two-LF structural separator');
+  mustCatch(vSeparator(' '), 'a space used as the structural separator');
+  mustCatch(vSeparator(''), 'an empty structural separator');
+  // …and the model holds on the real artefacts.
+  mustHold('vModuleBody', vModuleBody(c.code, c.raw, pinC), 'the real candidate C body/separator split is accepted');
+  mustHold('vSeparator', vSeparator(c.separator), 'the real candidate C separator is accepted');
+}
+
 // …and the guards are not vacuous: each holds on the real artefact.
 mustHold('vProductionUntouched', vProductionUntouched(['tests/temporary-tt-auth-lifecycle-audit.test.js']),
   'a test-only change set is accepted');
 mustHold('vTags', vTags(BUILT.A.predicted, [CAND.A.modules[0].src]), 'the real candidate A tag placement is accepted');
-mustHold('vModuleIdentity', vModuleIdentity(WHOLE, CAND.A.modules[0]), 'the real candidate A module is accepted');
+mustHold('vModuleIdentity', vModuleIdentity(WHOLE, CAND.A.modules[0]), 'the real candidate A raw fragment is accepted');
+mustHold('vPredictedIndex', vPredictedIndex(BUILT.A.predicted, CAND.A.predicted, WHOLE.length, tagFor(CAND.A.modules[0].src).length),
+  'the real candidate A predicted index is accepted by the derived-length check');
 mustHold('vReconstruction', vReconstruction(INDEX), 'the pinned base itself is accepted as its own reconstruction');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1304,11 +1697,19 @@ ok(M.C.crossBoundaryStateWrites === 1 && M.C.crossBoundaryStateWrites < M.A.cros
   && M.C.crossBoundaryStateWrites < M.B.crossBoundaryStateWrites
   && M.C.crossBoundaryStateWrites < M.D.crossBoundaryStateWrites,
   'C is recommended on evidence: it moves the fewest cross-boundary state writes of any candidate');
-ok(cLeftInline === BUILT.D.modules[0].code,
+ok(cLeftInline === BUILT.D.modules[0].raw,
   '…and it is the only candidate whose remainder is a contiguous, weave-free next boundary');
 ok(inter(fragDeps.reconnectPanel, fragDeps.postAuthLifecycle).length === 0
   && inter(fragDeps.postAuthLifecycle, fragDeps.reconnectAction).length === 2,
   '…because the 9.2k block is a chain with a shared middle, not one cohesive owner');
+// The recommendation rests only on facts this audit proves.
+ok(baseOccurrences._apexPostAuthInit.code === 3,
+  'recommendation basis: _apexPostAuthInit has two independent consumers plus its declaration');
+ok(effectSurface(FRAG.postAuthLifecycle).document === 0 && matchesOf(FRAG.postAuthLifecycle, /\.value\b/).length === 0,
+  'recommendation basis: it performs no direct DOM or credential-form work');
+ok(M.C.crossBoundaryStateWrites === 1, 'recommendation basis: one cross-boundary S.* write');
+ok(tier1.length === 3 && tier1.length + tier2.length === 9,
+  'recommendation basis: the coupling claim used is 3 direct of 12, with 9 direct-or-coupled — not "9 are not TT"');
 
 const report = {
   base: {
@@ -1356,8 +1757,27 @@ const report = {
     },
     stateOwnedByBoundary: [],
     stateOrchestratedThroughCalls: LIFECYCLE_CALLS,
-    tastytradeLifecycleCalls: TASTYTRADE_LIFECYCLE_CALLS,
-    nonTastytradeLifecycleCalls: LIFECYCLE_CALLS.filter((n) => TASTYTRADE_LIFECYCLE_CALLS.indexOf(n) < 0),
+    directEffectsOfApexPostAuthInit: ownEffects,
+    orchestratedDirectEffects: orchestratedEffects,
+    effectNote: '_apexPostAuthInit performs none of these itself; running it causes all of them '
+      + 'through the twelve entry points it calls. Direct and transitive are reported separately.',
+    ttDxlinkCoupling: {
+      method: 'bounded breadth-first call walk (max depth ' + COUPLING_MAX_DEPTH + ') over the reconstructed '
+        + 'application source, comments stripped and string literals kept, looking for a DXLink token '
+        + '(/dxlink/i) or a TT-session gate (S.ttConnected / S.ttSessionId)',
+      tier1DirectDxlink: tier1,
+      tier2TtOrDxlinkCoupled: tier2,
+      tier3Generic: tier3,
+      directCount: tier1.length,
+      coupledCount: tier2.length,
+      directOrCoupledCount: tier1.length + tier2.length,
+      genericCount: tier3.length,
+      perName: coupling,
+      defensibleClaim: '3 of 12 are directly DXLink-specific owners; 9 of 12 are direct-or-coupled; '
+        + '3 of 12 reach no TT/DXLink evidence within the bounded walk',
+      supersedes: 'the earlier, overstated claim that "only 3 of 12 are Tastytrade/DXLink-backed" and '
+        + 'that "9 of 12 have nothing to do with Tastytrade"',
+    },
     stateOwnedElsewhereButWrittenDirectly: { object: 'S (inline const)', properties: sPropsWritten(WHOLE) },
     foreignTopLevelBindingsRebound: [],
     localStorageKeys: LOCALSTORAGE_KEYS,
@@ -1370,10 +1790,18 @@ const report = {
   candidates: Object.fromEntries(Object.keys(BUILT).map((k) => [k, {
     label: CAND[k].label,
     modules: BUILT[k].modules.map((m) => ({
-      path: m.src.replace(/^\.\//, ''), chars: m.code.length,
-      utf8: Buffer.byteLength(m.code, 'utf8'), lf: count(m.code, '\n'), sha256: sha256(m.code),
+      path: m.src.replace(/^\.\//, ''),
+      // RAW source fragment — evidence; what leaves index.html.
+      raw: { chars: m.raw.length, utf8: Buffer.byteLength(m.raw, 'utf8'),
+        lf: count(m.raw, '\n'), sha256: sha256(m.raw), endsOnBlankLine: m.raw.endsWith('\n\n') },
+      // SHIPPABLE module body — what the module file would contain.
+      body: { chars: m.code.length, utf8: Buffer.byteLength(m.code, 'utf8'),
+        lf: count(m.code, '\n'), sha256: sha256(m.code),
+        endsOnBlankLine: m.code.endsWith('\n\n'), endsOnCode: m.code.endsWith('}\n') },
+      structuralSeparator: { text: JSON.stringify(m.separator), chars: m.separator.length,
+        utf8: Buffer.byteLength(m.separator, 'utf8'), lf: count(m.separator, '\n'),
+        removedFromIndex: true, reinsertedByUndo: true },
       owners: m.pin.owners, declarationsOnly: residue(m.code) === '', emptyVmSafe: loadInEmptyVm(m.code).ok,
-      endsOnBlankLine: m.code.endsWith('\n\n'),
     })),
     weavePoint: CAND[k].weavePoint || null,
     metrics: M[k],
@@ -1387,16 +1815,42 @@ const report = {
       ownerResidency: ownerResidency(predictedParts(BUILT[k].predicted, BUILT[k].bySrc)),
       allConsumersStillResolve: true, doReconnectTTStillAsync: true,
     },
-    reverseReconstruction: { byteExact: true, sha256: INDEX_SHA256 },
+    reverseReconstruction: { byteExact: true, sha256: INDEX_SHA256, reinserts: 'moduleBody + "\\n"' },
     touchesLiveContract: ownerOf(BUILT[k], '_apexPostAuthInit') !== '(inline)' ? [BSS_CONTRACT] : [],
   }])),
+  separatorModel: {
+    rule: 'raw fragment = moduleBody + structuralSeparator ("\\n"); BOTH are removed from index.html; '
+      + 'only moduleBody is written to the module file; the undo reinserts moduleBody + separator',
+    separatorRemainsInExtractedIndex: false,
+    candidateC: {
+      rawRange: [1874908, 1879379], rawChars: FRAG.postAuthLifecycle.length,
+      rawUtf8: Buffer.byteLength(FRAG.postAuthLifecycle, 'utf8'),
+      rawLf: count(FRAG.postAuthLifecycle, '\n'), rawSha256: sha256(FRAG.postAuthLifecycle),
+      bodyRange: [1874908, 1879378], bodyChars: BUILT.C.modules[0].code.length,
+      bodyUtf8: Buffer.byteLength(BUILT.C.modules[0].code, 'utf8'),
+      bodyLf: count(BUILT.C.modules[0].code, '\n'), bodySha256: sha256(BUILT.C.modules[0].code),
+      bodyEndsOnCode: BUILT.C.modules[0].code.endsWith('}\n'),
+      separatorRange: [1879378, 1879379],
+      predictedIndexUnchanged: true,
+      inlineRemainder: { chars: cLeftInline.length, utf8: Buffer.byteLength(cLeftInline, 'utf8'),
+        lf: count(cLeftInline, '\n'), sha256: sha256(cLeftInline),
+        equalsCandidateDRaw: cLeftInline === BUILT.D.modules[0].raw },
+    },
+  },
   separatorCorrectedCandidateA: A_SEPARATOR_CORRECTED,
+  candidateALfLeftInlineRejected: Object.assign({}, A_LF_LEFT_INLINE_REJECTED, {
+    differsFromSelected: aLfLeftInline !== aSelectedIndex,
+    extraBytes: aLfLeftInline.length - aSelectedIndex.length,
+  }),
   answers: {
     'is _apexPostAuthInit a shared service owner, a UI lifecycle owner or feature-level orchestration':
-      'a SHARED, non-UI post-authentication lifecycle owner. It performs zero DOM, storage, timer, '
-      + 'listener and network access of its own; it orchestrates 12 lifecycle entry points of which only '
-      + '3 are Tastytrade/DXLink-backed; and it has two independent callers, the normal-login path '
-      + '(line 14,372) and the reconnect action. It is service-layer orchestration, not reconnect-feature code.',
+      'a SHARED, non-UI post-authentication lifecycle owner. It performs zero DIRECT DOM, storage, timer, '
+      + 'listener and network access — but it ORCHESTRATES 12 lifecycle entry points whose own bodies carry '
+      + '1 fetch, 3 setInterval, 2 setTimeout and 1 DOM write, so running it does cause network calls, '
+      + 'repeating timers and DOM writes transitively. Of those 12, 3 are directly DXLink-specific owners, '
+      + '6 more are TT-session- or DXLink-readiness-coupled (derived by a bounded call walk), and 3 reach '
+      + 'no TT/DXLink evidence. It has two independent callers — the normal-login path (line 14,372) and '
+      + 'the reconnect action — so it is shared orchestration, not reconnect-feature code.',
     'does doReconnectTT belong with it or only consume it':
       'it only CONSUMES it. Their free-dependency overlap is two names (S, console). doReconnectTT is '
       + 'DOM- and credential-bound (7 getElementById sites, 1 innerHTML write, the apex_tt_session storage '
@@ -1404,12 +1858,15 @@ const report = {
       + 'that. The edge between them is one call-time call, not shared state.',
     'is the 9.2k-unit whole block cohesive enough for one module':
       'no. It is a chain with a shared middle, not a cluster: showReconnectPanel shares ZERO free '
-      + 'dependencies with either other owner, and the other two share two. Naming the whole block a '
-      + 'Tastytrade auth-lifecycle UI owner would mislabel the 9 of 12 lifecycle calls that are not Tastytrade.',
+      + 'dependencies with either other owner, and the other two share exactly two (S, console). The '
+      + 'block also mixes two different kinds of owner: a Tastytrade reconnect UI feature, and a shared '
+      + 'post-auth orchestrator whose second caller is the normal login path and which performs no direct '
+      + 'DOM or credential-form work at all.',
     'would splitting improve ownership enough to justify more scripts and contracts':
       'yes for candidate C (one extra script, and it removes the only owner that does not belong to the '
       + 'reconnect feature). No for candidate B, which costs a second script for the same relocation as A '
-      + 'while splitting one UI feature across two modules.',
+      + 'while splitting one UI feature across two modules and raising the cross-boundary call count from '
+      + '2 to 3.',
     'does any candidate create cross-boundary mutable-state writes worse than the current inline state':
       'no candidate is unsafe — every foreign write is a property write on the inline-owned S object, '
       + 'resolved at call time, and none rebinds a foreign top-level binding. But they differ sharply: '
@@ -1423,16 +1880,23 @@ const report = {
   },
   recommendation: RECOMMENDATION,
   recommendationSummary:
-    'Extract ONLY the shared post-authentication lifecycle, as js/services/apex-post-auth-init.js: '
-    + '4,471 units, one owner, declarations-only, empty-VM safe, 1 cross-boundary state write, '
-    + '2 call-time cross-boundary edges, byte-exact reverse. Phase 2 must also carve the trailing LF out '
-    + 'of the module (shipped convention is `}\\n`) and update the one live contract that pins '
-    + '_apexPostAuthInit to the inline monolith.',
+    'Extract ONLY the shared post-authentication lifecycle, as js/services/apex-post-auth-init.js. '
+    + 'The raw fragment [1874908,1879379) is 4,471 units; the SHIPPABLE module body is [1874908,1879378) — '
+    + '4,470 units / 4,518 bytes / 61 LF / 690e47ce…, ending `}\\n` — and the remaining LF is the '
+    + 'structural separator, removed from index.html with the body and reinserted only by the undo. '
+    + 'One owner, declarations-only, empty-VM safe, 1 cross-boundary state write, 2 call-time '
+    + 'cross-boundary edges, byte-exact reverse. Because body AND separator both leave, the predicted '
+    + 'index is 1,880,019 units / 4d514626… and the inline remainder is the full 4,753-unit reconnect '
+    + 'pair, byte-identical to candidate D\'s raw fragment. Phase 2 must also update the one live '
+    + 'contract that pins _apexPostAuthInit to the inline monolith.',
   rejections: {
-    A: 'rejected — mechanically the simplest cut, but it names a shared, mostly-non-Tastytrade lifecycle '
-      + 'orchestrator as TT reconnect UI and files it under js/ui/. 9 of the 12 lifecycle entry points it '
-      + 'orchestrates are not Tastytrade, it performs zero DOM access, and its second caller is the normal '
-      + 'login path 986k characters away. One module, wrong label, wrong layer.',
+    A: 'rejected — mechanically the simplest cut, but it files a SHARED orchestrator under js/ui/ '
+      + 'together with the reconnect UI feature. The grounds are the ones this audit proves: '
+      + '_apexPostAuthInit has two independent consumers, one of which is the normal login path 986k '
+      + 'characters away and outside the reconnect feature entirely; it shares ZERO free dependencies '
+      + 'with showReconnectPanel and only S and console with doReconnectTT; and it performs no direct DOM '
+      + 'or credential-form work, which is what a js/ui/ module is for. Not rejected on a TT/non-TT count: '
+      + '9 of its 12 orchestrated entry points are in fact TT/DXLink direct-or-coupled.',
     B: 'rejected — strictly dominated by A. Identical 9,224 units moved, but +1 module and +1 script tag, '
       + 'and it makes the wrong split: showReconnectPanel and doReconnectTT are the two halves of ONE UI '
       + 'feature (the panel generates the handler that calls the action) and B separates them, while '
@@ -1446,9 +1910,12 @@ const report = {
   },
   phase2Notes: {
     liveContractToUpdate: BSS_CONTRACT + " pins _apexPostAuthInit to '(inline)'; candidates A, B and C move it.",
-    moduleEofConvention: 'every pinned module identity ends on a blank line; `git diff --check` (which CI '
-      + 'runs) reports "new blank line at EOF", and every module shipped in this series ends `}\\n`. Carve '
-      + 'the final LF out of the module and leave it inline as the structural separator.',
+    separatorModel: 'the RAW fragments end on a blank line, so each module file is the raw fragment minus '
+      + 'its final LF (every module this series ships ends `}\\n`, and `git diff --check`, which CI runs, '
+      + 'reports "new blank line at EOF"). That LF is the structural separator: it is removed from '
+      + 'index.html ALONG WITH the body and reinserted only by the undo. It must NOT be left inline — '
+      + 'doing so strands one byte, changes the predicted index hash, and breaks the candidate C '
+      + 'contiguity result by exactly that byte.',
     historicalTaxonomy: 'tests/post-eic-monolith-extraction-audit.test.js classifies all three owners as '
       + 'CORE_SHELL, a family it called a non-candidate. That audit reads a PINNED historical blob, so it '
       + 'is a classification to argue with, not a gate that extraction would break.',
