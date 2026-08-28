@@ -367,6 +367,16 @@ eq(Buffer.byteLength(SEP, 'utf8'), 1, 'separator UTF-8 byte length is 1');
 eq(countLiteral(SEP, '\n'), 1, 'separator LF count is 1');
 eq(BODY + SEP, RAW, 'body + separator reproduces the raw fragment exactly');
 eq(BODY.length + SEP.length, RAW_CHARS, '…and accounts for every unit of it');
+// The undo helper deliberately does NOT re-check this at runtime — once its
+// module hash gate passes, body + separator is fully determined, so such a
+// guard could never fire. The fact still matters, so it is proved HERE against
+// the base blob, and the helper's exported pins are checked against it.
+eq(sha256(BODY + SEP), RAW_SHA256, 'the shipped module plus one LF hashes to the pinned raw fragment');
+eq(U.RAW_CHARS, RAW_CHARS, 'the undo helper pins the raw fragment length this contract measured');
+eq(U.RAW_SHA256, RAW_SHA256, 'the undo helper pins the raw fragment hash this contract measured');
+eq(U.RAW_AT, RAW_AT, 'the undo helper pins the raw fragment start offset');
+eq(U.RAW_END, RAW_END, 'the undo helper pins the raw fragment end offset');
+eq(U.SEPARATOR_AT, SEPARATOR_AT, 'the undo helper pins the structural separator offset');
 
 // The shipped module IS the body, and it ends on a real line of code.
 eq(MODULE, BODY, 'the shipped module is byte-identical to the base module body');
@@ -639,10 +649,40 @@ section('13. Mutation-sensitive negative controls');
 // rejected before the document is looked at, and document-shaped mutants before
 // the whole-document hash. A single leading identity check would have made most
 // of these unreachable.
+//
+// Every runtime error the helper can raise is exercised below by a mutant that
+// really reaches it — BAD_INPUT, MODULE_IDENTITY (size and hash),
+// MODULE_SEPARATOR, TAG_IDENTITY, TAG_ADJACENCY, RETAINED_OFFSET,
+// RETAINED_IDENTITY and EXTRACTED_IDENTITY — with one stated exception: the
+// helper's closing BASE_IDENTITY is a deliberate redundant final gate, not an
+// independently reachable guard, because after the module hash and the
+// whole-document hash both pass the reconstruction is a pure function of two
+// fixed byte strings. Each mutant below asserts the EXACT error it should
+// produce, so none can pass by tripping an earlier, coarser check.
 throws(() => U.undoApexPostAuthInit(INDEX, MODULE + SEPARATOR), /MODULE_IDENTITY/,
   'a module that ABSORBED the structural separator is rejected');
+// A module ending on a blank line, built to be INDISTINGUISHABLE from the real
+// one by size: same UTF-16 length, same UTF-8 byte length and same LF count.
+// One earlier LF becomes a space (LF −1) and the closing `}\n` becomes `\n\n`
+// (LF +1), so the size gate above cannot catch it and the separator gate is the
+// one that must. Asserting /MODULE_SEPARATOR/ exactly means this can never pass
+// by falling through to MODULE_IDENTITY.
+const blankLineEofMutant = (function () {
+  const firstLf = MODULE.indexOf('\n');
+  const spaced = MODULE.slice(0, firstLf) + ' ' + MODULE.slice(firstLf + 1);
+  return spaced.slice(0, -2) + '\n\n';
+})();
+eq(blankLineEofMutant.length, MODULE_CHARS, 'the blank-line-EOF mutant has the SAME UTF-16 length as the module');
+eq(Buffer.byteLength(blankLineEofMutant, 'utf8'), MODULE_UTF8, '…the same UTF-8 byte length');
+eq(countLiteral(blankLineEofMutant, '\n'), MODULE_LF, '…and the same LF count');
+ok(blankLineEofMutant.endsWith('\n\n') && !blankLineEofMutant.endsWith('}\n'),
+  '…but it ends on a blank line rather than a real line of code');
+ok(blankLineEofMutant !== MODULE, '…and it is genuinely a different byte sequence');
+throws(() => U.undoApexPostAuthInit(INDEX, blankLineEofMutant), /MODULE_SEPARATOR/,
+  'a same-size module ending on a blank line is rejected BY THE SEPARATOR GUARD');
+// The cheaper blank-line mutant is still rejected, one gate earlier, by size.
 throws(() => U.undoApexPostAuthInit(INDEX, MODULE.slice(0, -1) + '\n\n'), /MODULE_IDENTITY/,
-  'a module ending on a blank line is rejected');
+  'a longer module ending on a blank line is rejected by the size gate');
 throws(() => U.undoApexPostAuthInit(INDEX, MODULE.slice(0, -1)), /MODULE_IDENTITY/,
   'a truncated module is rejected');
 throws(() => U.undoApexPostAuthInit(INDEX, MODULE.slice(0, 1000)), /MODULE_IDENTITY/,
@@ -689,6 +729,8 @@ throws(() => U.undoApexPostAuthInit(
   /RETAINED_IDENTITY/, 'a single foreign byte inside the retained pair is rejected');
 throws(() => U.undoApexPostAuthInit(INDEX.replace('mcxResults', 'mcxResultZ'), MODULE),
   /EXTRACTED_IDENTITY/, 'foreign content elsewhere in the document is rejected');
+throws(() => U.undoApexPostAuthInit(ANCHOR_TAG + '\n' + MODULE_TAG + '\n', MODULE), /RETAINED_OFFSET/,
+  'a document too short to hold the retained reconnect pair is rejected before any slice is trusted');
 throws(() => U.undoApexPostAuthInit(BASE, MODULE), /TAG_IDENTITY/,
   'the un-extracted base is rejected — a partially applied state never reconstructs');
 

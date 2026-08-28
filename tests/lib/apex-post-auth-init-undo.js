@@ -38,10 +38,18 @@
 //
 // FAIL CLOSED. Every guard rejects rather than guesses: a missing tag, a
 // duplicate tag, a reordered tag, a module that absorbed the separator, a
-// module ending on a blank line, a truncated or mutated module, a mutated or
-// reordered retained reconnect pair, a partially applied state, or foreign
-// content anywhere in the retained document all raise. There is no
-// "best effort" path and no reconstruction is ever guessed.
+// module ending on a blank line, a truncated or mutated module, a document too
+// short to hold the retained pair, a mutated or reordered retained reconnect
+// pair, a partially applied state, or foreign content anywhere in the retained
+// document all raise. There is no "best effort" path and no reconstruction is
+// ever guessed.
+//
+// REACHABILITY. Every error below except the closing BASE_IDENTITY is reachable
+// by an ordinary mutant, and the permanent contract exercises each one:
+// BAD_INPUT, MODULE_IDENTITY (size and hash), MODULE_SEPARATOR, TAG_IDENTITY,
+// TAG_ADJACENCY, RETAINED_OFFSET, RETAINED_IDENTITY and EXTRACTED_IDENTITY.
+// BASE_IDENTITY is the deliberate redundant final gate described at step 7. A
+// guard that cannot fire is not defence, so none is kept for appearance.
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
 
@@ -61,6 +69,8 @@ const EXTRACTED_LF = 33036;
 const EXTRACTED_SHA256 = '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1';
 
 // The raw range index.html gave up, in base coordinates: body + separator.
+// Exported as pins for the permanent contract to check against the base blob;
+// deliberately NOT re-checked at runtime (see the note in step 2).
 const RAW_AT = 1874908;
 const RAW_END = 1879379;
 const RAW_CHARS = 4471;
@@ -126,14 +136,16 @@ function undoApexPostAuthInit(html, moduleSource) {
   if (digest(moduleSource) !== MODULE_SHA256) {
     throw new Error('APEX_POST_AUTH_UNDO_MODULE_IDENTITY');
   }
-  // 3. Body + separator is the pinned raw fragment. This states the model the
-  //    whole layer rests on, and fails independently of the module hash above.
-  if (digest(moduleSource + SEPARATOR) !== RAW_SHA256 ||
-      (moduleSource + SEPARATOR).length !== RAW_CHARS) {
-    throw new Error('APEX_POST_AUTH_UNDO_RAW_IDENTITY');
-  }
+  // NOTE: there is deliberately no separate `body + separator === raw` runtime
+  // guard here. Once the hash above passes, moduleSource IS the pinned module
+  // byte for byte, so moduleSource + SEPARATOR is fully determined and such a
+  // check could never fire — an unreachable guard that only looked like
+  // defence. The raw fragment identity still matters, so it is pinned and
+  // PROVED in tests/apex-post-auth-init-boundary-contract.test.js, where it is
+  // measured against the base blob rather than re-derived from a value this
+  // function already verified.
 
-  // 4. Exactly one Apex post-auth tag, loaded immediately after mcx-charts.js.
+  // 3. Exactly one Apex post-auth tag, loaded immediately after mcx-charts.js.
   //    A missing tag, a duplicate, or a reordered tag is rejected here — each
   //    with its own error.
   if (count(html, TAG) !== 1) throw new Error('APEX_POST_AUTH_UNDO_TAG_IDENTITY');
@@ -142,7 +154,7 @@ function undoApexPostAuthInit(html, moduleSource) {
   const tagAt = html.indexOf(TAG);
   const untagged = html.slice(0, tagAt) + html.slice(tagAt + TAG.length);
 
-  // 5. The retained reconnect pair really is at the pinned tag-free offset,
+  // 4. The retained reconnect pair really is at the pinned tag-free offset,
   //    byte for byte. A mutated, reordered or partially extracted reconnect UI
   //    fails HERE, before anything is rebuilt.
   if (RETAINED_AT + RETAINED_CHARS > untagged.length) {
@@ -153,7 +165,7 @@ function undoApexPostAuthInit(html, moduleSource) {
     throw new Error('APEX_POST_AUTH_UNDO_RETAINED_IDENTITY');
   }
 
-  // 6. The document as a whole is exactly the extracted document. This catches
+  // 5. The document as a whole is exactly the extracted document. This catches
   //    foreign content ANYWHERE outside the regions checked above — including a
   //    structural separator left stranded inline, which makes the document one
   //    byte too long.
@@ -164,15 +176,19 @@ function undoApexPostAuthInit(html, moduleSource) {
     throw new Error('APEX_POST_AUTH_UNDO_EXTRACTED_IDENTITY');
   }
 
-  // 7. Re-insert body + separator at the tag-free offset the fragment came
+  // 6. Re-insert body + separator at the tag-free offset the fragment came
   //    from. The separator lives here, in the reconstruction, and nowhere else.
   const rebuilt =
     untagged.slice(0, REINSERT_AT) +
     moduleSource + SEPARATOR +
     untagged.slice(REINSERT_AT);
 
-  // 8. The final gate: the reconstruction is accepted only when it IS the
-  //    pinned base, byte for byte.
+  // 7. The final gate. Like the MCX charts helper's closing check this is a
+  //    DELIBERATE redundancy, not an independently reachable guard: once the
+  //    module hash and the whole-document hash have both passed, the
+  //    reconstruction is a pure function of two fixed byte strings. It is kept
+  //    so the pinned base identity is enforced directly on the value actually
+  //    returned, and never merely inferred from its inputs.
   if (rebuilt.length !== BASE_CHARS ||
       Buffer.byteLength(rebuilt, 'utf8') !== BASE_UTF8 ||
       lineFeeds(rebuilt) !== BASE_LF ||
