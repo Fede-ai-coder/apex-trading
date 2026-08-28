@@ -18,6 +18,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
@@ -40,8 +41,13 @@ const APP = APP_LOADER.loadAppJavaScriptSource();
 // NEWEST-FIRST so every later undo sees the exact document it was cut against.
 // The helper re-verifies what it hands back by length and SHA-256, so this hop
 // is proved, not assumed.
+const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
-const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(INDEX, MCX_CHARTS_MODULE);
+// The Apex shared post-auth lifecycle owner is now the NEWEST layer of all,
+// sitting on top of MCX charts: peel it first so the MCX charts undo below
+// still sees the exact document it was cut against.
+const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(INDEX, APEX_POST_AUTH_MODULE);
+const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(preApexPostAuth, MCX_CHARTS_MODULE);
 const BASE = execFileSync('git', ['show', BASE_SHA + ':index.html'], {
   cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024,
 });
@@ -104,6 +110,7 @@ const MANUAL_TAG = '<script src="./js/services/journal-manual-import.js"></scrip
 const BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';
 const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
 const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
+const APEX_POST_AUTH_TAG = '<script src="./js/services/apex-post-auth-init.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -170,8 +177,8 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n',
-  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n',
+  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&
   migrationAt > writeAt && INDEX.indexOf(MANUAL_TAG) > migrationAt &&
@@ -260,12 +267,20 @@ const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
 // The seventh Journal owner is the newest layer: peel Backup/Restore before Manual Import.
 const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
+eq(preApexPostAuth.length, APEX_POST_AUTH_U.BASE_CHARS,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
+eq(sha256(preApexPostAuth), APEX_POST_AUTH_U.BASE_SHA256,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
+ok(APEX_POST_AUTH_U.isApplied(INDEX),
+  'the shipped index really does carry the Apex post-auth layer being peeled');
+ok(!APEX_POST_AUTH_U.isApplied(preApexPostAuth),
+  'the peeled document no longer carries the Apex post-auth tag');
 eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
   'peeling the MCX charts layer reaches the pinned post-#406 index length');
 eq(sha256(preMcxCharts), MCX_CHARTS_U.BASE_SHA256,
   'peeling the MCX charts layer reaches the pinned post-#406 index hash');
-ok(MCX_CHARTS_U.isApplied(INDEX),
-  'the shipped index really does carry the MCX charts layer being peeled');
+ok(MCX_CHARTS_U.isApplied(preApexPostAuth),
+  'the post-#409 document really does carry the MCX charts layer being peeled');
 ok(!MCX_CHARTS_U.isApplied(preMcxCharts),
   'the peeled document no longer carries the MCX charts tag');
 const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);

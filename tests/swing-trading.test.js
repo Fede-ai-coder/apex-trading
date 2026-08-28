@@ -1107,7 +1107,10 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_swingInit')), '65: _swingInit triggers backend hydration');
   ok(/bssFetchSnapshot/.test(block) && /bssFetchStatus/.test(block), '65: hydration reuses the existing GET-only snapshot readers');
   ok(!/POST|scanner\/run/.test(extractAsyncFn(HTML, '_swingHydrateFromBackend')), '65: hydration never POSTs / runs the scanner');
-  ok(/_swingHydrateFromBackend/.test(extractFn(HTML, '_apexPostAuthInit')), '65: post-auth init re-hydrates the Swing screen when auth becomes ready');
+  // _apexPostAuthInit now lives in js/services/apex-post-auth-init.js, so read it
+  // from the reconstructed application source rather than from index.html alone.
+  // The behaviour under test is unchanged; only its owning file is new.
+  ok(/_swingHydrateFromBackend/.test(extractFn(APP_SRC, '_apexPostAuthInit')), '65: post-auth init re-hydrates the Swing screen when auth becomes ready');
 
   // Build an isolated sandbox with the hydration + render functions.
   const hTimers = [];

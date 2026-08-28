@@ -2358,8 +2358,12 @@ section('30. physical script order');
   ok(iMcxCharts >= 0, 'index.html loads the MCX charts script');
   eq(iMcxMacroCheck, iMcxCharts - 1,
      'ORDER: the MCX macro-check owner is immediately before the MCX charts owner');
-  eq(iMcxCharts, srcs.length - 2,
-     'ORDER: the MCX charts owner is the LAST external script before the inline monolith');
+  const iApexPostAuth = srcs.indexOf('./js/services/apex-post-auth-init.js');
+  ok(iApexPostAuth >= 0, 'index.html loads the Apex shared post-auth script');
+  eq(iMcxCharts, iApexPostAuth - 1,
+     'ORDER: the MCX charts owner is immediately before the Apex post-auth owner');
+  eq(iApexPostAuth, srcs.length - 2,
+     'ORDER: the Apex post-auth owner is the LAST external script before the inline monolith');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2454,8 +2458,12 @@ section('30. physical script order');
   ok(mcxChartsTagIdx >= 0, 'tag order: the MCX charts owner is present');
   eq(mcxMacroCheckTagIdx, mcxChartsTagIdx - 1,
      'tag order: the MCX macro-check owner is immediately before the MCX charts owner');
-  eq(mcxChartsTagIdx, inlineTagIdx - 1,
-     'tag order: the MCX charts owner is the LAST script tag before the inline monolith');
+  const apexPostAuthTagIdx = TAGS.findIndex(function (t) { return /apex-post-auth-init\.js$/.test(clean(t.src)); });
+  ok(apexPostAuthTagIdx >= 0, 'tag order: the Apex shared post-auth owner is present');
+  eq(mcxChartsTagIdx, apexPostAuthTagIdx - 1,
+     'tag order: the MCX charts owner is immediately before the Apex post-auth owner');
+  eq(apexPostAuthTagIdx, inlineTagIdx - 1,
+     'tag order: the Apex post-auth owner is the LAST script tag before the inline monolith');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');

@@ -664,8 +664,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(mcxChartsTagIdx >= 0, 'tag order: the MCX charts owner is present');
   eq(mcxMacroCheckTagIdx, mcxChartsTagIdx - 1,
      'tag order: the MCX macro-check owner is immediately before the MCX charts owner');
-  eq(mcxChartsTagIdx, inlineTagIdx - 1,
-     'tag order: the MCX charts owner is the LAST external classic script before the inline monolith');
+  const apexPostAuthTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /apex-post-auth-init\.js$/.test(String(t.src || '')); });
+  ok(apexPostAuthTagIdx >= 0, 'tag order: the Apex shared post-auth owner is present');
+  eq(mcxChartsTagIdx, apexPostAuthTagIdx - 1,
+     'tag order: the MCX charts owner is immediately before the Apex post-auth owner');
+  eq(apexPostAuthTagIdx, inlineTagIdx - 1,
+     'tag order: the Apex post-auth owner is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -705,11 +709,15 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // (market context, VIX market context, backend candles, regime policy) and
 // Journal Core, Journal UI, Journal Remote, Journal Write-through and Journal
 // Migration, Manual Import and Backup/Restore were appended after those, then
-// the MCX macro-check owner and now the MCX charts/lifecycle owner, shifting
-// these two by eighteen each.
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 22,
+// the MCX macro-check owner, the MCX charts/lifecycle owner and now the Apex
+// shared post-auth owner, shifting these two by nineteen each. The invariant is
+// unchanged — the adapter still runs immediately before the preview module —
+// only its distance from the tail grew.
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 21,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 23,
+   'ORDER: the adapter sits twenty-three parts from the tail');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 22,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
@@ -792,8 +800,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
   eq(mcxChartsPart.length, 1, 'ORDER: the MCX charts owner is present exactly once');
   eq(PART_RANGES.indexOf(mcxMacroCheckPart[0]), PART_RANGES.indexOf(mcxChartsPart[0]) - 1,
      'ORDER: the MCX macro-check owner is immediately before the MCX charts owner');
-  eq(PART_RANGES.indexOf(mcxChartsPart[0]), PART_RANGES.length - 2,
-     'ORDER: the MCX charts owner is the last application script before the inline monolith');
+  const apexPostAuthPart = PART_RANGES.filter((p) => p.src === './js/services/apex-post-auth-init.js');
+  eq(apexPostAuthPart.length, 1, 'ORDER: the Apex post-auth owner is present exactly once');
+  eq(PART_RANGES.indexOf(mcxChartsPart[0]), PART_RANGES.indexOf(apexPostAuthPart[0]) - 1,
+     'ORDER: the MCX charts owner is immediately before the Apex post-auth owner');
+  eq(PART_RANGES.indexOf(apexPostAuthPart[0]), PART_RANGES.length - 2,
+     'ORDER: the Apex post-auth owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

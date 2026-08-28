@@ -63,10 +63,12 @@ const EXPECTED_DEPENDENCIES = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
+const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
+const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-backup-restore.js'), 'utf8');
@@ -76,7 +78,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // NEWEST-FIRST, so each undo below still sees the exact document it was cut
 // against. Every helper re-verifies what it hands back by length and SHA-256,
 // so each hop is proved, not assumed.
-const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(INDEX, MCX_CHARTS_MODULE);
+// The Apex shared post-auth lifecycle owner is now the NEWEST layer of all,
+// sitting on top of MCX charts: peel it first so the MCX charts undo below
+// still sees the exact document it was cut against.
+const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(INDEX, APEX_POST_AUTH_MODULE);
+const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(preApexPostAuth, MCX_CHARTS_MODULE);
 const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
 const preBackupRestore = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
 
@@ -131,12 +137,20 @@ function sha256(source) {
   return crypto.createHash('sha256').update(source, 'utf8').digest('hex');
 }
 
+eq(preApexPostAuth.length, APEX_POST_AUTH_U.BASE_CHARS,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
+eq(sha256(preApexPostAuth), APEX_POST_AUTH_U.BASE_SHA256,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
+ok(APEX_POST_AUTH_U.isApplied(INDEX),
+  'the shipped index really does carry the Apex post-auth layer being peeled');
+ok(!APEX_POST_AUTH_U.isApplied(preApexPostAuth),
+  'the peeled document no longer carries the Apex post-auth tag');
 eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
   'peeling the MCX charts layer reaches the pinned post-#406 index length');
 eq(sha256(preMcxCharts), MCX_CHARTS_U.BASE_SHA256,
   'peeling the MCX charts layer reaches the pinned post-#406 index hash');
-ok(MCX_CHARTS_U.isApplied(INDEX),
-  'the shipped index really does carry the MCX charts layer being peeled');
+ok(MCX_CHARTS_U.isApplied(preApexPostAuth),
+  'the post-#409 document really does carry the MCX charts layer being peeled');
 ok(!MCX_CHARTS_U.isApplied(preMcxCharts),
   'the peeled document no longer carries the MCX charts tag');
 eq(preMcxMacroCheck.length, MCX_MACRO_CHECK_U.BASE_CHARS,
@@ -417,9 +431,11 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1884429, 'current post-MCX-charts index UTF-16 length is pinned');
-eq(sha256(INDEX), 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e',
-  'current post-MCX-charts index SHA-256 is pinned');
+eq(INDEX.length, 1880019, 'current shipped index UTF-16 length is the post-Apex-post-auth value');
+eq(sha256(INDEX), '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1',
+  'current shipped index SHA-256 is the post-Apex-post-auth value');
+// The post-MCX-charts document those two lines used to pin is still pinned,
+// one layer down, by the Apex post-auth peel assertions above.
 // The post-MCX-macro-check document those two lines used to pin is still
 // pinned, one layer down, on the peeled preMcxCharts reconstruction.
 eq(preMcxCharts.length, 1928890, 'post-MCX-macro-check index UTF-16 length is still pinned');
@@ -492,8 +508,9 @@ eq(typeof load.sandbox.jMigrateApexTradesToBackend, 'function', 'classic evaluat
 
 const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>';
 const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n<script>'), 1,
-  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then the inline monolith');
+const APEX_POST_AUTH_TAG2 = '<script src="./js/services/apex-post-auth-init.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n<script>'), 1,
+  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
 eq(countLiteral(preMcxMacroCheck, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n<script>'), 1,
@@ -510,7 +527,12 @@ eq(indexWithoutTag.slice(0, migrationAt) + MODULE + indexWithoutTag.slice(migrat
 
 section('4. External ownership and consumers');
 eq(externalUsage('_jMigrationDone'), [], 'session latch has no outside consumer');
-eq(externalUsage('jMigrateApexTradesToBackend'), [{ where: 'index.html:inline', refs: 2 }],
+// The one outside consumer is _apexPostAuthInit, which the Apex post-auth
+// extraction moved out of the inline monolith into its own service module. The
+// edge is unchanged — one typeof guard plus one invocation, resolved at call
+// time through the classic global — only its owning file is new.
+eq(externalUsage('jMigrateApexTradesToBackend'),
+  [{ where: './js/services/apex-post-auth-init.js', refs: 2 }],
   'migration function has one guarded outside call (typeof guard plus invocation) in post-auth initialization');
 const postAuthSource = APP_LOADER.extractFunctionSource('_apexPostAuthInit');
 eq(identifierCountMasked(maskLiterals(postAuthSource), 'jMigrateApexTradesToBackend'), 2,
@@ -723,9 +745,10 @@ eq(identifierCountMasked(maskLiterals(
 section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/journal-manual-import.js', MODULE_REL,
+eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js',
+  'js/services/journal-manual-import.js', MODULE_REL,
   'js/ui/journal-backup-restore.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js'],
-  'production footprint includes index.html plus Migration and the later Manual Import, Backup/Restore, MCX macro-check and MCX charts owners');
+  'production footprint includes index.html plus Migration and the later Manual Import, Backup/Restore, MCX macro-check, MCX charts and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Journal Migration contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Journal Migration undo helper is part of the change');
 ok(changed.indexOf('tests/temporary-journal-migration-audit.test.js') >= 0,

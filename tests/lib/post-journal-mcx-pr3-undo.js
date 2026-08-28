@@ -1,14 +1,19 @@
 'use strict';
-// Current-app reconstruction bridge after MCX charts + MCX macro check +
-// Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
-// Remote + Journal UI + Regime Policy + Journal Core. Historical contracts that
-// need to reach the pre-MCX3 tree must undo the newest MCX charts relocation
-// first, then MCX macro check, Backup/Restore, Manual Import, Migration,
-// Write-through, Journal Remote, Journal UI, Regime Policy, Journal Core, and
-// finally delegate to the original MCX3 identity guard. All layers remain
-// independently fail-closed.
+// Current-app reconstruction bridge after Apex post-auth init + MCX charts +
+// MCX macro check + Backup/Restore + Manual Import + Journal Migration +
+// Write-through + Journal Remote + Journal UI + Regime Policy + Journal Core.
+// Historical contracts that need to reach the pre-MCX3 tree must undo the
+// newest Apex post-auth relocation first, then MCX charts, MCX macro check,
+// Backup/Restore, Manual Import, Migration, Write-through, Journal Remote,
+// Journal UI, Regime Policy, Journal Core, and finally delegate to the original
+// MCX3 identity guard. All layers remain independently fail-closed.
+//
+// Order is newest-first and load-bearing: each layer's pinned offsets and
+// hashes describe the document as it was when THAT layer shipped, so undoing
+// out of order fails closed rather than producing an approximate tree.
 const fs = require('fs');
 const path = require('path');
+const APEX_POST_AUTH = require('./apex-post-auth-init-undo.js');
 const MCX_CHARTS = require('./mcx-charts-undo.js');
 const MCX_MACRO_CHECK = require('./mcx-macro-check-undo.js');
 const JOURNAL_BACKUP_RESTORE = require('./journal-backup-restore-undo.js');
@@ -21,6 +26,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const APEX_POST_AUTH_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'apex-post-auth-init.js'),
+  'utf8'
+);
 const MCX_CHARTS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'ui', 'mcx-charts.js'),
   'utf8'
@@ -63,9 +72,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preMcxCharts = MCX_CHARTS.isApplied(html)
-    ? MCX_CHARTS.undoMcxCharts(html, MCX_CHARTS_SOURCE)
+  const preApexPostAuth = APEX_POST_AUTH.isApplied(html)
+    ? APEX_POST_AUTH.undoApexPostAuthInit(html, APEX_POST_AUTH_SOURCE)
     : html;
+  const preMcxCharts = MCX_CHARTS.isApplied(preApexPostAuth)
+    ? MCX_CHARTS.undoMcxCharts(preApexPostAuth, MCX_CHARTS_SOURCE)
+    : preApexPostAuth;
   const preMcxMacroCheck = MCX_MACRO_CHECK.isApplied(preMcxCharts)
     ? MCX_MACRO_CHECK.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_SOURCE)
     : preMcxCharts;
