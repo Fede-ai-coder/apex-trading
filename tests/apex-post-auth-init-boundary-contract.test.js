@@ -713,7 +713,7 @@ throws(() => U.undoApexPostAuthInit(
   /RETAINED_IDENTITY/, 'a structural separator left inline is rejected by the retained guard');
 // A mutated or reordered retained reconnect pair.
 throws(() => U.undoApexPostAuthInit(INDEX.replace('CONNETTI ORA', 'CONNETTI  ORA'), MODULE),
-  /RETAINED_IDENTITY|EXTRACTED_IDENTITY/, 'a mutated retained reconnect UI is rejected');
+  /RETAINED_IDENTITY/, 'a mutated retained reconnect UI is rejected by the retained-identity guard');
 // Reordered retained pair, WITH the tag intact so the mutant actually reaches
 // the retained-identity guard rather than stopping at the tag guard.
 const reorderedRetained = (untaggedIndex.slice(0, RETAINED_AT)
