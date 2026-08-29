@@ -36,9 +36,11 @@
 //
 //   A and C are the opposite. C reads and writes FIVE mutable `_adjForm*`
 //   globals that are physically declared inside A — 66 executable sites, 23 of
-//   them mutations (§8). Extracting either one alone would split that state
-//   across a module boundary. Extracting D would avoid the split, but only by
-//   also moving B, which does not need to move with them.
+//   them mutations (§7). Extracting either one alone would split that state
+//   across a module boundary. Extracting D internalises THAT split, but only by
+//   also moving B, which does not need to move with them — and D still strands
+//   29 `_jtForm*` sites reaching in from the rest of the monolith. §10 computes
+//   the figure for all four: A 95, B 0, C 66, D 29. B is the only zero.
 //
 //   And B sits BETWEEN A and C. Removing it makes A and C physically
 //   contiguous, so the coupled pair becomes a single plain cut later — §12
@@ -770,7 +772,8 @@ eq(shape(BODY_A).length, 25, 'Candidate A contains 25 declarations');
 eq(shape(BODY_B).length, 6, 'Candidate B contains 6 declarations');
 eq(shape(BODY_C).length, 16, 'Candidate C contains 16 declarations');
 eq(shape(BODY_D).length, 47, 'Candidate D contains 47 declarations');
-eq(25 + 6 + 16, 47, 'the declaration counts tile: 25 + 6 + 16 = 47');
+eq(shape(BODY_A).length + shape(BODY_B).length + shape(BODY_C).length, shape(BODY_D).length,
+  'the MEASURED declaration counts tile: A + B + C === D, with none lost at a seam');
 
 eq(guardOwners(BODY_B, B_OWNERS), [], 'Candidate B declares exactly its six owners with the pinned form/async/span');
 eq(shape(BODY_B), B_OWNERS, 'the Candidate B manifest, verbatim');
@@ -892,6 +895,51 @@ function stateProfile(name) {
   }
   return prof;
 }
+
+// Every mutable state owner in the window, read off the source rather than
+// listed by hand: each top-level `var` the window declares.
+const WINDOW_STATE = shape(BODY_D).filter((d) => d.form === 'var').map((d) => d.name);
+const STATE_SITES = {};
+for (const n of WINDOW_STATE) {
+  STATE_SITES[n] = refSites(VIEWS.code, n).map((i) => ({ abs: i + CODE_AT, kind: kindOf(n, i) }));
+}
+
+// CROSS-BOUNDARY MUTABLE STATE, computed — not assigned.
+//
+// If a candidate were extracted, a mutable owner splits across the new module
+// boundary whenever a use site and its declaration end up on opposite sides.
+// That covers both directions: state the candidate DECLARES and something else
+// still touches, and state the candidate USES but does not own.
+function crossBoundaryState(at, end) {
+  const inside = (x) => x.abs >= at && x.abs < end;
+  let n = 0;
+  for (const name of WINDOW_STATE) {
+    const sites = STATE_SITES[name];
+    const decl = sites.find((x) => x.kind === 'decl');
+    const declInside = !!(decl && inside(decl));
+    for (const x of sites) {
+      if (x.kind === 'decl') continue;
+      if (declInside !== inside(x)) n++;
+    }
+  }
+  return n;
+}
+// The owners a candidate USES but does not declare.
+function foreignStateOwners(at, end) {
+  const inside = (x) => x.abs >= at && x.abs < end;
+  const names = [];
+  for (const name of WINDOW_STATE) {
+    const sites = STATE_SITES[name];
+    const decl = sites.find((x) => x.kind === 'decl');
+    if (decl && inside(decl)) continue;
+    if (sites.some((x) => x.kind !== 'decl' && inside(x))) names.push(name);
+  }
+  return names;
+}
+eq(WINDOW_STATE.length, 11, 'the window declares 11 mutable state owners');
+eq(WINDOW_STATE, A_OWNER_NAMES.slice(0, 10).concat([B_STATE]),
+  '…ten in Candidate A, one in Candidate B, none in Candidate C');
+
 let adjSites = 0, adjMutations = 0;
 for (const st of ADJ_STATE) {
   const p = stateProfile(st.name);
@@ -993,26 +1041,36 @@ section('9. Cohesion and cross-boundary coupling, per candidate');
 // ─────────────────────────────────────────────────────────────────────────────
 // Cohesion here is "how much of what this block declares is only used by this
 // block", and coupling is "how many executable edges cross the boundary".
-function coupling(key, owners, at, end) {
+function coupling(owners, at, end) {
   const c = census(owners, at, end);
-  const foreignState = (key === 'C' || key === 'A')
-    ? ADJ_STATE.filter((s) => (key === 'C' ? true : false)).length : 0;
-  return { declared: owners.length, codeEdges: c.code, generatedEdges: c.generated, markupEdges: c.markup, foreignState };
+  return {
+    declared: owners.length,
+    codeEdges: c.code,
+    generatedEdges: c.generated,
+    markupEdges: c.markup,
+    foreignState: foreignStateOwners(at, end).length,
+  };
 }
 const COUP = {
-  A: coupling('A', A_OWNER_NAMES, CANDIDATES.A.at, CANDIDATES.A.end),
-  B: coupling('B', B_OWNER_NAMES, CANDIDATES.B.at, CANDIDATES.B.end),
-  C: coupling('C', C_OWNER_NAMES, CANDIDATES.C.at, CANDIDATES.C.end),
-  D: coupling('D', D_OWNER_NAMES, CANDIDATES.D.at, CANDIDATES.D.end),
+  A: coupling(A_OWNER_NAMES, CANDIDATES.A.at, CANDIDATES.A.end),
+  B: coupling(B_OWNER_NAMES, CANDIDATES.B.at, CANDIDATES.B.end),
+  C: coupling(C_OWNER_NAMES, CANDIDATES.C.at, CANDIDATES.C.end),
+  D: coupling(D_OWNER_NAMES, CANDIDATES.D.at, CANDIDATES.D.end),
 };
 eq(COUP.A, { declared: 25, codeEdges: 104, generatedEdges: 3, markupEdges: 2, foreignState: 0 }, 'Candidate A coupling');
 eq(COUP.B, { declared: 6, codeEdges: 0, generatedEdges: 1, markupEdges: 2, foreignState: 0 }, 'Candidate B coupling');
 eq(COUP.C, { declared: 16, codeEdges: 0, generatedEdges: 1, markupEdges: 1, foreignState: 5 }, 'Candidate C coupling');
 eq(COUP.D, { declared: 47, codeEdges: 38, generatedEdges: 5, markupEdges: 5, foreignState: 0 }, 'Candidate D coupling');
 
-ok(COUP.B.codeEdges === 0, 'B is the only single-block candidate with zero executable code edges…');
+ok(COUP.B.codeEdges === 0 && COUP.B.foreignState === 0,
+  'B has zero executable code edges AND owns all the state it uses…');
 ok(COUP.C.codeEdges === 0 && COUP.C.foreignState === 5,
-  '…C also has zero, but only because its five state owners live in A instead');
+  '…C also has zero code edges, but only because its five state owners live in A instead');
+eq(foreignStateOwners(CANDIDATES.C.at, CANDIDATES.C.end), ADJ_STATE.map((s) => s.name),
+  '…and those five are exactly the audited _adjForm* owners, in declaration order');
+eq(foreignStateOwners(CANDIDATES.B.at, CANDIDATES.B.end), [], 'B uses no state it does not declare');
+eq(foreignStateOwners(CANDIDATES.A.at, CANDIDATES.A.end), [], 'A uses no state it does not declare');
+eq(foreignStateOwners(CANDIDATES.D.at, CANDIDATES.D.end), [], 'D declares every owner it uses');
 ok(COUP.A.codeEdges > COUP.D.codeEdges,
   'extracting A alone costs MORE code edges (104) than extracting all three (38): the extra 66 are the A↔C state split');
 eq(COUP.A.codeEdges - COUP.D.codeEdges, ADJ_C_SITES, 'the difference is exactly the 66 A↔C state sites');
@@ -1020,45 +1078,58 @@ eq(COUP.A.codeEdges - COUP.D.codeEdges, ADJ_C_SITES, 'the difference is exactly 
 // ─────────────────────────────────────────────────────────────────────────────
 section('10. The recommendation, derived from the measurements');
 // ─────────────────────────────────────────────────────────────────────────────
-// Nothing here is asserted from a constant. Each criterion is recomputed from
-// the numbers §2–§9 measured, and the winner falls out of them.
+// Every criterion below is COMPUTED from the source by the helpers in §7–§9 —
+// none is assigned per candidate. The pinned numbers are what the computation
+// must produce, so a wrong pin fails rather than being taken on trust.
 const SCORE = {};
 for (const key of ['A', 'B', 'C', 'D']) {
   const c = COUP[key];
+  const spec = CANDIDATES[key];
   SCORE[key] = {
-    crossBoundaryMutableState: key === 'C' ? ADJ_C_SITES : (key === 'A' ? ADJ_C_SITES : 0),
+    crossBoundaryMutableState: crossBoundaryState(spec.at, spec.end),
     codeEdges: c.codeEdges,
-    lateBoundEdges: c.generatedEdges + (key === 'B' ? 1 : c.markupEdges),
+    lateBoundEdges: c.generatedEdges + c.markupEdges,
     loadOrderConstraint: classifyReferences(
-      INDEX.slice(CANDIDATES[key].at, CANDIDATES[key].end - 1),
-      key === 'A' ? DEPS_A : key === 'B' ? DEPS_B : key === 'C' ? DEPS_C : DEPS_D
+      INDEX.slice(spec.at, spec.end - 1),
+      freeIdentifiers(INDEX.slice(spec.at, spec.end - 1))
     ).loadTime.length,
-    units: CANDIDATES[key].body.chars,
-    declarations: CANDIDATES[key].declCount,
+    units: spec.body.chars,
+    declarations: spec.declCount,
   };
 }
-eq(SCORE.B.crossBoundaryMutableState, 0, 'B: extracting it splits no mutable state');
-eq(SCORE.A.crossBoundaryMutableState, ADJ_C_SITES, 'A: extracting it alone splits 66 mutable-state sites away from C');
-eq(SCORE.C.crossBoundaryMutableState, ADJ_C_SITES, 'C: extracting it alone splits the same 66 sites away from A');
-eq(SCORE.D.crossBoundaryMutableState, 0, 'D: extracting all three keeps that state together');
+// Extracting a candidate splits a mutable owner whenever a use site and its
+// declaration land on opposite sides of the new boundary.
+eq(SCORE.A.crossBoundaryMutableState, 95,
+  'A: extracting it alone splits 95 mutable-state sites — 66 to C, 29 to the rest of the monolith');
+eq(SCORE.B.crossBoundaryMutableState, 0, 'B: extracting it splits NO mutable state at all');
+eq(SCORE.C.crossBoundaryMutableState, 66, 'C: extracting it alone splits the 66 _adjForm* sites away from A');
+eq(SCORE.D.crossBoundaryMutableState, 29,
+  'D: taking all three internalises the A-C split, but still strands 29 _jtForm* sites');
 eq([SCORE.A.loadOrderConstraint, SCORE.B.loadOrderConstraint, SCORE.C.loadOrderConstraint, SCORE.D.loadOrderConstraint],
   [0, 0, 0, 0], 'no candidate reads a dependency at evaluation time');
 
 const zeroStateSplit = ['A', 'B', 'C', 'D'].filter((k) => SCORE[k].crossBoundaryMutableState === 0);
-eq(zeroStateSplit, ['B', 'D'], 'only B and D avoid splitting mutable state');
-const smallest = zeroStateSplit.slice().sort((x, y) => SCORE[x].codeEdges - SCORE[y].codeEdges
-  || SCORE[x].units - SCORE[y].units)[0];
-eq(smallest, 'B', 'of those two, B has the fewer code edges (0 vs 38) and the smaller body');
+eq(zeroStateSplit, ['B'], 'Candidate B is the ONLY one that splits no mutable state');
+const ranked = ['A', 'B', 'C', 'D'].slice().sort((x, y) =>
+  SCORE[x].crossBoundaryMutableState - SCORE[y].crossBoundaryMutableState
+  || SCORE[x].codeEdges - SCORE[y].codeEdges
+  || SCORE[x].units - SCORE[y].units);
+eq(ranked, ['B', 'D', 'C', 'A'], 'the full ranking, by state split then code edges then size');
 eq(SCORE.B.codeEdges, 0, 'B: zero code edges to rewrite');
 eq(SCORE.D.codeEdges, 38, 'D: 38 code edges would still cross the boundary');
 ok(SCORE.B.units < SCORE.D.units, 'B is 12,237 units against D at 58,898 — a fifth of the mutation surface');
+// ROBUSTNESS. The winner does not depend on the state metric at all: drop that
+// criterion entirely and B still comes first, on measured code edges and size.
+const rankedWithoutState = ['A', 'B', 'C', 'D'].slice().sort((x, y) =>
+  SCORE[x].codeEdges - SCORE[y].codeEdges || SCORE[x].units - SCORE[y].units);
+eq(rankedWithoutState[0], 'B', 'B still wins with the mutable-state criterion removed entirely');
 // D's only advantage over B is that it also removes the A↔C boundary — but the
 // two-step sequence removes it too, because taking B out makes A and C adjacent.
 eq(FUT_BODY.chars, CANDIDATES.A.raw.chars + CANDIDATES.C.raw.chars - 1,
   'after B leaves, A and C are one contiguous body: 21,637 + 25,024 − 1 = 46,660');
 ok(FUT_DECLS === CANDIDATES.A.declCount + CANDIDATES.C.declCount,
   '…carrying all 41 of their declarations, with the five _adjForm* owners still beside their users');
-const RECOMMENDATION = smallest;
+const RECOMMENDATION = ranked[0];
 eq(RECOMMENDATION, 'B', 'THE RECOMMENDATION: extract Candidate B (Close Legs) first');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1372,7 +1443,12 @@ const PLANT_AT = CANDIDATES.C.at;
 eq(freeIdentifiers(BODY_B.replace(/\bescHtml\b/g, 'escHtml2')).indexOf('escHtml'), -1,
   '13.9a a renamed dependency disappears from the inventory');
 ok(freeIdentifiers(BODY_B.replace(/\bescHtml\b/g, 'escHtml2')).indexOf('escHtml2') >= 0, '…and the new name appears');
-eq(freeIdentifiers(BODY_B) === DEPS_B, false, '13.9b the inventory is an array comparison, not identity');
+// A dependency whose name merely CONTAINS another must not shadow it, and a
+// property access of the same name must not create one.
+ok(freeIdentifiers('function _f() { return escHtmlX(escHtml(1)); }').indexOf('escHtml') >= 0,
+  '13.9b a longer name does not swallow the shorter dependency');
+eq(freeIdentifiers('function _f() { return x.escHtml; }').indexOf('escHtml'), -1,
+  '13.9b a property access is not a dependency');
 {
   const extra = BODY_B.replace('function closeLegsModal() {', 'function closeLegsModal() {\n  somethingNew();');
   ok(freeIdentifiers(extra).indexOf('somethingNew') >= 0, '13.9c an added dependency shows up in the inventory');
