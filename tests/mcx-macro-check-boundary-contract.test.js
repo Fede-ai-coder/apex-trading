@@ -142,6 +142,8 @@ const RISK_COLORS = {
 };
 
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
+const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
@@ -151,9 +153,15 @@ const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js')
 // newest-first, and every assertion below keeps meaning exactly what it meant
 // before the charts extraction existed. The helper re-verifies its output by
 // length and SHA-256, so the hop is proved rather than assumed.
-const PRE_APEX_POST_AUTH = APEX_POST_AUTH_U.isApplied(LIVE_INDEX)
-  ? APEX_POST_AUTH_U.undoApexPostAuthInit(LIVE_INDEX, APEX_POST_AUTH_MODULE)
+// The TT reconnect UI owner is the newest layer of all and sits on top of
+// the Apex post-auth owner: peel it FIRST so the Apex undo below still sees
+// the exact document it was cut against.
+const PRE_TT_RECONNECT = TT_RECONNECT_U.isApplied(LIVE_INDEX)
+  ? TT_RECONNECT_U.undoTtReconnect(LIVE_INDEX, TT_RECONNECT_MODULE)
   : LIVE_INDEX;
+const PRE_APEX_POST_AUTH = APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT)
+  ? APEX_POST_AUTH_U.undoApexPostAuthInit(PRE_TT_RECONNECT, APEX_POST_AUTH_MODULE)
+  : PRE_TT_RECONNECT;
 const INDEX = MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH)
   ? MCX_CHARTS_U.undoMcxCharts(PRE_APEX_POST_AUTH, MCX_CHARTS_MODULE)
   : PRE_APEX_POST_AUTH;
@@ -528,19 +536,28 @@ eq(execFileSync('git', ['log', '-1', '--format=%s', BASE_SHA], { cwd: ROOT, enco
 eq(BASE.length, BASE_CHARS, 'base index UTF-16 length is pinned');
 eq(Buffer.byteLength(BASE, 'utf8'), BASE_UTF8, 'base index UTF-8 byte length is pinned');
 eq(sha256(BASE), BASE_INDEX_SHA256, 'base index SHA-256 is pinned');
-eq(APEX_POST_AUTH_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later Apex post-auth layer');
+eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the newest TT reconnect layer');
+eq(PRE_TT_RECONNECT.length, TT_RECONNECT_U.BASE_CHARS,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index length');
+eq(sha256(PRE_TT_RECONNECT), TT_RECONNECT_U.BASE_SHA256,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
+eq(APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT), true, 'the post-#410 document carries the later Apex post-auth layer');
 eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
 eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
 eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
-eq(LIVE_INDEX.length, 1880019, 'current shipped index UTF-16 length is the post-Apex-post-auth value');
-eq(sha256(LIVE_INDEX), '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1',
-  'current shipped index SHA-256 is the post-Apex-post-auth value');
+eq(LIVE_INDEX.length, 1875314, 'current shipped index UTF-16 length is the post-TT-reconnect value');
+eq(sha256(LIVE_INDEX), '7dd13923b25053960fb8b26bcf0d2383ebe27abe0f7b66607fa5893478503dcd',
+  'current shipped index SHA-256 is the post-TT-reconnect value');
+// The post-Apex-post-auth document those two lines used to pin is still
+// pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
-  'the current shipped index carries exactly 55 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 56,
+  'the current shipped index carries exactly 56 local application scripts');
+eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
+  '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
   '…and peeling the Apex post-auth layer returns it to the historical 54');
 eq(countLiteral(LIVE_INDEX, MODULE_TAG + '\n<script src="./js/ui/mcx-charts.js"></script>'), 1,
@@ -1091,7 +1108,7 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', 'js/ui/mcx-charts.js', MODULE_REL],
+  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts and Apex post-auth owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
@@ -1102,7 +1119,7 @@ section('10. Exact prompt construction and success transcript');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' ||
+    rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
     rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 

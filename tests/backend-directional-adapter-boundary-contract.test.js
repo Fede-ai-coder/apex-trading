@@ -668,8 +668,12 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(apexPostAuthTagIdx >= 0, 'tag order: the Apex shared post-auth owner is present');
   eq(mcxChartsTagIdx, apexPostAuthTagIdx - 1,
      'tag order: the MCX charts owner is immediately before the Apex post-auth owner');
-  eq(apexPostAuthTagIdx, inlineTagIdx - 1,
-     'tag order: the Apex post-auth owner is the LAST external classic script before the inline monolith');
+  const ttReconnectTagIdx = SCRIPT_TAGS.findIndex(function (t) { return /tt-reconnect\.js$/.test(String(t.src || '')); });
+  ok(ttReconnectTagIdx >= 0, 'tag order: the TT reconnect owner is present');
+  eq(apexPostAuthTagIdx, ttReconnectTagIdx - 1,
+     'tag order: the Apex post-auth owner is immediately before the TT reconnect owner');
+  eq(ttReconnectTagIdx, inlineTagIdx - 1,
+     'tag order: the TT reconnect owner is the LAST external classic script before the inline monolith');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -715,9 +719,9 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // only its distance from the tail grew.
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 23,
-   'ORDER: the adapter sits twenty-three parts from the tail');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 22,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 24,
+   'ORDER: the adapter sits twenty-four parts from the tail');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 23,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
@@ -804,8 +808,12 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
   eq(apexPostAuthPart.length, 1, 'ORDER: the Apex post-auth owner is present exactly once');
   eq(PART_RANGES.indexOf(mcxChartsPart[0]), PART_RANGES.indexOf(apexPostAuthPart[0]) - 1,
      'ORDER: the MCX charts owner is immediately before the Apex post-auth owner');
-  eq(PART_RANGES.indexOf(apexPostAuthPart[0]), PART_RANGES.length - 2,
-     'ORDER: the Apex post-auth owner is the last application script before the inline monolith');
+  const ttReconnectPart = PART_RANGES.filter((p) => p.src === './js/ui/tt-reconnect.js');
+  eq(ttReconnectPart.length, 1, 'ORDER: the TT reconnect owner is present exactly once');
+  eq(PART_RANGES.indexOf(apexPostAuthPart[0]), PART_RANGES.indexOf(ttReconnectPart[0]) - 1,
+     'ORDER: the Apex post-auth owner is immediately before the TT reconnect owner');
+  eq(PART_RANGES.indexOf(ttReconnectPart[0]), PART_RANGES.length - 2,
+     'ORDER: the TT reconnect owner is the last application script before the inline monolith');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

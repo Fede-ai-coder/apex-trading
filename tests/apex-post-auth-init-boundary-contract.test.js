@@ -68,7 +68,7 @@ const BASE_UTF8 = 1918599;
 const BASE_LF = 33097;
 const BASE_INDEX_SHA256 = 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e';
 const BASE_LOCAL_SCRIPTS = 54;
-const TEST_FILE_COUNT = 137;
+const TEST_FILE_COUNT = 138;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1874908;
@@ -269,7 +269,17 @@ console.log('APEX SHARED POST-AUTH LIFECYCLE — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited Candidate C (#409) · base=' + BASE_SHA);
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
+// later TT reconnect UI owner sits on top of it, so peel that layer first,
+// newest-first, and every assertion below keeps meaning exactly what it meant
+// before the TT reconnect extraction existed. The helper re-verifies its output
+// by length and SHA-256, so the hop is proved rather than assumed.
+const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
+const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
+const INDEX = TT_RECONNECT_U.isApplied(LIVE_INDEX)
+  ? TT_RECONNECT_U.undoTtReconnect(LIVE_INDEX, TT_RECONNECT_MODULE)
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE = git(['show', BASE_SHA + ':index.html']);
 const APP_SRC = APP_LOADER.loadAppJavaScriptSource();
@@ -334,6 +344,17 @@ eq(Buffer.byteLength(INDEX, 'utf8'), INDEX_UTF8, 'shipped index UTF-8 byte lengt
 eq(countLiteral(INDEX, '\n'), INDEX_LF, 'shipped index LF count is the audited prediction');
 eq(sha256(INDEX), INDEX_SHA256, 'shipped index SHA-256 is the audited prediction');
 eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries exactly 55 local application scripts');
+// The LIVE document is one layer newer. Both states are pinned, and the TT
+// reconnect undo is proved to return the document to this contract's EXACT #410
+// state — the guarantee this file has always owned, now reached through a peel.
+eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
+eq(LIVE_INDEX.length, TT_RECONNECT_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-TT-reconnect value');
+eq(sha256(LIVE_INDEX), TT_RECONNECT_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-TT-reconnect value');
+eq(localScripts(LIVE_INDEX).length, 56, 'the live shipped index carries 56 local application scripts');
+eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
+eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
+eq(localScripts(INDEX).length, TT_RECONNECT_U.BASE_LOCAL_SCRIPTS, '…with exactly 55 local application scripts');
+eq(sha256(INDEX), INDEX_SHA256, '…which is byte-identical to this contract\'s own pinned #410 document');
 // THE ARITHMETIC. The whole delta is the complete raw fragment out, one tag
 // line in. A separator left behind inline fails HERE, before any hash.
 eq(INDEX.length, BASE.length - RAW_CHARS + (MODULE_TAG + '\n').length,
@@ -420,8 +441,13 @@ eq(TAGS[ownTagIdx - 1].src, './js/ui/mcx-charts.js', 'the preceding tag is mcx-c
 eq(TAGS[ownTagIdx + 1].src, null, 'the following tag is the inline monolith');
 eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
   'the Apex post-auth owner is the LAST local application script before the monolith');
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-2), [MODULE_SRC, '(inline)'],
-  'in execution order the module runs immediately before the inline monolith');
+// In the LIVE tree the TT reconnect owner now loads after this one, so the
+// module is second-to-last rather than last. The invariant this line protects —
+// the module evaluates before the inline monolith that calls it — is unchanged
+// and asserted in its stronger, current form.
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-3),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', '(inline)'],
+  'in execution order the module runs immediately before the TT reconnect owner, which runs immediately before the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
 
@@ -554,15 +580,29 @@ const INLINE_CODE = maskLiterals(APP_PARTS[APP_PARTS.length - 1].code);
 const MODULE_CODE = maskLiterals(MODULE);
 function refsIn(masked) { let c = 0, i = 0; while ((i = masked.indexOf(OWNER, i)) >= 0) { c++; i += 1; } return c; }
 eq(refsIn(MODULE_CODE), 1, 'the module carries exactly one code reference: its own declaration');
-eq(refsIn(INLINE_CODE), 2, 'the inline monolith carries exactly two: the login and reconnect calls');
+// CONSUMER LOCATION ADVANCED. Both consumers still exist and both still resolve
+// the classic global; the reconnect one simply travelled with doReconnectTT
+// into js/ui/tt-reconnect.js. The count that matters — one declaration plus
+// exactly two calls, app-wide — is unchanged and asserted below.
+eq(refsIn(INLINE_CODE), 1, 'the inline monolith carries exactly one: the normal-login call');
+eq(refsIn(maskLiterals(TT_RECONNECT_MODULE)), 1,
+  'the TT reconnect module carries exactly one: the reconnect call inside doReconnectTT');
 eq(APP_PARTS.reduce((a, p) => a + refsIn(maskLiterals(p.code)), 0), APP_WIDE_CODE_OCCURRENCES,
   'exactly three code occurrences app-wide — one declaration plus two calls');
 eq(countLiteral(INDEX, LOGIN_CALL), 1, "the normal-login consumer _apexPostAuthInit('login'); is unchanged and inline");
-eq(countLiteral(INDEX, RECONNECT_CALL), 1, "the reconnect consumer _apexPostAuthInit('reconnect'); is unchanged and inline");
+eq(countLiteral(INDEX, RECONNECT_CALL), 1, "in this contract's #410 document the reconnect consumer is still inline");
 eq(countLiteral(BASE, LOGIN_CALL), 1, '…and the login call site is byte-identical to the base');
 eq(countLiteral(BASE, RECONNECT_CALL), 1, '…as is the reconnect call site');
 ok(INDEX.indexOf(RECONNECT_CALL) > INDEX.indexOf('async function doReconnectTT(){'),
   'the reconnect consumer really sits inside doReconnectTT');
+// In the LIVE tree that same call site travelled, byte-for-byte, into the TT
+// reconnect module — still inside doReconnectTT, still a classic-global call.
+eq(countLiteral(LIVE_INDEX, LOGIN_CALL), 1, 'the live index still carries the normal-login call');
+eq(countLiteral(LIVE_INDEX, RECONNECT_CALL), 0, '…and no longer carries the reconnect call');
+eq(countLiteral(TT_RECONNECT_MODULE, RECONNECT_CALL), 1, 'the TT reconnect module carries it instead');
+ok(TT_RECONNECT_MODULE.indexOf(RECONNECT_CALL) > TT_RECONNECT_MODULE.indexOf('async function doReconnectTT(){'),
+  '…still inside doReconnectTT');
+eq(countLiteral(APP_SRC, RECONNECT_CALL), 1, 'and app-wide the reconnect call site still appears exactly once');
 // Both consumers resolve through the ordinary classic-global binding.
 eq(countLiteral(INDEX, 'window.' + OWNER), 0, 'no window.* exposure glue was added');
 eq(countLiteral(APP_SRC, 'export ' + OWNER), 0, OWNER + ' is never exported');
@@ -599,8 +639,34 @@ eq(shape(RETAINED).map((e) => e.isAsync), [false, true], 'doReconnectTT is still
 RETAINED_OWNERS.forEach((n) => {
   eq(scanTopLevelDeclarations(APP_SRC).filter((d) => d.name === n).length, 1,
     n + ' still has exactly one declaration app-wide');
-  eq(countLiteral(MODULE, 'function ' + n), 0, n + ' was not dragged into the module');
+  eq(countLiteral(MODULE, 'function ' + n), 0, n + ' was not dragged into the Apex module');
 });
+// OWNERSHIP ADVANCED. What this extraction left behind was contiguous, and the
+// follow-up TT reconnect extraction moved that exact block into its own module.
+// The guarantee is unchanged and stated in its stronger, current form: the pair
+// is byte-identical to what this contract measured, it is owned by exactly one
+// named module, and that module still loads AFTER this one — so doReconnectTT's
+// call to _apexPostAuthInit still resolves through the preceding module.
+const TT_RECONNECT_SRC = './js/ui/tt-reconnect.js';
+// The TT reconnect extraction applies the same separator model this contract
+// uses: the module file is the retained RAW pair minus its final LF, which is
+// the structural separator its undo re-inserts. So the module is 4,752 units
+// and module + separator is the 4,753-unit fragment measured here.
+eq(TT_RECONNECT_MODULE + '\n', RETAINED,
+  'the retained pair is now owned, byte-for-byte, by js/ui/tt-reconnect.js plus its structural separator');
+eq(sha256(TT_RECONNECT_MODULE + '\n'), RETAINED_SHA256, '…hashing to the same Candidate D fragment measured here');
+eq(TT_RECONNECT_MODULE.length, RETAINED_CHARS - 1, '…the module itself being one LF shorter');
+ok(TT_RECONNECT_MODULE.endsWith('}\n') && !TT_RECONNECT_MODULE.endsWith('\n\n'),
+  '…and ending on a real line of code, like every module this series ships');
+RETAINED_OWNERS.forEach((n) => {
+  eq(countLiteral(TT_RECONNECT_MODULE, 'function ' + n), 1, n + ' is declared exactly once in the TT reconnect module');
+});
+const LIVE_PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
+const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
+const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
+ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
+  'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
+ok(ttIdx === LIVE_PARTS.length - 2, '…and immediately before the inline monolith');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
   'the generated reconnect handler is untouched inside showReconnectPanel');
 // Contiguity is the whole point: nothing sits between the two halves any more.
@@ -795,8 +861,8 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the Apex shared post-auth owner');
+eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/tt-reconnect.js'],
+  'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -807,14 +873,20 @@ ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+  rel === 'js/ui/tt-reconnect.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is still exactly 137 test files: the permanent contract replaced the audit, it did not add to it');
-// The follow-up reconnect-UI extraction has NOT begun.
-ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-reconnect.js')), 'no reconnect UI module exists yet');
-ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-auth-lifecycle.js')), 'no combined TT auth lifecycle module exists');
-ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-reconnect-panel.js')), 'no reconnect panel module exists');
+  'the suite is exactly 138 test files: this contract, plus the TT reconnect contract the follow-up added');
+// The follow-up reconnect-UI extraction HAS now shipped, as exactly one module
+// with its own permanent contract and undo helper. The audit's other rejected
+// candidates were never built, and are still asserted absent.
+ok(fs.existsSync(path.join(ROOT, 'js/ui/tt-reconnect.js')), 'the reconnect UI module exists');
+ok(fs.existsSync(path.join(ROOT, 'tests/tt-reconnect-boundary-contract.test.js')),
+  '…with its own permanent boundary contract');
+ok(fs.existsSync(path.join(ROOT, 'tests/lib/tt-reconnect-undo.js')), '…and its own byte-exact undo helper');
+ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-auth-lifecycle.js')), 'no combined TT auth lifecycle module exists (rejected candidate A/B)');
+ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-reconnect-panel.js')), 'no reconnect panel module exists (rejected candidate B)');
 
 console.log('\n' + pass + ' assertions passed');
 console.log('APEX_POST_AUTH_INIT_BOUNDARY_OK');

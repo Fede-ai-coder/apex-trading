@@ -218,11 +218,19 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // layer first, newest-first, and every assertion below keeps meaning exactly
 // what it meant before the Apex extraction existed. The helper re-verifies its
 // output by length and SHA-256, so the hop is proved rather than assumed.
+const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
+const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
-const INDEX = APEX_POST_AUTH_U.isApplied(LIVE_INDEX)
-  ? APEX_POST_AUTH_U.undoApexPostAuthInit(LIVE_INDEX, APEX_POST_AUTH_MODULE)
+// The TT reconnect UI owner is the newest layer of all and sits on top of
+// the Apex post-auth owner: peel it FIRST so the Apex undo below still sees
+// the exact document it was cut against.
+const PRE_TT_RECONNECT = TT_RECONNECT_U.isApplied(LIVE_INDEX)
+  ? TT_RECONNECT_U.undoTtReconnect(LIVE_INDEX, TT_RECONNECT_MODULE)
   : LIVE_INDEX;
+const INDEX = APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT)
+  ? APEX_POST_AUTH_U.undoApexPostAuthInit(PRE_TT_RECONNECT, APEX_POST_AUTH_MODULE)
+  : PRE_TT_RECONNECT;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/mcx-charts-undo.js');
 const MACRO_U = require('./lib/mcx-macro-check-undo.js');
@@ -464,11 +472,20 @@ eq(sha256(INDEX), INDEX_SHA256, 'shipped index SHA-256 is the audited prediction
 // The LIVE document is one layer newer. Both states are pinned: the post-#409
 // document this contract owns, and the shipped document that now carries the
 // Apex post-auth owner on top of it.
-eq(APEX_POST_AUTH_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later Apex post-auth layer');
-eq(LIVE_INDEX.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-Apex value');
-eq(sha256(LIVE_INDEX), APEX_POST_AUTH_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-Apex value');
+eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the newest TT reconnect layer');
+eq(PRE_TT_RECONNECT.length, TT_RECONNECT_U.BASE_CHARS,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index length');
+eq(sha256(PRE_TT_RECONNECT), TT_RECONNECT_U.BASE_SHA256,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
+eq(APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT), true, 'the post-#410 document carries the later Apex post-auth layer');
+eq(LIVE_INDEX.length, TT_RECONNECT_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-TT-reconnect value');
+eq(sha256(LIVE_INDEX), TT_RECONNECT_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-TT-reconnect value');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
-  55, 'the live shipped index carries 55 local application scripts');
+  56, 'the live shipped index carries 56 local application scripts');
+eq(PRE_TT_RECONNECT.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, '…peeling TT reconnect returns it to the post-Apex length');
+eq(sha256(PRE_TT_RECONNECT), APEX_POST_AUTH_U.EXTRACTED_SHA256, '…and to the post-Apex hash');
+eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
+  55, '…with 55 local application scripts');
 eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
   LOCAL_SCRIPT_COUNT, '…and peeling the Apex layer returns it to this contract\'s 54');
 eq(INDEX.length, BASE.length - SECTION_CHARS + GLUE_CHARS + MODULE_TAG.length + 1,
@@ -725,9 +742,9 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
 // module is second-to-last rather than last. The invariant this line protects —
 // the charts owner evaluates before the inline monolith that consumes it — is
 // unchanged and asserted in its stronger, current form.
-eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-3),
-  [MODULE_SRC, './js/services/apex-post-auth-init.js', '(inline)'],
-  'in execution order the module runs immediately before the Apex post-auth owner, which runs immediately before the inline monolith');
+eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-4),
+  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', '(inline)'],
+  'in execution order the module runs immediately before the Apex post-auth owner, which precedes the TT reconnect owner and then the inline monolith');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('10. Byte-exact forward transform and reverse WEAVE reconstruction of #407');
@@ -924,7 +941,7 @@ function changedPaths() {
 }
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the MCX charts owner and the later Apex post-auth owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent charts contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact charts undo helper is part of the change');
@@ -937,7 +954,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-  rel === 'js/services/apex-post-auth-init.js' || rel.startsWith('tests/')),
+  rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 
 const contractsToAdvance = [

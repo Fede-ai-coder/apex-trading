@@ -57,10 +57,12 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
+const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const MCX_MACRO_CHECK_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
@@ -76,7 +78,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The Apex shared post-auth lifecycle owner is now the NEWEST layer of all,
 // sitting on top of MCX charts: peel it first so the MCX charts undo below
 // still sees the exact document it was cut against.
-const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(INDEX, APEX_POST_AUTH_MODULE);
+// The TT reconnect UI owner is now the NEWEST layer of all, sitting on top of
+// Apex post-auth: peel it first so the Apex undo below still sees the exact
+// document it was cut against.
+const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(INDEX, TT_RECONNECT_MODULE);
+const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(preTtReconnect, APEX_POST_AUTH_MODULE);
 const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(preApexPostAuth, MCX_CHARTS_MODULE);
 const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
 const POST_MANUAL_INDEX = BACKUP_RESTORE_U.undoJournalBackupRestore(preMcxMacroCheck, BACKUP_RESTORE_MODULE);
@@ -339,9 +345,11 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1880019, 'current shipped index UTF-16 length is the post-Apex-post-auth value');
-eq(sha256(INDEX), '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1',
-  'current shipped index SHA-256 is the post-Apex-post-auth value');
+eq(INDEX.length, 1875314, 'current shipped index UTF-16 length is the post-TT-reconnect value');
+eq(sha256(INDEX), '7dd13923b25053960fb8b26bcf0d2383ebe27abe0f7b66607fa5893478503dcd',
+  'current shipped index SHA-256 is the post-TT-reconnect value');
+// The post-Apex-post-auth document those two lines used to pin is still
+// pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
 // The post-MCX-macro-check document those two lines used to pin is still
@@ -508,12 +516,20 @@ for (const rel of contractsToAdvance) {
      source.includes('seven Journal owners'),
      rel + ' recognizes the sixth or seventh Journal owner, or the current classic-script tail');
 }
+eq(preTtReconnect.length, TT_RECONNECT_U.BASE_CHARS,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index length');
+eq(sha256(preTtReconnect), TT_RECONNECT_U.BASE_SHA256,
+  'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
+ok(TT_RECONNECT_U.isApplied(INDEX),
+  'the shipped index really does carry the TT reconnect layer being peeled');
+ok(!TT_RECONNECT_U.isApplied(preTtReconnect),
+  'the peeled document no longer carries the TT reconnect tag');
 eq(preApexPostAuth.length, APEX_POST_AUTH_U.BASE_CHARS,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
 eq(sha256(preApexPostAuth), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
-ok(APEX_POST_AUTH_U.isApplied(INDEX),
-  'the shipped index really does carry the Apex post-auth layer being peeled');
+ok(APEX_POST_AUTH_U.isApplied(preTtReconnect),
+  'the post-#410 document really does carry the Apex post-auth layer being peeled');
 ok(!APEX_POST_AUTH_U.isApplied(preApexPostAuth),
   'the peeled document no longer carries the Apex post-auth tag');
 eq(preMcxCharts.length, MCX_CHARTS_U.BASE_CHARS,
@@ -587,7 +603,7 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js'],
+eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore, MCX charts, MCX macro-check and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');
