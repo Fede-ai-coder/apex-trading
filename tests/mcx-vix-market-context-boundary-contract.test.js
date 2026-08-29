@@ -262,8 +262,18 @@ const mcxChartsAt = INDEX.indexOf(mcxChartsTag);
 const afterChartsAt = mcxChartsAt >= 0 ? INDEX.indexOf('<script', mcxChartsAt + mcxChartsTag.length) : -1;
 const afterChartsEnd = afterChartsAt >= 0 ? INDEX.indexOf('>', afterChartsAt) : -1;
 const afterChartsTag = afterChartsEnd >= 0 ? INDEX.slice(afterChartsAt, afterChartsEnd + 1) : '';
-ok(mcxChartsAt > mcxMacroCheckAt && !/\bsrc\s*=/i.test(afterChartsTag),
-  'the MCX charts owner loads immediately before the residual inline application script');
+// The Apex shared post-auth owner now loads between the charts owner and the
+// inline monolith. The invariant is unchanged — both later owners still precede
+// the residual inline application script — and is asserted in its current form.
+const apexPostAuthOpen = '<script src="./js/services/apex-post-auth-init.js">';
+const apexPostAuthTag = apexPostAuthOpen + '</script>';
+const afterApexAt = INDEX.indexOf('<script', INDEX.indexOf(apexPostAuthTag) + apexPostAuthTag.length);
+const afterApexEnd = afterApexAt >= 0 ? INDEX.indexOf('>', afterApexAt) : -1;
+const afterApexTag = afterApexEnd >= 0 ? INDEX.slice(afterApexAt, afterApexEnd + 1) : '';
+ok(mcxChartsAt > mcxMacroCheckAt && afterChartsTag === apexPostAuthOpen,
+  'the MCX charts owner loads immediately before the Apex shared post-auth owner');
+ok(INDEX.indexOf(apexPostAuthTag) > mcxChartsAt && !/\bsrc\s*=/i.test(afterApexTag),
+  'the Apex post-auth owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

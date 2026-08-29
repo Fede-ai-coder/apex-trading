@@ -230,12 +230,16 @@ const JOURNAL_EXTRACTION_SCRIPTS = [
   './js/services/journal-manual-import.js',
   './js/ui/journal-backup-restore.js',
 ];
+const APEX_POST_AUTH_EXTRACTION_SCRIPTS = [
+  './js/services/apex-post-auth-init.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
   .concat(PRETRADE_EXTRACTION_SCRIPTS)
   .concat(MCX_EXTRACTION_SCRIPTS)
-  .concat(JOURNAL_EXTRACTION_SCRIPTS);
+  .concat(JOURNAL_EXTRACTION_SCRIPTS)
+  .concat(APEX_POST_AUTH_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2727,7 +2731,7 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 54,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 55,
    'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX and seven Journal extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
@@ -3470,7 +3474,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && EIC_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PRETRADE_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && MCX_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && JOURNAL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && JOURNAL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && APEX_POST_AUTH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
@@ -4303,11 +4308,30 @@ ok(loadOrderSafe(ORDER_C_PARTS).safe, 'ORDER C (adapter → service → panel �
 const LEFT_INLINE = {
   statements: ['window.apexDebugBackendDirectionalSnapshot = …', 'window.apexDebugDirectionalBackendSnapshot = …'],
   functions: ['resolveLatestDisplayPrice', '_dssResolvePrice', 'renderDirectionalSetupScanner',
-              'openDirectionalSetupDetail', 'showView', '_apexPostAuthInit', '_dssRenderLargeCharts'],
+              'openDirectionalSetupDetail', 'showView', '_dssRenderLargeCharts'],
 };
+// _apexPostAuthInit was on this list until the Apex shared post-auth extraction
+// moved it out of the monolith. It is still NOT a DSB owner and still an
+// external consumer of dsbStartAutoRefresh and dsbEnrichVisibleRowsLive — that
+// edge is unchanged and asserted in SECTION 10 — but it is no longer inline, so
+// its real owner is named here rather than left as a stale claim.
+const MOVED_OUT_OF_INLINE = { _apexPostAuthInit: './js/services/apex-post-auth-init.js' };
 eq(LEFT_INLINE.statements.length, 2, 'two top-level statements stay inline (W2)');
 ok(LEFT_INLINE.functions.every(function (n) { return A.fnNames.indexOf(n) < 0; }),
    'none of the inline-staying functions is part of the DSB manifest');
+eq(LEFT_INLINE.functions.indexOf('_apexPostAuthInit'), -1,
+   '_apexPostAuthInit is no longer classified as inline');
+Object.keys(MOVED_OUT_OF_INLINE).forEach(function (n) {
+  ok(A.fnNames.indexOf(n) < 0, n + ' is still not part of the DSB manifest');
+  const owner = APP_PARTS.filter(function (part) {
+    return part.name !== 'INLINE' && new RegExp('function\\s+' + n + '\\s*\\(').test(String(part.code));
+  }).map(function (part) { return part.name; });
+  deepEq(owner, [MOVED_OUT_OF_INLINE[n]], n + ' is owned exactly by ' + MOVED_OUT_OF_INLINE[n]);
+});
+deepEq(A.refs.dsbStartAutoRefresh.external, ['_apexPostAuthInit', 'showView'],
+   '…and it remains an external consumer of dsbStartAutoRefresh');
+deepEq(A.refs.dsbEnrichVisibleRowsLive.external, ['_apexPostAuthInit'],
+   '…and of dsbEnrichVisibleRowsLive');
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SECTION 27b — PR 1 + PR 2 + PR 3 OWNERSHIP CHECKLIST

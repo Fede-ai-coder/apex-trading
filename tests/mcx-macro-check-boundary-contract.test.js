@@ -142,6 +142,8 @@ const RISK_COLORS = {
 };
 
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
+const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 // THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
@@ -149,9 +151,12 @@ const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js')
 // newest-first, and every assertion below keeps meaning exactly what it meant
 // before the charts extraction existed. The helper re-verifies its output by
 // length and SHA-256, so the hop is proved rather than assumed.
-const INDEX = MCX_CHARTS_U.isApplied(LIVE_INDEX)
-  ? MCX_CHARTS_U.undoMcxCharts(LIVE_INDEX, MCX_CHARTS_MODULE)
+const PRE_APEX_POST_AUTH = APEX_POST_AUTH_U.isApplied(LIVE_INDEX)
+  ? APEX_POST_AUTH_U.undoApexPostAuthInit(LIVE_INDEX, APEX_POST_AUTH_MODULE)
   : LIVE_INDEX;
+const INDEX = MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH)
+  ? MCX_CHARTS_U.undoMcxCharts(PRE_APEX_POST_AUTH, MCX_CHARTS_MODULE)
+  : PRE_APEX_POST_AUTH;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_U = require('./lib/journal-backup-restore-undo.js');
@@ -523,12 +528,21 @@ eq(execFileSync('git', ['log', '-1', '--format=%s', BASE_SHA], { cwd: ROOT, enco
 eq(BASE.length, BASE_CHARS, 'base index UTF-16 length is pinned');
 eq(Buffer.byteLength(BASE, 'utf8'), BASE_UTF8, 'base index UTF-8 byte length is pinned');
 eq(sha256(BASE), BASE_INDEX_SHA256, 'base index SHA-256 is pinned');
-eq(MCX_CHARTS_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later MCX charts layer');
-eq(LIVE_INDEX.length, 1884429, 'the current shipped index UTF-16 length is the post-MCX-charts value');
-eq(sha256(LIVE_INDEX), 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e',
-  'the current shipped index SHA-256 is the post-MCX-charts value');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
-  'the current shipped index carries exactly 54 local application scripts');
+eq(APEX_POST_AUTH_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later Apex post-auth layer');
+eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
+eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
+eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
+eq(LIVE_INDEX.length, 1880019, 'current shipped index UTF-16 length is the post-Apex-post-auth value');
+eq(sha256(LIVE_INDEX), '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1',
+  'current shipped index SHA-256 is the post-Apex-post-auth value');
+// The post-MCX-charts document those two lines used to pin is still pinned,
+// one layer down, by the Apex post-auth peel assertions above.
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
+  'the current shipped index carries exactly 55 local application scripts');
+eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
+  '…and peeling the Apex post-auth layer returns it to the historical 54');
 eq(countLiteral(LIVE_INDEX, MODULE_TAG + '\n<script src="./js/ui/mcx-charts.js"></script>'), 1,
   'the MCX charts owner loads immediately after this owner in the shipped index');
 eq(INDEX.length, INDEX_CHARS, 'extracted index UTF-16 length is the audited prediction');
@@ -1077,8 +1091,8 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/ui/mcx-charts.js', MODULE_REL],
-    'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts owner');
+  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', 'js/ui/mcx-charts.js', MODULE_REL],
+    'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts and Apex post-auth owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
@@ -1088,7 +1102,8 @@ section('10. Exact prompt construction and success transcript');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/ui/mcx-charts.js' || rel.startsWith('tests/')),
+    rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' ||
+    rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 
   const contractsToAdvance = [

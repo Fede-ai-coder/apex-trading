@@ -101,17 +101,23 @@ const MARKUP_HANDLERS = [
 ];
 
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
+const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
 const MCX_MACRO_U = require('./lib/mcx-macro-check-undo.js');
 const MCX_MACRO_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.js'), 'utf8');
 // THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it.
-// Two later owners now sit on top of it: peel them NEWEST-FIRST — MCX charts,
-// then MCX macro check — so each undo sees the exact document it was cut
-// against. Both helpers re-verify their output by length and SHA-256.
-const PRE_MCX_CHARTS = MCX_CHARTS_U.isApplied(LIVE_INDEX)
-  ? MCX_CHARTS_U.undoMcxCharts(LIVE_INDEX, MCX_CHARTS_MODULE)
+// Three later owners now sit on top of it: peel them NEWEST-FIRST — Apex
+// post-auth init, MCX charts, then MCX macro check — so each undo sees the
+// exact document it was cut against. Every helper re-verifies its output by
+// length and SHA-256.
+const PRE_APEX_POST_AUTH = APEX_POST_AUTH_U.isApplied(LIVE_INDEX)
+  ? APEX_POST_AUTH_U.undoApexPostAuthInit(LIVE_INDEX, APEX_POST_AUTH_MODULE)
   : LIVE_INDEX;
+const PRE_MCX_CHARTS = MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH)
+  ? MCX_CHARTS_U.undoMcxCharts(PRE_APEX_POST_AUTH, MCX_CHARTS_MODULE)
+  : PRE_APEX_POST_AUTH;
 const INDEX = MCX_MACRO_U.isApplied(PRE_MCX_CHARTS)
   ? MCX_MACRO_U.undoMcxMacroCheck(PRE_MCX_CHARTS, MCX_MACRO_MODULE)
   : PRE_MCX_CHARTS;
@@ -437,15 +443,22 @@ eq(sha256(BASE), '0bc8f2904a47b84a345ca9c35a18c17208082c7f447fe358d3dd19cd2dba47
 // bridge does. The helper re-verifies what it hands back by length and SHA-256,
 // so this hop is proved rather than assumed, and every assertion below keeps
 // meaning exactly what it meant before the macro-check extraction existed.
-eq(MCX_CHARTS_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the MCX charts layer');
+eq(APEX_POST_AUTH_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the Apex post-auth layer');
+eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index length');
+eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
+  'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
+eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the MCX charts layer');
 eq(MCX_MACRO_U.isApplied(PRE_MCX_CHARTS), true, 'the charts-peeled index carries the MCX macro-check layer');
 eq(INDEX.length, 1933458, 'extracted index UTF-16 length is exact');
 eq(Buffer.byteLength(INDEX, 'utf8'), 1968899, 'extracted index UTF-8 byte length is exact');
 eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'extracted index SHA-256 is the audited prediction');
-eq(LIVE_INDEX.length, 1884429, 'the current shipped index UTF-16 length is the post-MCX-charts value');
-eq(sha256(LIVE_INDEX), 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e',
-  'the current shipped index SHA-256 is the post-MCX-charts value');
+eq(LIVE_INDEX.length, 1880019, 'current shipped index UTF-16 length is the post-Apex-post-auth value');
+eq(sha256(LIVE_INDEX), '4d514626ec99e6306400f3ce8eb383629cb3ec9fd75798043cd8dc14a376ebe1',
+  'current shipped index SHA-256 is the post-Apex-post-auth value');
+// The post-MCX-charts document those two lines used to pin is still pinned,
+// one layer down, by the Apex post-auth peel assertions above.
 eq(PRE_MCX_CHARTS.length, 1928890, 'peeling MCX charts reaches the post-macro-check index UTF-16 length');
 eq(sha256(PRE_MCX_CHARTS), '00ffa331d568b3b81b1f5993a3a347adc4e6c8088de8be113048f85f9ba64d96',
   'peeling MCX charts reaches the post-macro-check index SHA-256');
@@ -521,8 +534,10 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
   'index carried exactly 52 local application scripts when this extraction landed');
 eq(APP_LOADER.parseScriptTags(PRE_MCX_CHARTS).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 53,
   'peeling MCX charts restores the 53 local application scripts of the post-macro-check index');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
-  'the current shipped index carries exactly 54 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
+  'the current shipped index carries exactly 55 local application scripts');
+eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
+  '…and peeling the Apex post-auth layer returns it to the historical 54');
 eq(countLiteral(INDEX, MODULE_TAG), 1, 'the new tag appears exactly once');
 eq(moduleOrderViolations(INDEX), [],
   'classic UI loads after Manual Import and immediately before the inline monolith');
@@ -861,8 +876,8 @@ section('8. Panel open/close and list rendering behavior');
   section('14. Exact production scope');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js'],
-    'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check and MCX charts owners');
+  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js'],
+    'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check, MCX charts and Apex post-auth owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Backup/Restore contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Backup/Restore undo helper is part of the change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),

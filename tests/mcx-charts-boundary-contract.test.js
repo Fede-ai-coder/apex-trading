@@ -212,7 +212,17 @@ const JS_CONSUMERS = {
 const JS_CONSUMER_TOTAL = 18;
 const MARKUP_CONSUMERS = { _mcxRedraw: 3, _mcxRefresh: 1 };
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
+// later Apex shared post-auth lifecycle owner sits on top of it, so peel that
+// layer first, newest-first, and every assertion below keeps meaning exactly
+// what it meant before the Apex extraction existed. The helper re-verifies its
+// output by length and SHA-256, so the hop is proved rather than assumed.
+const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
+const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
+const INDEX = APEX_POST_AUTH_U.isApplied(LIVE_INDEX)
+  ? APEX_POST_AUTH_U.undoApexPostAuthInit(LIVE_INDEX, APEX_POST_AUTH_MODULE)
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/mcx-charts-undo.js');
 const MACRO_U = require('./lib/mcx-macro-check-undo.js');
@@ -451,6 +461,16 @@ eq(INDEX.length, INDEX_CHARS, 'shipped index UTF-16 length is the audited predic
 eq(Buffer.byteLength(INDEX, 'utf8'), INDEX_UTF8, 'shipped index UTF-8 byte length is the audited prediction');
 eq(countLiteral(INDEX, '\n'), INDEX_LF, 'shipped index LF count is the audited prediction');
 eq(sha256(INDEX), INDEX_SHA256, 'shipped index SHA-256 is the audited prediction');
+// The LIVE document is one layer newer. Both states are pinned: the post-#409
+// document this contract owns, and the shipped document that now carries the
+// Apex post-auth owner on top of it.
+eq(APEX_POST_AUTH_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later Apex post-auth layer');
+eq(LIVE_INDEX.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-Apex value');
+eq(sha256(LIVE_INDEX), APEX_POST_AUTH_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-Apex value');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
+  55, 'the live shipped index carries 55 local application scripts');
+eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
+  LOCAL_SCRIPT_COUNT, '…and peeling the Apex layer returns it to this contract\'s 54');
 eq(INDEX.length, BASE.length - SECTION_CHARS + GLUE_CHARS + MODULE_TAG.length + 1,
   'the whole index delta is exactly the removed section, minus the retained glue, plus the one added tag line');
 
@@ -701,8 +721,13 @@ eq(ownTag.attrs.trim(), 'src="' + MODULE_SRC + '"', 'tag is src-only: no defer, 
 eq(ownTag.code == null || ownTag.code === '', true, 'the tag has no inline body');
 eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).map((e) => e.src).slice(-1),
   [MODULE_SRC], 'the charts owner is the LAST local application script before the monolith');
-eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-2),
-  [MODULE_SRC, '(inline)'], 'in execution order the module runs immediately before the inline monolith');
+// In the LIVE tree the Apex post-auth owner now loads after this one, so the
+// module is second-to-last rather than last. The invariant this line protects —
+// the charts owner evaluates before the inline monolith that consumes it — is
+// unchanged and asserted in its stronger, current form.
+eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-3),
+  [MODULE_SRC, './js/services/apex-post-auth-init.js', '(inline)'],
+  'in execution order the module runs immediately before the Apex post-auth owner, which runs immediately before the inline monolith');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('10. Byte-exact forward transform and reverse WEAVE reconstruction of #407');
@@ -899,8 +924,8 @@ function changedPaths() {
 }
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the MCX charts owner');
+eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL],
+  'production footprint is exactly index.html plus the MCX charts owner and the later Apex post-auth owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent charts contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact charts undo helper is part of the change');
 ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
@@ -911,7 +936,8 @@ ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+  rel === 'js/services/apex-post-auth-init.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 
 const contractsToAdvance = [

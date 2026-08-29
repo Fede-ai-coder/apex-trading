@@ -1127,12 +1127,15 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      'Journal Manual Import is immediately before Journal Backup/Restore');
   const MCX_MACRO_CHECK_REL = './js/ui/mcx-macro-check.js';
   const MCX_CHARTS_REL = './js/ui/mcx-charts.js';
+  const APEX_POST_AUTH_REL = './js/services/apex-post-auth-init.js';
   eq(idx(JOURNAL_BACKUP_RESTORE_REL), idx(MCX_MACRO_CHECK_REL) - 1,
      'Journal Backup/Restore is immediately before the MCX macro-check owner');
   eq(idx(MCX_MACRO_CHECK_REL), idx(MCX_CHARTS_REL) - 1,
      'the MCX macro-check owner is immediately before the MCX charts owner');
-  eq(idx(MCX_CHARTS_REL), SCRIPT_ORDER.length - 2,
-     'the MCX charts owner is the last external script before the monolith');
+  eq(idx(MCX_CHARTS_REL), idx(APEX_POST_AUTH_REL) - 1,
+     'the MCX charts owner is immediately before the Apex shared post-auth owner');
+  eq(idx(APEX_POST_AUTH_REL), SCRIPT_ORDER.length - 2,
+     'the Apex shared post-auth owner is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1143,8 +1146,8 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, MCX_CHARTS_REL, '(inline)'],
-         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX, all Journal owners and the MCX macro-check and MCX charts owners before inline');
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, MCX_CHARTS_REL, APEX_POST_AUTH_REL, '(inline)'],
+         'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX, all Journal owners and the MCX macro-check, MCX charts and Apex post-auth owners before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
   ok(!SCRIPT_ORDER.some(function (s) { return /backend-scanner-snapshot-(ui|renderers|formatters|state)/.test(String(s)); }),
@@ -1190,10 +1193,26 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      '_swingHydrateFromBackend (a service reader consumer) is declared after the region');
   // Every one of those inline landmarks is in the monolith, i.e. the LAST script:
   // the region precedes all of them because of script order, not text position.
-  ['escHtml', '_apexPostAuthInit',
+  ['escHtml',
    'rsbGetBackendSource', 'showView', '_swingHydrateFromBackend'].forEach(function (n) {
     eq(partOf(declStart(n)), '(inline)', n + ' stayed in the inline monolith');
   });
+  // _apexPostAuthInit left the monolith in the Apex shared post-auth extraction.
+  // Everything this section actually protects is unchanged and is asserted here
+  // in its stronger, current form: the owner is a single declaration in one
+  // named module, that module still loads AFTER the BSS region whose helpers it
+  // consumes, and it still loads BEFORE the inline monolith, so every edge in
+  // both directions remains a call-time classic-global lookup.
+  eq(partOf(declStart('_apexPostAuthInit')), './js/services/apex-post-auth-init.js',
+     '_apexPostAuthInit is owned exactly by the Apex shared post-auth module');
+  eq(spansOf('_apexPostAuthInit').length, 1,
+     '_apexPostAuthInit has exactly one declaration app-wide');
+  ok(declStart('_apexPostAuthInit') > REGION_END,
+     '…and it is still declared AFTER the BSS region, so bssStartPolling exists before it runs');
+  ok(partIndexOf(declStart('_apexPostAuthInit')) < PART_RANGES.length - 1,
+     '…and still BEFORE the inline monolith, which calls it on the normal-login path');
+  eq(partOf(declStart('bssStartPolling')), SERVICE_REL,
+     '…while its BSS dependency stays owned by the service module it was extracted into');
   // dsbGetBackendSource left the monolith in DSB PR 2, but it did NOT move into
   // the BSS panel and it still follows the region: the late-binding invariant
   // this section protects is unchanged, only its owning file is new.
@@ -3389,13 +3408,15 @@ section('29. script order');
     './js/ui/journal-backup-restore.js',
   ];
   const REGIME_POLICY_EXTRACTION_SCRIPTS = ['./js/services/mcx-regime-policy.js'];
+  const APEX_POST_AUTH_EXTRACTION_SCRIPTS = ['./js/services/apex-post-auth-init.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
     .concat(EIC_EXTRACTION_SCRIPTS)
     .concat(PRETRADE_EXTRACTION_SCRIPTS)
     .concat(MCX_EXTRACTION_SCRIPTS)
     .concat(JOURNAL_EXTRACTION_SCRIPTS)
-    .concat(REGIME_POLICY_EXTRACTION_SCRIPTS);
+    .concat(REGIME_POLICY_EXTRACTION_SCRIPTS)
+    .concat(APEX_POST_AUTH_EXTRACTION_SCRIPTS);
   const localSrcs = local.map(function (t) { return String(t.src); });
   const beyond = localSrcs.filter(function (src) { return DECLARED_BEYOND.indexOf(src) < 0; });
   eq(beyond.length, 26, 'index.html loads 26 local application scripts beyond the Stress companion modules (19 + the extracted panel + the DSB pure adapter + the DSB service + the DSB panel + the SFS config/state module + the SFS scan-service module + the SFS UI panel)');
@@ -3413,6 +3434,9 @@ section('29. script order');
   });
   REGIME_POLICY_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared Regime Policy extraction module is loaded: ' + src);
+  });
+  APEX_POST_AUTH_EXTRACTION_SCRIPTS.forEach(function (src) {
+    ok(localSrcs.indexOf(src) >= 0, 'the declared Apex post-auth extraction module is loaded: ' + src);
   });
   MCX_EXTRACTION_SCRIPTS.forEach(function (src) {
     ok(localSrcs.indexOf(src) >= 0, 'the declared MCX extraction module is loaded: ' + src);
