@@ -1407,18 +1407,22 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 55,
-     '4.9 index.html loads 55 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check, MCX charts and Apex post-auth owners');
-  eq(local[local.length - 3].src, './js/ui/mcx-macro-check.js',
+  eq(local.length, 56,
+     '4.9 index.html loads 56 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check, MCX charts, Apex post-auth and TT reconnect owners');
+  eq(local[local.length - 4].src, './js/ui/mcx-macro-check.js',
      '4.9a the MCX macro-check owner is immediately before the MCX charts owner');
   eq(local.filter((s) => s.src === './js/ui/mcx-macro-check.js').length, 1,
      '4.9b exactly one MCX macro-check tag, no duplicate');
-  eq(local[local.length - 2].src, './js/ui/mcx-charts.js',
+  eq(local[local.length - 3].src, './js/ui/mcx-charts.js',
      '4.9c the MCX charts owner is immediately before the Apex shared post-auth owner');
-  eq(local[local.length - 1].src, './js/services/apex-post-auth-init.js',
-     '4.9d the Apex shared post-auth owner is the LAST local application script before the inline monolith');
+  eq(local[local.length - 2].src, './js/services/apex-post-auth-init.js',
+     '4.9d the Apex shared post-auth owner is immediately before the TT reconnect owner');
   eq(local.filter((s) => s.src === './js/services/apex-post-auth-init.js').length, 1,
      '4.9e exactly one Apex post-auth tag, no duplicate');
+  eq(local[local.length - 1].src, './js/ui/tt-reconnect.js',
+     '4.9f the TT reconnect owner is the LAST local application script before the inline monolith');
+  eq(local.filter((s) => s.src === './js/ui/tt-reconnect.js').length, 1,
+     '4.9g exactly one TT reconnect tag, no duplicate');
   eq(local.filter((s) => s.src === './js/ui/mcx-charts.js').length, 1,
      '4.9d exactly one MCX charts tag, no duplicate');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');

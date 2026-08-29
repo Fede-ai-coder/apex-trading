@@ -1,9 +1,11 @@
 'use strict';
-// Current-app reconstruction bridge after Apex post-auth init + MCX charts +
+// Current-app reconstruction bridge after TT reconnect UI + Apex post-auth
+// init + MCX charts +
 // MCX macro check + Backup/Restore + Manual Import + Journal Migration +
 // Write-through + Journal Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Apex post-auth relocation first, then MCX charts, MCX macro check,
+// newest TT reconnect relocation first, then Apex post-auth, MCX charts, MCX
+// macro check,
 // Backup/Restore, Manual Import, Migration, Write-through, Journal Remote,
 // Journal UI, Regime Policy, Journal Core, and finally delegate to the original
 // MCX3 identity guard. All layers remain independently fail-closed.
@@ -13,6 +15,7 @@
 // out of order fails closed rather than producing an approximate tree.
 const fs = require('fs');
 const path = require('path');
+const TT_RECONNECT = require('./tt-reconnect-undo.js');
 const APEX_POST_AUTH = require('./apex-post-auth-init-undo.js');
 const MCX_CHARTS = require('./mcx-charts-undo.js');
 const MCX_MACRO_CHECK = require('./mcx-macro-check-undo.js');
@@ -26,6 +29,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const TT_RECONNECT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'tt-reconnect.js'),
+  'utf8'
+);
 const APEX_POST_AUTH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'apex-post-auth-init.js'),
   'utf8'
@@ -72,9 +79,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preApexPostAuth = APEX_POST_AUTH.isApplied(html)
-    ? APEX_POST_AUTH.undoApexPostAuthInit(html, APEX_POST_AUTH_SOURCE)
+  const preTtReconnect = TT_RECONNECT.isApplied(html)
+    ? TT_RECONNECT.undoTtReconnect(html, TT_RECONNECT_SOURCE)
     : html;
+  const preApexPostAuth = APEX_POST_AUTH.isApplied(preTtReconnect)
+    ? APEX_POST_AUTH.undoApexPostAuthInit(preTtReconnect, APEX_POST_AUTH_SOURCE)
+    : preTtReconnect;
   const preMcxCharts = MCX_CHARTS.isApplied(preApexPostAuth)
     ? MCX_CHARTS.undoMcxCharts(preApexPostAuth, MCX_CHARTS_SOURCE)
     : preApexPostAuth;
