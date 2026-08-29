@@ -68,7 +68,11 @@ const BASE_UTF8 = 1918599;
 const BASE_LF = 33097;
 const BASE_INDEX_SHA256 = 'b5f6dd5b2fad6e1d3e0ce3fee4abf5cfb561c19de714e20f86874e49e10a857e';
 const BASE_LOCAL_SCRIPTS = 54;
-const TEST_FILE_COUNT = 138;
+// Ratchet. Advanced to 139 by the Journal forms extraction audit, which adds
+// tests/temporary-journal-forms-boundary-audit.test.js. That audit is replaced
+// one-for-one by the permanent Close Legs boundary contract, so the count stays
+// at 139 — it does not go back to 138.
+const TEST_FILE_COUNT = 139;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1874908;
@@ -877,7 +881,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
   rel === 'js/ui/tt-reconnect.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is exactly 138 test files: this contract, plus the TT reconnect contract the follow-up added');
+  'the suite is exactly 139 test files: this contract, the TT reconnect contract, and the Journal forms audit');
 // The follow-up reconnect-UI extraction HAS now shipped, as exactly one module
 // with its own permanent contract and undo helper. The audit's other rejected
 // candidates were never built, and are still asserted absent.
