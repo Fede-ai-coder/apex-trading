@@ -468,7 +468,7 @@ const RATCHET_AFTER = RATCHET[RATCHET.length - 1];
 // 52 once the Journal Backup/Restore UI moved to its own module.
 // 53 once the MCX macro-check UI moved to js/ui/mcx-macro-check.js.
 // 54 once the MCX charts/lifecycle owner moved to js/ui/mcx-charts.js.
-const LOCAL_SCRIPT_COUNT = 56;
+const LOCAL_SCRIPT_COUNT = 57;
 
 // The blob PR 1 was cut from — the pre-PESS application. §13 reconstructs it
 // from HEAD by undoing BOTH shipped PESS modules.
@@ -1378,46 +1378,48 @@ eq(A.localSrcs.indexOf('./' + TRANSPORT_REL), 6, '9.10c the transport module tak
 eq(A.localSrcs.indexOf('./' + BATCH_REL), 7, '9.10c2 the batch panel takes slot 8');
 eq(A.localSrcs.indexOf('./' + UI_REL), 8, '9.10c3 the UI panel takes slot 9 — the last of the four');
 eq(A.localSrcs[4], './js/config/backend-config.js', '9.10d …the region still opens right after the last foundation module');
-eq(A.localSrcs[A.localSrcs.length - 19], './js/ui/backend-directional-snapshot-panel.js',
+eq(A.localSrcs[A.localSrcs.length - 20], './js/ui/backend-directional-snapshot-panel.js',
   '9.11a the DSB panel remains immediately before PRETRADE, MCX, seven Journal owners and the MCX macro-check owner');
-eq(A.localSrcs[A.localSrcs.length - 18], './js/services/pretrade-risk-rules.js',
+eq(A.localSrcs[A.localSrcs.length - 19], './js/services/pretrade-risk-rules.js',
   '9.11b the PRETRADE risk-rules owner is immediately before the PRETRADE technicals owner');
-eq(A.localSrcs[A.localSrcs.length - 17], './js/services/pretrade-technicals.js',
+eq(A.localSrcs[A.localSrcs.length - 18], './js/services/pretrade-technicals.js',
   '9.11c the PRETRADE technicals owner is immediately before the PRETRADE risk-modal owner');
-eq(A.localSrcs[A.localSrcs.length - 16], './js/ui/pretrade-risk-modal.js',
+eq(A.localSrcs[A.localSrcs.length - 17], './js/ui/pretrade-risk-modal.js',
   '9.11d the PRETRADE risk-modal owner is immediately before the MCX market-context owner');
-eq(A.localSrcs[A.localSrcs.length - 15], './js/services/mcx-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 16], './js/services/mcx-market-context.js',
   '9.11e the MCX market-context owner is immediately before the MCX VIX owner');
-eq(A.localSrcs[A.localSrcs.length - 14], './js/services/mcx-vix-market-context.js',
+eq(A.localSrcs[A.localSrcs.length - 15], './js/services/mcx-vix-market-context.js',
   '9.11f the MCX VIX owner is immediately before the MCX backend-candle owner');
-eq(A.localSrcs[A.localSrcs.length - 13], './js/services/mcx-backend-candles.js',
+eq(A.localSrcs[A.localSrcs.length - 14], './js/services/mcx-backend-candles.js',
   '9.11g the MCX backend-candle owner is immediately before Journal Core');
-eq(A.localSrcs[A.localSrcs.length - 12], './js/services/journal-core.js',
+eq(A.localSrcs[A.localSrcs.length - 13], './js/services/journal-core.js',
   '9.11h Journal Core is immediately before Regime Policy');
-eq(A.localSrcs[A.localSrcs.length - 11], './js/services/mcx-regime-policy.js',
+eq(A.localSrcs[A.localSrcs.length - 12], './js/services/mcx-regime-policy.js',
   '9.11i Regime Policy is immediately before Journal UI');
-eq(A.localSrcs[A.localSrcs.length - 10], './js/ui/journal-ui.js',
+eq(A.localSrcs[A.localSrcs.length - 11], './js/ui/journal-ui.js',
   '9.11j Journal UI is immediately before Journal Remote');
-eq(A.localSrcs[A.localSrcs.length - 9], './' + JOURNAL_REMOTE_REL,
+eq(A.localSrcs[A.localSrcs.length - 10], './' + JOURNAL_REMOTE_REL,
   '9.11k Journal Remote is immediately before Journal Write-through');
-eq(A.localSrcs[A.localSrcs.length - 8], './' + JOURNAL_WRITE_THROUGH_REL,
+eq(A.localSrcs[A.localSrcs.length - 9], './' + JOURNAL_WRITE_THROUGH_REL,
   '9.11l Journal Write-through is immediately before Journal Migration');
-eq(A.localSrcs[A.localSrcs.length - 7], './' + JOURNAL_MIGRATION_REL,
+eq(A.localSrcs[A.localSrcs.length - 8], './' + JOURNAL_MIGRATION_REL,
   '9.11m Journal Migration is immediately before Journal Manual Import');
-eq(A.localSrcs[A.localSrcs.length - 6], './' + JOURNAL_MANUAL_IMPORT_REL,
+eq(A.localSrcs[A.localSrcs.length - 7], './' + JOURNAL_MANUAL_IMPORT_REL,
   '9.11n Journal Manual Import is immediately before Journal Backup/Restore');
-eq(A.localSrcs[A.localSrcs.length - 5], './js/ui/journal-backup-restore.js',
+eq(A.localSrcs[A.localSrcs.length - 6], './js/ui/journal-backup-restore.js',
   '9.11o Journal Backup/Restore is immediately before the MCX macro-check owner');
-eq(A.localSrcs[A.localSrcs.length - 4], './js/ui/mcx-macro-check.js',
+eq(A.localSrcs[A.localSrcs.length - 5], './js/ui/mcx-macro-check.js',
   '9.11p the MCX macro-check owner is immediately before the MCX charts owner');
-eq(A.localSrcs[A.localSrcs.length - 3], './js/ui/mcx-charts.js',
+eq(A.localSrcs[A.localSrcs.length - 4], './js/ui/mcx-charts.js',
   '9.11q the MCX charts owner is immediately before the Apex post-auth owner');
-eq(A.localSrcs[A.localSrcs.length - 2], './js/services/apex-post-auth-init.js',
+eq(A.localSrcs[A.localSrcs.length - 3], './js/services/apex-post-auth-init.js',
   '9.11r the Apex shared post-auth owner is immediately before the TT reconnect owner');
-eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/tt-reconnect.js',
-  '9.11s the TT reconnect UI owner is the newest local script before the monolith');
+eq(A.localSrcs[A.localSrcs.length - 2], './js/ui/tt-reconnect.js',
+  '9.11s the TT reconnect UI owner is immediately before the Journal Close Legs owner');
+eq(A.localSrcs[A.localSrcs.length - 1], './js/ui/journal-close-legs.js',
+  '9.11t the Journal Close Legs owner is the newest local script before the monolith');
 eq(A.localSrcs.length, LOCAL_SCRIPT_COUNT,
-  '9.12 index.html now loads 56 local application scripts, including PRETRADE, four MCX, seven Journal owners and the MCX macro-check, MCX charts, Apex post-auth and TT reconnect owners');
+  '9.12 index.html now loads 57 local application scripts, including PRETRADE, four MCX, seven Journal owners and the MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
 for (const owner of SHIPPED_OWNERS) {
   eq(A.localSrcs.filter((s) => s === './' + MODULE_REL[owner]).length, 1, '9.13 …with no duplicate entry for ' + MODULE_REL[owner]);
 }
@@ -3598,25 +3600,26 @@ const GUARDS = [
     r.localSrcs.indexOf('./' + UI_REL) === r.localSrcs.indexOf('./' + BATCH_REL) + 1],
   ['pess-module-count', (r) => r.localSrcs.filter((s) => /(^|\/)pess-[a-z-]+\.js$/.test(s)).length === 4],
   ['local-script-count', (r) => r.localSrcs.length === LOCAL_SCRIPT_COUNT],
-  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 19] === './js/ui/backend-directional-snapshot-panel.js' &&
-    r.localSrcs[r.localSrcs.length - 18] === './js/services/pretrade-risk-rules.js' &&
-    r.localSrcs[r.localSrcs.length - 17] === './js/services/pretrade-technicals.js' &&
-    r.localSrcs[r.localSrcs.length - 16] === './js/ui/pretrade-risk-modal.js' &&
-    r.localSrcs[r.localSrcs.length - 15] === './js/services/mcx-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 14] === './js/services/mcx-vix-market-context.js' &&
-    r.localSrcs[r.localSrcs.length - 13] === './js/services/mcx-backend-candles.js' &&
-    r.localSrcs[r.localSrcs.length - 12] === './js/services/journal-core.js' &&
-    r.localSrcs[r.localSrcs.length - 11] === './js/services/mcx-regime-policy.js' &&
-    r.localSrcs[r.localSrcs.length - 10] === './js/ui/journal-ui.js' &&
-    r.localSrcs[r.localSrcs.length - 9] === './' + JOURNAL_REMOTE_REL &&
-    r.localSrcs[r.localSrcs.length - 8] === './' + JOURNAL_WRITE_THROUGH_REL &&
-    r.localSrcs[r.localSrcs.length - 7] === './' + JOURNAL_MIGRATION_REL &&
-    r.localSrcs[r.localSrcs.length - 6] === './' + JOURNAL_MANUAL_IMPORT_REL &&
-    r.localSrcs[r.localSrcs.length - 5] === './js/ui/journal-backup-restore.js' &&
-    r.localSrcs[r.localSrcs.length - 4] === './js/ui/mcx-macro-check.js' &&
-    r.localSrcs[r.localSrcs.length - 3] === './js/ui/mcx-charts.js' &&
-    r.localSrcs[r.localSrcs.length - 2] === './js/services/apex-post-auth-init.js' &&
-    r.localSrcs[r.localSrcs.length - 1] === './js/ui/tt-reconnect.js'],
+  ['dsb-tail-preserved', (r) => r.localSrcs[r.localSrcs.length - 20] === './js/ui/backend-directional-snapshot-panel.js' &&
+    r.localSrcs[r.localSrcs.length - 19] === './js/services/pretrade-risk-rules.js' &&
+    r.localSrcs[r.localSrcs.length - 18] === './js/services/pretrade-technicals.js' &&
+    r.localSrcs[r.localSrcs.length - 17] === './js/ui/pretrade-risk-modal.js' &&
+    r.localSrcs[r.localSrcs.length - 16] === './js/services/mcx-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 15] === './js/services/mcx-vix-market-context.js' &&
+    r.localSrcs[r.localSrcs.length - 14] === './js/services/mcx-backend-candles.js' &&
+    r.localSrcs[r.localSrcs.length - 13] === './js/services/journal-core.js' &&
+    r.localSrcs[r.localSrcs.length - 12] === './js/services/mcx-regime-policy.js' &&
+    r.localSrcs[r.localSrcs.length - 11] === './js/ui/journal-ui.js' &&
+    r.localSrcs[r.localSrcs.length - 10] === './' + JOURNAL_REMOTE_REL &&
+    r.localSrcs[r.localSrcs.length - 9] === './' + JOURNAL_WRITE_THROUGH_REL &&
+    r.localSrcs[r.localSrcs.length - 8] === './' + JOURNAL_MIGRATION_REL &&
+    r.localSrcs[r.localSrcs.length - 7] === './' + JOURNAL_MANUAL_IMPORT_REL &&
+    r.localSrcs[r.localSrcs.length - 6] === './js/ui/journal-backup-restore.js' &&
+    r.localSrcs[r.localSrcs.length - 5] === './js/ui/mcx-macro-check.js' &&
+    r.localSrcs[r.localSrcs.length - 4] === './js/ui/mcx-charts.js' &&
+    r.localSrcs[r.localSrcs.length - 3] === './js/services/apex-post-auth-init.js' &&
+    r.localSrcs[r.localSrcs.length - 2] === './js/ui/tt-reconnect.js' &&
+    r.localSrcs[r.localSrcs.length - 1] === './js/ui/journal-close-legs.js'],
   ['config-slot', (r) => r.localSrcs.indexOf('./' + CONFIG_REL) === 5],
   ['ui-slot', (r) => r.localSrcs.indexOf('./' + UI_REL) === 8],
   ['ratchet', (r) => r.inlinePess.length === RATCHET_AFTER],

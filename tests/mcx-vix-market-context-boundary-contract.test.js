@@ -279,8 +279,15 @@ const afterTtEnd = afterTtAt >= 0 ? INDEX.indexOf('>', afterTtAt) : -1;
 const afterTtTag = afterTtEnd >= 0 ? INDEX.slice(afterTtAt, afterTtEnd + 1) : '';
 ok(INDEX.indexOf(apexPostAuthTag) > mcxChartsAt && afterApexTag === ttReconnectOpen,
   'the Apex post-auth owner loads immediately before the TT reconnect owner');
-ok(INDEX.indexOf(ttReconnectTag) > INDEX.indexOf(apexPostAuthTag) && !/\bsrc\s*=/i.test(afterTtTag),
-  'the TT reconnect owner loads immediately before the residual inline application script');
+const closeLegsOpen = '<script src="./js/ui/journal-close-legs.js">';
+const closeLegsTag = closeLegsOpen + '</script>';
+const afterClAt = INDEX.indexOf('<script', INDEX.indexOf(closeLegsTag) + closeLegsTag.length);
+const afterClEnd = INDEX.indexOf('>', afterClAt);
+const afterClTag = afterClEnd >= 0 ? INDEX.slice(afterClAt, afterClEnd + 1) : '';
+ok(INDEX.indexOf(ttReconnectTag) > INDEX.indexOf(apexPostAuthTag) && afterTtTag === closeLegsOpen,
+  'the TT reconnect owner loads immediately before the Journal Close Legs owner');
+ok(INDEX.indexOf(closeLegsTag) > INDEX.indexOf(ttReconnectTag) && !/\bsrc\s*=/i.test(afterClTag),
+  'the Journal Close Legs owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

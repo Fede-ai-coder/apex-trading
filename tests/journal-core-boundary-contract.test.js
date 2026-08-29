@@ -20,6 +20,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
@@ -76,6 +77,7 @@ const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>'
 const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
 const APEX_POST_AUTH_TAG = '<script src="./js/services/apex-post-auth-init.js"></script>';
 const TT_RECONNECT_TAG = '<script src="./js/ui/tt-reconnect.js"></script>';
+const CLOSE_LEGS_TAG = '<script src="./js/ui/journal-close-legs.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -136,8 +138,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n',
-  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n',
+  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(JOURNAL_TAG), 'Journal Core tag is classic synchronous src-only form');
@@ -245,6 +247,7 @@ section('6. snapshot/tagging and analytics semantics remain callable from inline
 
 section('7. byte-exact undo and mutation-sensitive negative controls');
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
@@ -262,14 +265,26 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The TT reconnect UI owner is now the NEWEST layer of all, sitting on top of
 // Apex post-auth: peel it first so the Apex undo below still sees the exact
 // document it was cut against.
-const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(INDEX, TT_RECONNECT_MODULE);
+// The Journal Close Legs owner is now the NEWEST layer of all, sitting on top of
+// TT reconnect: peel it first so the TT reconnect undo below still sees the
+// exact document it was cut against.
+const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(INDEX, CLOSE_LEGS_MODULE);
+const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
+eq(preCloseLegs.length, CLOSE_LEGS_U.BASE_CHARS,
+  'peeling the Journal Close Legs layer reaches the pinned post-#412 index length');
+eq(sha256(preCloseLegs), CLOSE_LEGS_U.BASE_SHA256,
+  'peeling the Journal Close Legs layer reaches the pinned post-#412 index hash');
+ok(CLOSE_LEGS_U.isApplied(INDEX),
+  'the shipped index really does carry the Journal Close Legs layer being peeled');
+ok(!CLOSE_LEGS_U.isApplied(preCloseLegs),
+  'the peeled document no longer carries the Journal Close Legs tag');
 const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(preTtReconnect, APEX_POST_AUTH_MODULE);
 eq(preTtReconnect.length, TT_RECONNECT_U.BASE_CHARS,
   'peeling the TT reconnect layer reaches the pinned post-#410 index length');
 eq(sha256(preTtReconnect), TT_RECONNECT_U.BASE_SHA256,
   'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
-ok(TT_RECONNECT_U.isApplied(INDEX),
-  'the shipped index really does carry the TT reconnect layer being peeled');
+ok(TT_RECONNECT_U.isApplied(preCloseLegs),
+  'the post-#412 document really does carry the TT reconnect layer being peeled');
 ok(!TT_RECONNECT_U.isApplied(preTtReconnect),
   'the peeled document no longer carries the TT reconnect tag');
 eq(preApexPostAuth.length, APEX_POST_AUTH_U.BASE_CHARS,

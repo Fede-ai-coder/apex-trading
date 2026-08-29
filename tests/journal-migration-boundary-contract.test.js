@@ -63,12 +63,14 @@ const EXPECTED_DEPENDENCIES = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
+const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
+const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/apex-post-auth-init.js'), 'utf8');
 const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js'), 'utf8');
@@ -86,7 +88,14 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The TT reconnect UI owner is now the NEWEST layer of all, sitting on top of
 // Apex post-auth: peel it first so the Apex undo below still sees the exact
 // document it was cut against.
-const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(INDEX, TT_RECONNECT_MODULE);
+// The Journal Close Legs owner is now the NEWEST layer of all, sitting on top of
+// TT reconnect: peel it first so the TT reconnect undo below still sees the
+// exact document it was cut against.
+const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(INDEX, CLOSE_LEGS_MODULE);
+const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
+// No assertions here: this peel runs before the harness is initialised. The
+// undo helper verifies the reconstruction's length and SHA-256 itself and
+// throws on any mismatch, so the hop is proved rather than assumed.
 const preApexPostAuth = APEX_POST_AUTH_U.undoApexPostAuthInit(preTtReconnect, APEX_POST_AUTH_MODULE);
 const preMcxCharts = MCX_CHARTS_U.undoMcxCharts(preApexPostAuth, MCX_CHARTS_MODULE);
 const preMcxMacroCheck = MCX_MACRO_CHECK_U.undoMcxMacroCheck(preMcxCharts, MCX_MACRO_CHECK_MODULE);
@@ -147,8 +156,8 @@ eq(preTtReconnect.length, TT_RECONNECT_U.BASE_CHARS,
   'peeling the TT reconnect layer reaches the pinned post-#410 index length');
 eq(sha256(preTtReconnect), TT_RECONNECT_U.BASE_SHA256,
   'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
-ok(TT_RECONNECT_U.isApplied(INDEX),
-  'the shipped index really does carry the TT reconnect layer being peeled');
+ok(TT_RECONNECT_U.isApplied(preCloseLegs),
+  'the post-#412 document really does carry the TT reconnect layer being peeled');
 ok(!TT_RECONNECT_U.isApplied(preTtReconnect),
   'the peeled document no longer carries the TT reconnect tag');
 eq(preApexPostAuth.length, APEX_POST_AUTH_U.BASE_CHARS,
@@ -445,9 +454,9 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1875314, 'current shipped index UTF-16 length is the post-TT-reconnect value');
-eq(sha256(INDEX), '7dd13923b25053960fb8b26bcf0d2383ebe27abe0f7b66607fa5893478503dcd',
-  'current shipped index SHA-256 is the post-TT-reconnect value');
+eq(INDEX.length, 1863130, 'current shipped index UTF-16 length is the post-Close-Legs value');
+eq(sha256(INDEX), '8e52b9a882b29c3097c4bc6031c90349be4fffba481710a909b6f6f8695b4721',
+  'current shipped index SHA-256 is the post-Close-Legs value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -526,7 +535,8 @@ const MCX_MACRO_CHECK_TAG = '<script src="./js/ui/mcx-macro-check.js"></script>'
 const MCX_CHARTS_TAG = '<script src="./js/ui/mcx-charts.js"></script>';
 const APEX_POST_AUTH_TAG2 = '<script src="./js/services/apex-post-auth-init.js"></script>';
 const TT_RECONNECT_TAG2 = '<script src="./js/ui/tt-reconnect.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n<script>'), 1,
+const CLOSE_LEGS_TAG2 = '<script src="./js/ui/journal-close-legs.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n<script>'), 1,
   'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
@@ -764,9 +774,9 @@ const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js',
   'js/services/journal-manual-import.js', MODULE_REL,
-  'js/ui/journal-backup-restore.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js',
-  'js/ui/tt-reconnect.js'],
-  'production footprint includes index.html plus Migration and the later Manual Import, Backup/Restore, MCX macro-check, MCX charts and Apex post-auth owners');
+  'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/mcx-charts.js',
+  'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+  'production footprint includes index.html plus Migration and the later Manual Import, Backup/Restore, MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Journal Migration contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Journal Migration undo helper is part of the change');
 ok(changed.indexOf('tests/temporary-journal-migration-audit.test.js') >= 0,
