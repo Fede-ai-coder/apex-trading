@@ -215,7 +215,17 @@ console.log('TT RECONNECT UI — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited Candidate D (#409), enabled by #410 · base=' + BASE_SHA);
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The Journal Close Legs owner is a LATER layer sitting on top of this one, so
+// the live document is no longer the one this layer shipped. Peel it first and
+// every assertion below still measures the exact document this contract pins.
+// The helper re-verifies its output by length and SHA-256, so the hop is proved
+// rather than assumed.
+const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
+const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
+const INDEX = CLOSE_LEGS_U.isApplied(LIVE_INDEX)
+  ? CLOSE_LEGS_U.undoJournalCloseLegs(LIVE_INDEX, CLOSE_LEGS_MODULE)
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE = git(['show', BASE_SHA + ':index.html']);
 const APP_SRC = APP_LOADER.loadAppJavaScriptSource();
@@ -327,8 +337,11 @@ eq(TAGS[ownTagIdx - 1].src, './js/services/apex-post-auth-init.js', 'the precedi
 eq(TAGS[ownTagIdx + 1].src, null, 'the following tag is the inline monolith');
 eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
   'the TT reconnect owner is the LAST local application script before the monolith');
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-2), [MODULE_SRC, '(inline)'],
-  'in execution order the module runs immediately before the inline monolith');
+// APP_PARTS is read from the LIVE document, which now also carries the later
+// Journal Close Legs owner, so the live tail is one entry longer.
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-3),
+  [MODULE_SRC, './js/ui/journal-close-legs.js', '(inline)'],
+  'in execution order the module runs immediately before the Journal Close Legs owner, which precedes the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
 
@@ -447,7 +460,7 @@ const ownerPartIdx = APP_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const apexPartIdx = APP_PARTS.findIndex((p) => p.src === './js/services/apex-post-auth-init.js');
 ok(apexPartIdx >= 0 && ownerPartIdx === apexPartIdx + 1,
   'the module evaluates immediately after apex-post-auth-init.js, so its call-time lookup resolves');
-ok(ownerPartIdx === APP_PARTS.length - 2, '…and immediately before the inline monolith');
+ok(ownerPartIdx === APP_PARTS.length - 3, '…and immediately before the later Journal Close Legs owner, which precedes the inline monolith');
 // The documentation-only mention is still a comment, not a consumer.
 const MIGRATION_SRC = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
 eq(countLiteral(MIGRATION_SRC, 'doReconnectTT'), 1, 'journal-migration.js mentions doReconnectTT once');
@@ -610,8 +623,8 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the TT reconnect owner');
+eq(changedProduction, ['index.html', 'js/ui/journal-close-legs.js', MODULE_REL],
+  'production footprint is exactly index.html plus the TT reconnect owner and the later Journal Close Legs owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow or bootstrap script changed');
@@ -619,7 +632,8 @@ ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+  rel === 'js/ui/journal-close-legs.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is 139 test files: this extraction layer added one, the Journal forms audit the next');
