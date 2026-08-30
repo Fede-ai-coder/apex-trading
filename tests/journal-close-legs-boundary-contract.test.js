@@ -93,7 +93,11 @@ const BASE_INDEX_SHA256 = '7dd13923b25053960fb8b26bcf0d2383ebe27abe0f7b66607fa58
 const BASE_LOCAL_SCRIPTS = 56;
 // The audit added the 139th file; this contract replaces it ONE-FOR-ONE, so the
 // count does not move.
-const TEST_FILE_COUNT = 139;
+// Ratchet. Advanced to 140 by the Manual Entry + Adjustment extraction audit,
+// which adds tests/temporary-journal-manual-adjustment-boundary-audit.test.js.
+// That audit is replaced one-for-one by its permanent contract, so the count
+// stays at 140 — it does not go back to 139.
+const TEST_FILE_COUNT = 140;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1740414;
@@ -593,7 +597,7 @@ ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouche
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is still 139 test files: this contract replaced the audit one-for-one');
+  'the suite is 140 test files: this contract, plus the Manual Entry + Adjustment audit');
 // The audit's rejected candidates were never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-trade-forms.js')), 'no combined forms module exists (rejected Candidate D)');
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-manual-entry.js')), 'no manual-entry module exists (rejected Candidate A)');
