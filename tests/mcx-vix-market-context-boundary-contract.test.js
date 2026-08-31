@@ -286,8 +286,15 @@ const afterClEnd = INDEX.indexOf('>', afterClAt);
 const afterClTag = afterClEnd >= 0 ? INDEX.slice(afterClAt, afterClEnd + 1) : '';
 ok(INDEX.indexOf(ttReconnectTag) > INDEX.indexOf(apexPostAuthTag) && afterTtTag === closeLegsOpen,
   'the TT reconnect owner loads immediately before the Journal Close Legs owner');
-ok(INDEX.indexOf(closeLegsTag) > INDEX.indexOf(ttReconnectTag) && !/\bsrc\s*=/i.test(afterClTag),
-  'the Journal Close Legs owner loads immediately before the residual inline application script');
+const tradeFormsOpen = '<script src="./js/ui/journal-trade-forms.js">';
+const tradeFormsTag = tradeFormsOpen + '</script>';
+const afterTfAt = INDEX.indexOf('<script', INDEX.indexOf(tradeFormsTag) + tradeFormsTag.length);
+const afterTfEnd = INDEX.indexOf('>', afterTfAt);
+const afterTfTag = afterTfEnd >= 0 ? INDEX.slice(afterTfAt, afterTfEnd + 1) : '';
+ok(INDEX.indexOf(closeLegsTag) > INDEX.indexOf(ttReconnectTag) && afterClTag === tradeFormsOpen,
+  'the Journal Close Legs owner loads immediately before the Journal trade-forms owner');
+ok(INDEX.indexOf(tradeFormsTag) > INDEX.indexOf(closeLegsTag) && !/\bsrc\s*=/i.test(afterTfTag),
+  'the Journal trade-forms owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

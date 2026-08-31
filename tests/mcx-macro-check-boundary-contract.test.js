@@ -142,8 +142,10 @@ const RISK_COLORS = {
 };
 
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
+const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
@@ -161,9 +163,14 @@ const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js')
 // The Journal Close Legs owner is the newest layer of all and sits on top of
 // the TT reconnect owner: peel it FIRST so the TT reconnect undo below still
 // sees the exact document it was cut against.
-const PRE_CLOSE_LEGS = CLOSE_LEGS_U.isApplied(LIVE_INDEX)
-  ? CLOSE_LEGS_U.undoJournalCloseLegs(LIVE_INDEX, CLOSE_LEGS_MODULE)
+// The Journal trade-forms owner is the newest layer of all: peel it FIRST so
+// every undo below still sees the exact document it was cut against.
+const PRE_TRADE_FORMS = TRADE_FORMS_U.isApplied(LIVE_INDEX)
+  ? TRADE_FORMS_U.undoJournalTradeForms(LIVE_INDEX, TRADE_FORMS_MODULE)
   : LIVE_INDEX;
+const PRE_CLOSE_LEGS = CLOSE_LEGS_U.isApplied(PRE_TRADE_FORMS)
+  ? CLOSE_LEGS_U.undoJournalCloseLegs(PRE_TRADE_FORMS, CLOSE_LEGS_MODULE)
+  : PRE_TRADE_FORMS;
 const PRE_TT_RECONNECT = TT_RECONNECT_U.isApplied(PRE_CLOSE_LEGS)
   ? TT_RECONNECT_U.undoTtReconnect(PRE_CLOSE_LEGS, TT_RECONNECT_MODULE)
   : PRE_CLOSE_LEGS;
@@ -555,15 +562,15 @@ eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
 eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
 eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
-eq(LIVE_INDEX.length, 1863130, 'current shipped index UTF-16 length is the post-Close-Legs value');
-eq(sha256(LIVE_INDEX), '8e52b9a882b29c3097c4bc6031c90349be4fffba481710a909b6f6f8695b4721',
-  'current shipped index SHA-256 is the post-Close-Legs value');
+eq(LIVE_INDEX.length, 1815024, 'current shipped index UTF-16 length is the post-trade-forms value');
+eq(sha256(LIVE_INDEX), '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24283bb976156',
+  'current shipped index SHA-256 is the post-trade-forms value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 57,
-  'the current shipped index carries exactly 57 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 58,
+  'the current shipped index carries exactly 58 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -1116,7 +1123,7 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', 'js/ui/journal-close-legs.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
@@ -1128,7 +1135,7 @@ section('10. Exact prompt construction and success transcript');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
-    rel === 'js/ui/journal-close-legs.js' || rel.startsWith('tests/')),
+    rel === 'js/ui/journal-close-legs.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 
   const contractsToAdvance = [
