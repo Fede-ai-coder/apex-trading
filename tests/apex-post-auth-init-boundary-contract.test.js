@@ -279,16 +279,23 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // newest-first, and every assertion below keeps meaning exactly what it meant
 // before the TT reconnect extraction existed. The helper re-verifies its output
 // by length and SHA-256, so the hop is proved rather than assumed.
+const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
+const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
 // The Journal Close Legs owner is the newest layer of all and sits on top of
 // the TT reconnect owner: peel it FIRST so the TT reconnect undo below still
 // sees the exact document it was cut against.
-const PRE_CLOSE_LEGS = CLOSE_LEGS_U.isApplied(LIVE_INDEX)
-  ? CLOSE_LEGS_U.undoJournalCloseLegs(LIVE_INDEX, CLOSE_LEGS_MODULE)
+// The Journal trade-forms owner is the newest layer of all: peel it FIRST so
+// every undo below still sees the exact document it was cut against.
+const PRE_TRADE_FORMS = TRADE_FORMS_U.isApplied(LIVE_INDEX)
+  ? TRADE_FORMS_U.undoJournalTradeForms(LIVE_INDEX, TRADE_FORMS_MODULE)
   : LIVE_INDEX;
+const PRE_CLOSE_LEGS = CLOSE_LEGS_U.isApplied(PRE_TRADE_FORMS)
+  ? CLOSE_LEGS_U.undoJournalCloseLegs(PRE_TRADE_FORMS, CLOSE_LEGS_MODULE)
+  : PRE_TRADE_FORMS;
 const INDEX = TT_RECONNECT_U.isApplied(PRE_CLOSE_LEGS)
   ? TT_RECONNECT_U.undoTtReconnect(PRE_CLOSE_LEGS, TT_RECONNECT_MODULE)
   : PRE_CLOSE_LEGS;
@@ -360,9 +367,9 @@ eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries ex
 // reconnect undo is proved to return the document to this contract's EXACT #410
 // state — the guarantee this file has always owned, now reached through a peel.
 eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
-eq(LIVE_INDEX.length, CLOSE_LEGS_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-TT-reconnect value');
-eq(sha256(LIVE_INDEX), CLOSE_LEGS_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-TT-reconnect value');
-eq(localScripts(LIVE_INDEX).length, 57, 'the live shipped index carries 57 local application scripts');
+eq(LIVE_INDEX.length, TRADE_FORMS_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the post-TT-reconnect value');
+eq(sha256(LIVE_INDEX), TRADE_FORMS_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the post-TT-reconnect value');
+eq(localScripts(LIVE_INDEX).length, 58, 'the live shipped index carries 58 local application scripts');
 eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
 eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
 eq(localScripts(INDEX).length, TT_RECONNECT_U.BASE_LOCAL_SCRIPTS, '…with exactly 55 local application scripts');
@@ -457,8 +464,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // module is second-to-last rather than last. The invariant this line protects —
 // the module evaluates before the inline monolith that calls it — is unchanged
 // and asserted in its stronger, current form.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-4),
-  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-5),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', '(inline)'],
   'in execution order the module runs immediately before the TT reconnect owner, which precedes the Journal Close Legs owner and then the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -678,7 +685,7 @@ const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
 ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
   'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
-ok(ttIdx === LIVE_PARTS.length - 3, '…and immediately before the Journal Close Legs owner');
+ok(ttIdx === LIVE_PARTS.length - 4, '…and immediately before the Journal Close Legs owner, then trade forms');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
   'the generated reconnect handler is untouched inside showReconnectPanel');
 // Contiguity is the whole point: nothing sits between the two halves any more.
@@ -873,7 +880,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -886,7 +893,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel.startsWith('tests/')),
+  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is exactly 140 test files: the shipped contracts plus the Manual Entry + Adjustment audit');

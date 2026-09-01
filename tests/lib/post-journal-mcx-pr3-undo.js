@@ -1,20 +1,24 @@
 'use strict';
-// Current-app reconstruction bridge after Journal Close Legs + TT reconnect UI
-// + Apex post-auth init + MCX charts +
-// MCX macro check + Backup/Restore + Manual Import + Journal Migration +
-// Write-through + Journal Remote + Journal UI + Regime Policy + Journal Core.
+// Current-app reconstruction bridge after Journal trade forms + Journal Close
+// Legs + TT reconnect UI + Apex post-auth init + MCX charts + MCX macro check +
+// Backup/Restore + Manual Import + Journal Migration + Write-through +
+// Journal Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Journal Close Legs relocation first, then TT reconnect, Apex post-auth,
-// MCX charts, MCX macro check,
-// Backup/Restore, Manual Import, Migration, Write-through, Journal Remote,
-// Journal UI, Regime Policy, Journal Core, and finally delegate to the original
-// MCX3 identity guard. All layers remain independently fail-closed.
+// newest Journal trade-forms relocation first, then Journal Close Legs, TT
+// reconnect, Apex post-auth, MCX charts, MCX macro check, Backup/Restore,
+// Manual Import, Migration, Write-through, Journal Remote, Journal UI, Regime
+// Policy, Journal Core, and finally delegate to the original MCX3 identity
+// guard. All layers remain independently fail-closed.
+//
+// Journal trade forms is the first TWO-FRAGMENT layer here: its undo puts back
+// two blocks, at their own offsets, ascending.
 //
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
 // out of order fails closed rather than producing an approximate tree.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_TRADE_FORMS = require('./journal-trade-forms-undo.js');
 const JOURNAL_CLOSE_LEGS = require('./journal-close-legs-undo.js');
 const TT_RECONNECT = require('./tt-reconnect-undo.js');
 const APEX_POST_AUTH = require('./apex-post-auth-init-undo.js');
@@ -30,6 +34,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_TRADE_FORMS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'journal-trade-forms.js'),
+  'utf8'
+);
 const JOURNAL_CLOSE_LEGS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'ui', 'journal-close-legs.js'),
   'utf8'
@@ -84,9 +92,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preCloseLegs = JOURNAL_CLOSE_LEGS.isApplied(html)
-    ? JOURNAL_CLOSE_LEGS.undoJournalCloseLegs(html, JOURNAL_CLOSE_LEGS_SOURCE)
+  const preTradeForms = JOURNAL_TRADE_FORMS.isApplied(html)
+    ? JOURNAL_TRADE_FORMS.undoJournalTradeForms(html, JOURNAL_TRADE_FORMS_SOURCE)
     : html;
+  const preCloseLegs = JOURNAL_CLOSE_LEGS.isApplied(preTradeForms)
+    ? JOURNAL_CLOSE_LEGS.undoJournalCloseLegs(preTradeForms, JOURNAL_CLOSE_LEGS_SOURCE)
+    : preTradeForms;
   const preTtReconnect = TT_RECONNECT.isApplied(preCloseLegs)
     ? TT_RECONNECT.undoTtReconnect(preCloseLegs, TT_RECONNECT_SOURCE)
     : preCloseLegs;
