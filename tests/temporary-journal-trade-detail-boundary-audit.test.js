@@ -9,20 +9,36 @@
 // constant in each of the four contracts that pin it.
 //
 // WHY THIS REGION. With the Journal forms window fully extracted (#413, #415),
-// a survey of the remaining monolith — 1,701,730 units across 92 banner-
-// delimited sections — screened the eight largest for coupling. The Trade
-// Detail region came out cleanest by a wide margin:
+// the remaining monolith — 1,701,730 units — was screened for coupling. §12
+// re-derives that screen inside this file rather than leaving it as prose, so
+// the numbers below are computed here and fail loudly if they drift.
 //
-//     section                      owners  units  extEdges  stateW  deps
-//     Trade detail + metrics            6  49,103        2       0    15
-//     PORTFOLIO INLINE TECH CHARTS     32  83,260       14       0    61
-//     fetchDXLinkGreeks                 6 145,616       10       0   103
-//     UNREALIZED P&L                   30  54,240       98      30    41
-//     4H poll state                    74  74,847      132      20    78
+// A SECTION is one column-0 `// ── ` banner line inside the inline script,
+// running to the next such banner. That rule yields 95 sections. Every section
+// larger than the chosen region, and the chosen region itself:
 //
-// It declares NO mutable state at all and NO async owner, reads no dependency
-// at evaluation time, and is reached from outside by exactly two executable
-// call sites, two generated onclick handlers and one static markup handler.
+//     units  owners  extEdges  stateW  deps   section
+//    354802     228        31       0   185   Inline chart (shared chart engine)
+//    146319       6        10       0   103   fetchDXLinkGreeks
+//     95529      35        86       0    55   [PortfolioRefreshPayload] diagnostics
+//     88234      32        14       0    61   PORTFOLIO INLINE TECHNICAL CHARTS
+//     71486      30        92      23    41   UNREALIZED P&L
+//     70436      10        46       0    49   RICH ASYNC SNAPSHOT
+//     51186      56        81       2    66   4H poll state
+//     50444      44       172       0    55   FRONTEND STORM CONTROL
+//     49103       6         2       0    15   >> TRADE DETAIL — the chosen region
+//
+// The chosen region is the NINTH largest section, not the largest; size is not
+// why it was picked. It was picked because of the extEdges column: the eight
+// larger sections carry between 10 and 172 executable references from outside
+// themselves, and this one carries TWO. §12 asserts exactly that — the cheapest
+// rival is five times more entangled — rather than asking the reader to trust
+// the table.
+//
+// It also declares NO mutable state at all and NO async owner, reads no
+// dependency at evaluation time, and is reached from outside by exactly two
+// executable call sites, two generated onclick handlers and one static markup
+// handler.
 //
 // TWO CANDIDATES, because the region has an internal banner:
 //
@@ -353,7 +369,17 @@ eq(classifyReferences(BODY_G, DEPENDENCIES).loadTime, [], 'G reads NO dependency
 eq(classifyReferences(BODY_H, DEPENDENCIES).loadTime, [], 'H reads NO dependency at evaluation time');
 eq(classifyReferences(BODY_G, DEPENDENCIES).callTime.length, CALLTIME_G, 'G: 113 call-time references');
 eq(classifyReferences(BODY_H, DEPENDENCIES).callTime.length, CALLTIME_H, 'H: 112 call-time references');
-eq(CALLTIME_G - CALLTIME_H, 1, 'the one extra reference is closeTradeDetail touching `document`');
+// Not arithmetic on two constants: derive WHICH reference G has and H does not,
+// and prove it is the `document` read inside closeTradeDetail.
+{
+  const extra = classifyReferences(BODY_G, DEPENDENCIES).callTime
+    .filter((r) => r.index < H.at - G.at);
+  eq(extra.length, CALLTIME_G - CALLTIME_H, 'exactly one call-time reference lives in the 171 units G adds');
+  eq(extra.map((r) => r.name), ['document'], '…and it is a `document` read');
+  const only = BODY_G.slice(0, H.at - G.at);
+  eq(countLiteral(only, 'function closeTradeDetail()'), 1, '…inside closeTradeDetail, which is the only function there');
+  ok(extra[0].index > only.indexOf('function closeTradeDetail()'), '…and it sits inside that function');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('6. External consumers');
@@ -421,8 +447,22 @@ eq(totalCallTime, 18, 'all 18 references across the whole application are call-t
 ok(DEPENDANTS['./js/ui/journal-ui.js'].position < PARTS.length - 1,
   'journal-ui.js loads well before the end of the script list…');
 eq(PARTS.length - 1 - DEPENDANTS['./js/ui/journal-ui.js'].position, 12,
-  '…twelve positions before the inline monolith, and further still before the new tag');
-ok(true, 'so a module defined AFTER its callers is safe here: classic globals are late-bound');
+  '…twelve positions before the inline monolith, which is the slot the new tag takes');
+// The premise of the safety argument, asserted rather than narrated: the new
+// tag really would load AFTER all three dependants. The tag goes on the line
+// after the last local script, so its position is exactly the monolith's
+// current one — twelve past journal-ui.js, and one past both #56 and #57.
+{
+  const newTagPosition = PARTS.length - 1;
+  for (const [src, spec] of Object.entries(DEPENDANTS)) {
+    ok(spec.position < newTagPosition,
+      src + ' would load BEFORE the new module — the risky direction, and the real one');
+  }
+  eq(newTagPosition - DEPENDANTS['./js/ui/journal-ui.js'].position, 12,
+    'the earliest dependant is twelve positions ahead of the definition');
+  eq(newTagPosition - DEPENDANTS['./js/ui/journal-trade-forms.js'].position, 1,
+    'even the latest dependant is one position ahead of it');
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('8. Cross-boundary mutable state: there is none to split');
@@ -431,19 +471,30 @@ eq(scanTopLevelDeclarations(BODY_G).filter((d) => d.form === 'var'), [],
   'the region declares no `var`, so no state can be split by extracting it');
 // And it does not write anyone else's state at top level either.
 eq(topLevelCallSites(BODY_G).length, 0, 'nothing runs at load time to mutate anything');
-ok(DEPENDENCIES.every((n) => /^[a-z]/i.test(n)), 'every dependency is a plain identifier, not a state object path');
+// A whole identifier, end to end — `/^[a-z]/i` would have accepted `S.foo`,
+// which is exactly the shape this assertion claims to rule out.
+eq(DEPENDENCIES.filter((n) => !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(n)), [],
+  'every dependency is a plain identifier, not a state object path');
+eq(scanTopLevelDeclarations(BODY_H).filter((d) => d.form === 'var'), [],
+  'the smaller candidate declares no `var` either');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('9. The recommendation, derived from the measurements');
 // ─────────────────────────────────────────────────────────────────────────────
+// Every field is MEASURED. `state` in particular: an audit that types the
+// decisive number in by hand has asserted its conclusion, not derived it.
+function stateCount(body) {
+  return scanTopLevelDeclarations(body).filter((d) => d.form === 'var').length;
+}
 const SCORE = {
   G: { owners: shape(BODY_G).length, units: BODY_G.length, deps: freeIdentifiers(BODY_G).length,
        code: cg.code, generated: cg.generated, markup: cg.markup,
-       loadOrder: classifyReferences(BODY_G, DEPENDENCIES).loadTime.length, state: 0 },
+       loadOrder: classifyReferences(BODY_G, DEPENDENCIES).loadTime.length, state: stateCount(BODY_G) },
   H: { owners: shape(BODY_H).length, units: BODY_H.length, deps: freeIdentifiers(BODY_H).length,
        code: chh.code, generated: chh.generated, markup: chh.markup,
-       loadOrder: classifyReferences(BODY_H, DEPENDENCIES).loadTime.length, state: 0 },
+       loadOrder: classifyReferences(BODY_H, DEPENDENCIES).loadTime.length, state: stateCount(BODY_H) },
 };
+eq([SCORE.G.state, SCORE.H.state], [0, 0], 'both candidates measure zero mutable state');
 eq(SCORE.G.deps, SCORE.H.deps, 'both candidates carry the same dependency surface');
 eq(SCORE.G.code, SCORE.H.code, 'both leave the same two executable edges');
 eq(SCORE.G.state, SCORE.H.state, 'neither splits mutable state, because there is none');
@@ -571,6 +622,74 @@ ok(!fs.existsSync(path.join(ROOT, 'tests/journal-trade-detail-boundary-contract.
   'no permanent boundary contract was created');
 ok(!fs.existsSync(path.join(ROOT, 'tests/lib/journal-trade-detail-undo.js')), 'no undo helper was created');
 eq(localScripts(INDEX).length, BASE_LOCAL_SCRIPTS, 'index.html still loads exactly the base 58 local scripts');
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('12. The survey that chose this region, re-derived here');
+// ─────────────────────────────────────────────────────────────────────────────
+// The screen used to pick a target is the one part of an audit that is easy to
+// present and hard to check. So it is computed, under ONE stated rule: a
+// section is a column-0 `// ── ` banner line inside the inline script, running
+// to the next such banner. Sections that overlap the chosen region are excluded
+// from the rival set — the region carries two banners of its own, so it would
+// otherwise appear in the ranking twice and compete with itself.
+const SECTION_COUNT = 95;
+const CHOSEN_EXT_EDGES = 2;
+const RIVALS_LARGER = 8;
+const CHEAPEST_RIVAL_EXT = 10;
+const LARGEST_SECTION = 354802;
+
+const sections = [];
+{
+  let p = CODE_AT;
+  const starts = [];
+  while (p < CODE_END) {
+    const nl = INDEX.indexOf('\n', p);
+    const end = nl < 0 ? CODE_END : nl;
+    if (/^\/\/ ── /.test(INDEX.slice(p, end))) starts.push({ at: p, title: INDEX.slice(p, end).slice(6).replace(/[\s─]+$/, '') });
+    if (nl < 0) break;
+    p = nl + 1;
+  }
+  starts.forEach((s, i) => sections.push({
+    title: s.title, at: s.at, end: i + 1 < starts.length ? starts[i + 1].at : CODE_END,
+  }));
+}
+sections.forEach((s) => { s.units = s.end - s.at; });
+eq(sections.length, SECTION_COUNT, 'the inline script holds 95 banner-delimited sections');
+eq(sections.reduce((n, s) => Math.max(n, s.units), 0), LARGEST_SECTION,
+  'the largest is the 354,802-unit inline chart — this region is nowhere near the biggest');
+
+// External executable edges into a section: code-view references to its own
+// top-level declarations from anywhere outside its span, declaration heads
+// excluded. Same rule as §6, applied to every rival.
+function externalEdges(at, end) {
+  const owners = scanTopLevelDeclarations(INDEX.slice(at, end)).map((d) => d.name);
+  let n = 0;
+  for (const name of owners) {
+    for (const i of refSites(VIEWS.code, name)) {
+      const abs = i + CODE_AT;
+      if (abs >= at && abs < end) continue;
+      if (/\bfunction\s+$/.test(VIEWS.code.slice(Math.max(0, i - 40), i))) continue;
+      n++;
+    }
+  }
+  return n;
+}
+const overlapsChosen = (s) => s.at < G.end && s.end > G.at;
+const rivals = sections.filter((s) => !overlapsChosen(s));
+eq(sections.length - rivals.length, 2, 'exactly two sections overlap the chosen region: its own two banners');
+const larger = rivals.filter((s) => s.units > BODY_G.length);
+eq(larger.length, RIVALS_LARGER, 'eight sections are larger than the chosen region…');
+eq(rivals.filter((s) => s.units > BODY_G.length).length + 1, 9,
+  '…so the chosen region is the NINTH largest, and was not picked for its size');
+
+const chosenEdges = externalEdges(G.at, G.end - 1);
+eq(chosenEdges, CHOSEN_EXT_EDGES, 'the chosen region is reached by two executable references from outside');
+const rivalEdges = larger.map((s) => externalEdges(s.at, s.end)).sort((a, b) => a - b);
+eq(rivalEdges[0], CHEAPEST_RIVAL_EXT, 'the CHEAPEST of the eight larger sections carries ten');
+eq(larger.filter((s) => externalEdges(s.at, s.end) <= chosenEdges), [],
+  'NOT ONE larger section is as loosely coupled as this one');
+ok(rivalEdges[0] >= 5 * chosenEdges, 'the cheapest rival is at least five times more entangled');
+eq(rivalEdges[rivalEdges.length - 1], 172, '…and the worst of them carries 172');
 
 console.log('\n' + pass + ' assertions passed');
 console.log('recommendation: extract Candidate ' + RECOMMENDATION + ' (the whole Trade Detail feature)');
