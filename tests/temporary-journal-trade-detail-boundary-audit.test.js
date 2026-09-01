@@ -689,8 +689,51 @@ eq(larger.length, RIVALS_LARGER, 'eight sections are larger than the chosen regi
 eq(rivals.filter((s) => s.units > BODY_G.length).length + 1, 9,
   '…so the chosen region is the NINTH largest, and was not picked for its size');
 
+// External WRITES to a section's own `var` state, from outside its span. Deep
+// writes count: `x[i].prop = v` mutates x, and a rule that only matched `x[i] =`
+// would read it as a mere access. Cost that mistake once in #415, not again.
+function stateWrites(at, end) {
+  const vars = scanTopLevelDeclarations(INDEX.slice(at, end))
+    .filter((d) => d.form === 'var').map((d) => d.name);
+  let n = 0;
+  for (const name of vars) {
+    for (const i of refSites(VIEWS.code, name)) {
+      const abs = i + CODE_AT;
+      if (abs >= at && abs < end) continue;
+      const after = VIEWS.code.slice(i + name.length, i + name.length + 40);
+      if (/^\s*(?:=[^=]|\+\+|--|\+=|-=|\*=|\/=)/.test(after) ||
+          /^\s*(?:\[[^\]]*\]|\.[A-Za-z0-9_$]+)+\s*=[^=]/.test(after)) n++;
+    }
+  }
+  return n;
+}
+// The whole published table, every column derived. Leaving `deps` and `stateW`
+// as unasserted prose while asserting only `ext` would repeat the mistake this
+// section exists to correct.
+const SCREEN = [
+  { title: 'Inline chart (reuses the shared chart en', units: 354802, owners: 228, ext: 31, stateW: 0, deps: 185 },
+  { title: 'fetchDXLinkGreeks — one-shot WebSocket f', units: 146319, owners: 6, ext: 10, stateW: 0, deps: 103 },
+  { title: '[PortfolioRefreshPayload] — gated verbos', units: 95529, owners: 35, ext: 86, stateW: 0, deps: 55 },
+  { title: 'PORTFOLIO INLINE TECHNICAL CHARTS', units: 88234, owners: 32, ext: 14, stateW: 0, deps: 61 },
+  { title: 'UNREALIZED P&L', units: 71486, owners: 30, ext: 92, stateW: 23, deps: 41 },
+  { title: 'RICH ASYNC SNAPSHOT — fetches 1D candles', units: 70436, owners: 10, ext: 46, stateW: 0, deps: 49 },
+  { title: '4H poll state — limited retry while wait', units: 51186, owners: 56, ext: 81, stateW: 2, deps: 66 },
+  { title: 'FRONTEND STORM CONTROL', units: 50444, owners: 44, ext: 172, stateW: 0, deps: 55 },
+];
+const byUnits = larger.slice().sort((a, b) => b.units - a.units);
+eq(byUnits.map((s) => ({
+  title: s.title.slice(0, SCREEN[0].title.length), units: s.units,
+  owners: scanTopLevelDeclarations(INDEX.slice(s.at, s.end)).length,
+  ext: externalEdges(s.at, s.end), stateW: stateWrites(s.at, s.end),
+  deps: freeIdentifiers(INDEX.slice(s.at, s.end)).length,
+})), SCREEN.map((r) => Object.assign({}, r, { title: r.title.slice(0, SCREEN[0].title.length) })),
+  'every row of the published screen re-measures to the published numbers');
+
 const chosenEdges = externalEdges(G.at, G.end - 1);
 eq(chosenEdges, CHOSEN_EXT_EDGES, 'the chosen region is reached by two executable references from outside');
+eq(stateWrites(G.at, G.end - 1), 0, '…and nothing outside it writes state it owns');
+eq(freeIdentifiers(BODY_G).length, 15, '…on the smallest dependency surface in the table');
+ok(SCREEN.every((r) => r.deps > 15), 'every larger section depends on more free names than this one');
 const rivalEdges = larger.map((s) => externalEdges(s.at, s.end)).sort((a, b) => a - b);
 eq(rivalEdges[0], CHEAPEST_RIVAL_EXT, 'the CHEAPEST of the eight larger sections carries ten');
 eq(larger.filter((s) => externalEdges(s.at, s.end) <= chosenEdges), [],
