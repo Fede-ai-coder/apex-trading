@@ -486,6 +486,13 @@ section('9. The recommendation, derived from the measurements');
 function stateCount(body) {
   return scanTopLevelDeclarations(body).filter((d) => d.form === 'var').length;
 }
+// …and a control that this COUNTS rather than returns a constant. Without it,
+// a `return 0` reads identically to the truth here, because the truth is zero —
+// which is exactly how a hand-typed metric hides.
+eq(stateCount('var _probe = 1;\nfunction _f() { return _probe; }\n'), 1,
+  'the state metric detects state when there is some to detect');
+eq(stateCount('function _f() { var _local = 1; return _local; }\n'), 0,
+  '…and does not mistake a function-local for module state');
 const SCORE = {
   G: { owners: shape(BODY_G).length, units: BODY_G.length, deps: freeIdentifiers(BODY_G).length,
        code: cg.code, generated: cg.generated, markup: cg.markup,
