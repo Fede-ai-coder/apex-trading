@@ -35,6 +35,12 @@
 // rival is five times more entangled — rather than asking the reader to trust
 // the table.
 //
+// One caveat, stated rather than buried: for the RIVAL rows `deps` is an upper
+// bound, because the repo's `freeIdentifiers` counts arrow parameters and
+// destructured bindings as free names. The over-count runs against the rivals,
+// so the gap is real; and the chosen region's 15 is exact — §5 pins those
+// fifteen by NAME, not by count.
+//
 // It also declares NO mutable state at all and NO async owner, reads no
 // dependency at evaluation time, and is reached from outside by exactly two
 // executable call sites, two generated onclick handlers and one static markup
@@ -710,24 +716,35 @@ function stateWrites(at, end) {
 // The whole published table, every column derived. Leaving `deps` and `stateW`
 // as unasserted prose while asserting only `ext` would repeat the mistake this
 // section exists to correct.
+//
+// ON THE `deps` COLUMN. It is `freeIdentifiers`, the repo's own scanner, which
+// counts an arrow parameter, a destructured binding, and the tail of a
+// value-less `var a, b;` as free names. For the RIVAL rows that makes the
+// number an UPPER BOUND, not an exact dependency count — stated here rather
+// than left for a reader to discover. It does not soften the comparison: the
+// bound is an over-count, so the rivals' true surfaces are smaller than shown
+// and still far above this region's. And it does not touch the chosen region's
+// 15, which §5 pins by NAME, not by count, and which an independently written
+// analyser reproduced exactly.
 const SCREEN = [
-  { title: 'Inline chart (reuses the shared chart en', units: 354802, owners: 228, ext: 31, stateW: 0, deps: 185 },
-  { title: 'fetchDXLinkGreeks — one-shot WebSocket f', units: 146319, owners: 6, ext: 10, stateW: 0, deps: 103 },
-  { title: '[PortfolioRefreshPayload] — gated verbos', units: 95529, owners: 35, ext: 86, stateW: 0, deps: 55 },
+  { title: 'Inline chart (reuses the shared chart engine)', units: 354802, owners: 228, ext: 31, stateW: 0, deps: 185 },
+  { title: 'fetchDXLinkGreeks — one-shot WebSocket fetch for a list of streamer symbols', units: 146319, owners: 6, ext: 10, stateW: 0, deps: 103 },
+  { title: '[PortfolioRefreshPayload] — gated verbose payload diagnostics', units: 95529, owners: 35, ext: 86, stateW: 0, deps: 55 },
   { title: 'PORTFOLIO INLINE TECHNICAL CHARTS', units: 88234, owners: 32, ext: 14, stateW: 0, deps: 61 },
   { title: 'UNREALIZED P&L', units: 71486, owners: 30, ext: 92, stateW: 23, deps: 41 },
-  { title: 'RICH ASYNC SNAPSHOT — fetches 1D candles', units: 70436, owners: 10, ext: 46, stateW: 0, deps: 49 },
-  { title: '4H poll state — limited retry while wait', units: 51186, owners: 56, ext: 81, stateW: 2, deps: 66 },
+  { title: 'RICH ASYNC SNAPSHOT — fetches 1D candles, calculates all indicators', units: 70436, owners: 10, ext: 46, stateW: 0, deps: 49 },
+  { title: '4H poll state — limited retry while waiting for DXLink backfill', units: 51186, owners: 56, ext: 81, stateW: 2, deps: 66 },
   { title: 'FRONTEND STORM CONTROL', units: 50444, owners: 44, ext: 172, stateW: 0, deps: 55 },
 ];
+// Whole titles, not a prefix: comparing truncated ones would let a section be
+// renamed past the cut without the table noticing.
 const byUnits = larger.slice().sort((a, b) => b.units - a.units);
 eq(byUnits.map((s) => ({
-  title: s.title.slice(0, SCREEN[0].title.length), units: s.units,
+  title: s.title, units: s.units,
   owners: scanTopLevelDeclarations(INDEX.slice(s.at, s.end)).length,
   ext: externalEdges(s.at, s.end), stateW: stateWrites(s.at, s.end),
   deps: freeIdentifiers(INDEX.slice(s.at, s.end)).length,
-})), SCREEN.map((r) => Object.assign({}, r, { title: r.title.slice(0, SCREEN[0].title.length) })),
-  'every row of the published screen re-measures to the published numbers');
+})), SCREEN, 'every row of the published screen re-measures to the published numbers');
 
 const chosenEdges = externalEdges(G.at, G.end - 1);
 eq(chosenEdges, CHOSEN_EXT_EDGES, 'the chosen region is reached by two executable references from outside');
