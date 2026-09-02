@@ -28,23 +28,34 @@
 // layer's helper and it is easy to assume `module = block − one LF` everywhere.
 // It is not:
 //
-//     #402 migration, #404 manual import, #405 backup/restore
-//         no separator concept at all. The module IS the whole removed block,
-//         and the undo re-inserts `moduleSource` alone.
+//     THE EIGHT OLDEST — journal core, regime policy, journal UI, journal
+//     remote, write-through, #402 migration, #404 manual import, #405
+//     backup/restore — have no separator concept at all. The module IS the
+//     whole removed block, and each undo re-inserts `moduleSource` alone.
 //
-//     #406 macro check onward, through #417 trade detail
-//         the block is `body + one structural LF`. BOTH leave index.html, only
-//         the body is written to the module file, and the undo re-inserts
-//         `moduleSource + SEPARATOR`.
+//     THE SEVEN FROM #406 ONWARD — macro check, #408 charts, #410 post-auth,
+//     #411 TT reconnect, #413 close legs, #415 trade forms, #417 trade detail —
+//     treat the block as `body + one structural LF`. BOTH leave index.html,
+//     only the body is written to the module file, and the undo re-inserts the
+//     body followed by SEPARATOR.
 //
-// Both shapes are byte-exact; neither is a defect. The distinction is visible
-// in each helper: the later ones declare `const SEPARATOR = '\n'` and a RAW_*
-// range one unit longer than MODULE_*, the earlier three declare neither. Any
-// future layer that reasons about "the" convention must ask which era it is
-// talking about.
+// Both shapes are byte-exact; neither is a defect. The reliable tell is the
+// `const SEPARATOR = '\n'` declaration: the seven have it, the eight do not.
 //
-// Layer shapes, measured against the shipped modules rather than assumed: all
-// are one contiguous fragment except #408 (three) and #415 (two).
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only four of the
+// seven pin a single RAW_CHARS one unit longer than MODULE_CHARS — post-auth,
+// TT reconnect, close legs, trade detail. The multi-fragment layers pin their
+// fragments individually instead (charts weaves three, trade forms joins two),
+// and macro check pins neither constant. A future layer that reasons about
+// "the" convention must ask which era it means, and must not infer the era
+// from those constants.
+//
+// Layer shapes, measured against the shipped modules rather than assumed, and
+// scoped to what was actually measured: of the FIFTEEN layers this bridge
+// peels, every one is a single contiguous fragment except #408 (three) and
+// #415 (two). That is not a statement about the repository at large — the MCX3
+// delegate below this chain is itself two fragments, and the older EIC, PESS
+// and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
 const JOURNAL_TRADE_DETAIL = require('./journal-trade-detail-undo.js');

@@ -33,8 +33,9 @@
 // earlier version of this header claimed. #408 cut three: its own contract
 // records "a six-fragment tiling of the MCX section — three fragments moved,
 // two retained inline, one structural separator LF removed". Measured against
-// the shipped modules, the multi-fragment layers are #408 (three), this one
-// (two), and no other.
+// the shipped modules, and scoped to the fifteen layers the reconstruction
+// bridge peels, the only multi-fragment ones are #408 (three) and this one
+// (two). Wider than that the claim does not hold, so it is not made here.
 //
 //     handlers   raw [1351203,1352703)   1,500 units   cbd7463d…
 //     forms      raw [1718831,1765492)  46,661 units   ec16ed3c…
