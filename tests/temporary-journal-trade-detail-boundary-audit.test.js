@@ -432,6 +432,29 @@ ok(G.banner.indexOf('══') < 0 && MARKUP_COMMENT.indexOf('──') < 0,
 section('7. The load-order question: three shipped modules already depend on this');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
+eq(PARTS.length, BASE_LOCAL_SCRIPTS + 1, 'the application is 58 module tags plus the inline monolith');
+
+// THE DEPENDANT SET IS DERIVED, NOT ASSUMED. Everything below reasons about
+// three named modules; that reasoning is only sound if three is ALL of them. A
+// fourth module reading an owner — at evaluation time, say — would otherwise be
+// invisible here, and the load-order conclusion would be drawn over an
+// incomplete set. So scan every part and prove the set closed before using it.
+{
+  const referencing = PARTS
+    .filter((p) => OWNER_NAMES.some((n) => refSites(maskLiterals(p.code), n).length > 0))
+    .map((p) => p.src || '(inline monolith)');
+  eq(referencing, Object.keys(DEPENDANTS).concat(['(inline monolith)']),
+    'exactly four parts of the application reference these owners, and they are the pinned ones');
+  const loadTimeAnywhere = [];
+  for (const p of PARTS) {
+    for (const r of classifyReferences(p.code, OWNER_NAMES).loadTime) {
+      loadTimeAnywhere.push((p.src || 'inline') + ':' + r.name);
+    }
+  }
+  eq(loadTimeAnywhere, [],
+    'and NOWHERE in the application — not just in the three — is an owner read at evaluation time');
+}
+
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
   const idx = PARTS.findIndex((p) => p.src === src);
