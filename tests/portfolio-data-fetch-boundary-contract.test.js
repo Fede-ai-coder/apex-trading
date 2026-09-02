@@ -1,44 +1,44 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// JOURNAL TRADE DETAIL — permanent boundary contract.
+// PORTFOLIO DATA FETCH — permanent boundary contract.
 //
-// Replaces tests/temporary-journal-trade-detail-boundary-audit.test.js, which
+// Replaces tests/temporary-portfolio-data-fetch-boundary-audit.test.js, which
 // measured two candidates and recommended this one. That audit is deleted by
 // this change; §12 proves it.
 //
-// WHAT THE AUDIT FOUND. Under one stated rule — a section is a column-0
-// `// ── ` banner running to the next one — the inline monolith held 95
-// sections. This region was the NINTH largest, and size is not why it was
-// chosen. It was chosen on coupling: the eight larger sections are reached from
-// outside themselves by between 10 and 172 executable references, and this one
-// by TWO. It declares no mutable state at all, so there was none to split.
+// WHAT THE AUDIT FOUND. The screen that chose this region measures state
+// coupling in BOTH directions. The screen used before it measured only what is
+// written INTO a region from outside — blind to a region that declares no `var`
+// and writes globals it does not own, which is what the first candidate of that
+// cycle was doing. Of the 22 sections over 15,000 units, only THREE are clean
+// both ways, and this is the least entangled of the three.
 //
-//     units  owners  extEdges  stateW  deps
-//     49103       6         2       0    15   << this region
-//     50444      44       172       0    55   the cheapest larger rival: 5× worse
+// TWO CANDIDATES, cut by owner rather than by banner, since the region has no
+// internal section banner:
 //
-// TWO CANDIDATES were measured: G (this one) and H, the metrics block without
-// `closeTradeDetail`. Their dependency surface and executable edges were
-// identical, so H's only difference was stranding one 101-unit function — and
-// with it the modal's own static markup handler — inline. G took the whole
-// feature.
+//     P (this one)  all four owners      19,550 raw   4 external edges
+//     Q             without the openers  16,924 raw   7 external edges
+//
+// Q is smaller and carries fewer dependencies but leaves MORE external edges,
+// because `renderPortfolioPanel` calls both panel openers — cutting them out
+// converts internal calls into boundary crossings. Q would also strand
+// `onclick="showAccountPanel()"`, the one static markup handler.
+//
+// THREE OF FOUR OWNERS ARE ASYNC, a first for this family. §5 proves it is not
+// a load-time hazard: zero top-level calls, zero evaluation-time dependency
+// reads, no top-level `await`, and the module evaluates in a completely empty
+// VM defining nothing but its own four owners. Async is a property of the
+// functions, not of loading them.
 //
 // RELOCATION ONLY. Every moved byte is byte-identical to the base, and §9
-// proves the reverse transform reconstructs 9f554aa7:index.html exactly.
+// proves the reverse transform reconstructs 8e6b01b8:index.html exactly.
 //
 // THE PREDICTION HELD. The audit modelled this extraction before it happened
-// and published the resulting document: 1,765,976 units / 30,869 LF /
-// 4c37a2ac…, 59 local scripts. §8 asserts the shipped document is exactly that.
+// and published the resulting document: 1,746,489 units / 30,539 LF /
+// 124d838e…, 60 local scripts. §8 asserts the shipped document is exactly that.
 //
-// THE LOAD-ORDER QUESTION. This is the first layer in this family whose module
-// is defined AFTER modules that already depend on it: journal-ui.js (#46),
-// journal-close-legs.js (#56) and journal-trade-forms.js (#57) all load before
-// the new tag at #58. §10 proves that safe the only way it can be proved — by
-// scanning every application part and showing that all 18 references are
-// call-time and NOT ONE is at evaluation time.
-//
-// Run: node tests/journal-trade-detail-boundary-contract.test.js
+// Run: node tests/portfolio-data-fetch-boundary-contract.test.js
 // ═════════════════════════════════════════════════════════════════════════════
 
 const assert = require('assert');
@@ -55,84 +55,75 @@ const {
   functionBodyRanges,
   classifyReferences,
 } = require('./lib/eic-contract-guards.js');
-const U = require('./lib/journal-trade-detail-undo.js');
+const U = require('./lib/portfolio-data-fetch-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
-const MODULE_REL = 'js/ui/journal-trade-detail.js';
+const MODULE_REL = 'js/portfolio/portfolio-data-fetch.js';
 const MODULE_SRC = './' + MODULE_REL;
-const CONTRACT_REL = 'tests/journal-trade-detail-boundary-contract.test.js';
-const UNDO_REL = 'tests/lib/journal-trade-detail-undo.js';
-const AUDIT_REL = 'tests/temporary-journal-trade-detail-boundary-audit.test.js';
+const CONTRACT_REL = 'tests/portfolio-data-fetch-boundary-contract.test.js';
+const UNDO_REL = 'tests/lib/portfolio-data-fetch-undo.js';
+const AUDIT_REL = 'tests/temporary-portfolio-data-fetch-boundary-audit.test.js';
 
-// ── Pinned base: the merged #416 audit ───────────────────────────────────────
-const BASE_SHA = '9f554aa70b5ee726c25e98afca8b2f8d7d4ff699';
-const BASE_TREE = '6cbfe61d261867c73b7a1782414edabf7b89a4ca';
-const BASE_SUBJECT = 'test(audit): measure the Journal trade-detail boundary (#416)';
-const BASE_PARENT = '93fe1cbc8d31e5d6428335a0854371ab404893cb';
-const BASE_INDEX_BLOB = '508485a5dc29265f36cb35a1efb3f8b506cb7cea';
-const BASE_CHARS = 1815024;
-const BASE_UTF8 = 1848827;
-const BASE_LF = 31737;
-const BASE_INDEX_SHA256 = '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24283bb976156';
-const BASE_LOCAL_SCRIPTS = 58;
-// Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit. That
-// audit is replaced one-for-one by its permanent contract, so it stays at 142.
+// ── Pinned base: the merged #420 audit ───────────────────────────────────────
+const BASE_SHA = '8e6b01b8460116fb2ec59bf1e84e6c8ff38229d1';
+const BASE_SUBJECT = 'test(audit): measure the portfolio data-fetch boundary (#420)';
+const BASE_INDEX_BLOB = 'a2f54820f1ca5f9f61f78e43c58e2273b657605b';
+const BASE_CHARS = 1765976;
+const BASE_UTF8 = 1799021;
+const BASE_LF = 30869;
+const BASE_INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9';
+const BASE_LOCAL_SCRIPTS = 59;
+// Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
+// count does not move: the undo helper is not a .test.js file.
 const TEST_FILE_COUNT = 142;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
-const RAW_AT = 1717386;
-const RAW_END = 1766490;
-const RAW = { chars: 49104, utf8: 49862, lf: 869, sha: '2462dc790cc07e1c6db84a3c4c940cc105dd09b33a0e3f5383d945a0ee35d0ef' };
-const BODY = { chars: 49103, utf8: 49861, lf: 868, sha: '70e2952a2664c812184fe8b4d3825be685d6a2945d00eedc4c0eb12a453e70fe' };
-const BANNER = '// ── TRADE DETAIL MODAL ──────────────────────────────────────────';
-const START_LINE = 29974;
+const RAW_AT = 196604;
+const RAW_END = 216154;
+const RAW = { chars: 19550, utf8: 19860, lf: 331, sha: 'f657460dacd04a99fde7c76ad0efd70cb16b7aa0e645ba3fab047e262d9cd016' };
+const BODY = { chars: 19549, utf8: 19859, lf: 330, sha: 'c7d95a14ef17d7d1a92d7aba934702ef645fe3cf8302c1db3a01a7938b7a660e' };
+const BANNER = '// ── Main portfolio data fetch (positions + balances + DXLink greeks) ─';
+// The rejected alternative, kept so the choice stays checkable.
+const Q_END = 213528;
+const Q_RAW_SHA = 'cafe90d9d8931d72f8defa717694fc0850d4c28588c7a2c5623c0ddcfc5e83e1';
 
 const OWNERS = [
-  { name: 'closeTradeDetail', form: 'function', isAsync: false, chars: 101 },
-  { name: '_tradeMetrics', form: 'function', isAsync: false, chars: 2861 },
-  { name: 'showTradeDetails', form: 'function', isAsync: false, chars: 38321 },
-  { name: '_renderAdjustmentTimeline', form: 'function', isAsync: false, chars: 5756 },
-  { name: '_priceCellHtml', form: 'function', isAsync: false, chars: 1365 },
-  { name: '_detailCell', form: 'function', isAsync: false, chars: 330 },
+  { name: 'fetchPortfolioData', form: 'function', isAsync: true, chars: 4212 },
+  { name: 'renderPortfolioPanel', form: 'function', isAsync: false, chars: 12635 },
+  { name: 'showAccountPanel', form: 'function', isAsync: true, chars: 860 },
+  { name: 'showIVPanel', form: 'function', isAsync: true, chars: 1763 },
 ];
 const OWNER_NAMES = OWNERS.map((o) => o.name);
 
-const DEPENDENCIES = ['Date', 'JSON', 'Math', 'String', 'computeDTE', 'computeMoneyness',
-  'console', 'document', 'escHtml', 'isNaN', 'journalManager', 'normalizeIvrPercent',
-  'parseFloat', 'portfolioManager', 'showToast'];
-const CALLTIME_REFS = 113;
+const DEPENDENCIES = ['AbortSignal', 'BACKEND', 'Date', 'Math', 'Promise', 'S', '_activeView',
+  '_ensureVixFamily', '_regimeRefresh', 'console', 'document', 'fetch', 'fetchPortfolioGreeks',
+  'formatPnl', 'ir', 'logEv', 'parseFloat', 'portfolioGetUnderlying', 'postCandleContext',
+  'regimeHTML', 'setInterval', 'setPanel', 'showToast', 'stopPortfolioRefresh', 'ttCall'];
+const CALLTIME_REFS = 105;
 
 // ── The shipped document ─────────────────────────────────────────────────────
-const INDEX_CHARS = 1765976;
-const INDEX_UTF8 = 1799021;
-const INDEX_LF = 30869;
-const INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9';
-const LOCAL_SCRIPT_COUNT = 59;
-const TAG_AT = 113260;
-const CODE_AT = 113324;
-const CODE_END = 1765950;
+const INDEX_CHARS = 1746489;
+const INDEX_UTF8 = 1779224;
+const INDEX_LF = 30539;
+const INDEX_SHA256 = '124d838e3974cf40b5d97c18fec767233c8655114dcb0dd1282c8da5537bedee';
+const LOCAL_SCRIPT_COUNT = 60;
+const TAG_AT = 113316;
+const CODE_AT = 113387;
+const CODE_END = 1746463;
 
 const MODULE_TAG = '<script src="' + MODULE_SRC + '"></script>';
-const ANCHOR_TAG = '<script src="./js/ui/journal-trade-forms.js"></script>';
+const ANCHOR_TAG = '<script src="./js/ui/journal-trade-detail.js"></script>';
 const INLINE_OPEN = '<script>';
 
 // ── The consumer topology ────────────────────────────────────────────────────
-const EXTERNAL_CODE = { _tradeMetrics: 'renderPortfolioJournalView', showTradeDetails: 'submitClosePosition' };
-const GENERATED_BY = ['renderPositionsPanel', 'renderPortfolioJournalView'];
-const STATIC_HANDLER = 'onclick="if(event.target===this)closeTradeDetail()"';
-// A markup comment uses ══ where the code banner used ──. After extraction the
-// code banner is GONE and this one STAYS; §7 asserts both halves.
-const MARKUP_COMMENT = '<!-- ══ TRADE DETAIL MODAL';
-
-// ── Modules that already depended on this one before it was extracted ────────
-const DEPENDANTS = {
-  './js/ui/journal-ui.js': { owner: '_tradeMetrics', position: 46, callTime: 2 },
-  './js/ui/journal-close-legs.js': { owner: 'showTradeDetails', position: 56, callTime: 1 },
-  './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
+const EXTERNAL_CODE = {
+  fetchPortfolioData: ['togglePortfolioAutoRefresh'],
+  renderPortfolioPanel: ['togglePortfolioAutoRefresh', 'computeMarketRegime', 'runScan'],
 };
-const MODULE_POSITION = 58;
+const GENERATED_BY = ['showDetail'];
+const STATIC_HANDLER = 'onclick="showAccountPanel()"';
+const MODULE_POSITION = 59;
 const PARTS_TOTAL = 61;
-const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -146,7 +137,6 @@ function sha256(s) { return crypto.createHash('sha256').update(s, 'utf8').digest
 function utf8(s) { return Buffer.byteLength(s, 'utf8'); }
 function countLf(s) { let n = 0; for (let i = 0; i < s.length; i++) if (s.charCodeAt(i) === 10) n++; return n; }
 function metrics(s) { return { chars: s.length, utf8: utf8(s), lf: countLf(s), sha: sha256(s) }; }
-function lineAt(s, o) { return s.slice(0, o).split('\n').length; }
 function countLiteral(h, n) { let c = 0, i = 0; while ((i = h.indexOf(n, i)) >= 0) { c++; i += n.length; } return c; }
 function localScripts(html) {
   return APP_LOADER.parseScriptTags(html).filter((t) => t.src && /^\.\//.test(t.src));
@@ -212,10 +202,7 @@ function lexicalViews(src) {
     for (let i = 0; i < src.length; i++) out[i] = keep(i) ? src[i] : (src[i] === '\n' ? '\n' : ' ');
     return out.join('');
   };
-  return {
-    code: masked,
-    strings: build((i) => masked[i] !== src[i] && noComments[i] === src[i]),
-  };
+  return { code: masked, strings: build((i) => masked[i] !== src[i] && noComments[i] === src[i]) };
 }
 function topLevelHits(body, re) {
   const masked = maskLiterals(body);
@@ -243,39 +230,32 @@ function topLevelCallSites(body) {
   }
   return out;
 }
-
-console.log('JOURNAL TRADE DETAIL — PERMANENT BOUNDARY CONTRACT');
-console.log('relocation only · audited Candidate G (#416) · base=' + BASE_SHA);
+function isWriteAt(text, at, name) {
+  const after = text.slice(at + name.length, at + name.length + 30);
+  return /^\s*(?:=[^=]|\+\+|--|\+=|-=|\*=|\/=)/.test(after) ||
+    /^\s*(?:\[[^\]]*\]|\.[A-Za-z0-9_$]+)+\s*=[^=]/.test(after);
+}
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// The Portfolio data-fetch owner is a LATER layer sitting on top of this one, so
-// the live document is no longer the one this layer shipped. Peel it first.
-const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
-const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
-const INDEX = PORTFOLIO_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
-  : LIVE_INDEX;
+// This is the NEWEST layer, so the live document is the one it shipped.
+const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
+
+console.log('PORTFOLIO DATA FETCH — PERMANENT BOUNDARY CONTRACT');
+console.log('relocation only · audited Candidate P (#420) · base=' + BASE_SHA);
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('1. The pinned base, rederived from git');
 // ─────────────────────────────────────────────────────────────────────────────
 eq(git(['rev-parse', BASE_SHA + '^{commit}']).trim(), BASE_SHA, 'the base commit resolves');
-eq(git(['rev-parse', BASE_SHA + '^{tree}']).trim(), BASE_TREE, 'the base TREE is derived with git, not guessed');
-eq(git(['log', '-1', '--format=%s', BASE_SHA]).trim(), BASE_SUBJECT, 'the base subject is the merged #416 audit');
-eq(git(['rev-parse', BASE_SHA + '^']).trim(), BASE_PARENT, 'the base parent is the merged #415 extraction');
+eq(git(['log', '-1', '--format=%s', BASE_SHA]).trim(), BASE_SUBJECT, 'the base subject is the merged #420 audit');
 eq(git(['rev-parse', BASE_SHA + ':index.html']).trim(), BASE_INDEX_BLOB, 'the base index.html blob');
 eq(metrics(BASE_INDEX), { chars: BASE_CHARS, utf8: BASE_UTF8, lf: BASE_LF, sha: BASE_INDEX_SHA256 },
   'the base document has its pinned identity');
-eq(localScripts(BASE_INDEX).length, BASE_LOCAL_SCRIPTS, 'the base loaded 58 local application scripts');
-ok(BASE_INDEX.indexOf('\r') < 0, 'the base is LF-only, so UTF-16 offsets are stable');
-eq(BASE_INDEX.indexOf(MODULE_TAG), -1, 'the base had no trade-detail tag');
+eq(localScripts(BASE_INDEX).length, BASE_LOCAL_SCRIPTS, 'the base loaded 59 local application scripts');
+eq(BASE_INDEX.indexOf(MODULE_TAG), -1, 'the base had no portfolio tag');
 eq(U.BASE_SHA256, BASE_INDEX_SHA256, 'the undo helper pins the same base');
-eq(U.BASE_CHARS, BASE_CHARS, '…and the same length');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The moved fragment, measured against the base blob');
@@ -287,14 +267,14 @@ eq(metrics(BODY_TEXT), BODY, 'the body has its pinned identity');
 eq(BODY_TEXT + '\n', RAW_TEXT, 'raw === body + exactly one structural LF');
 eq(RAW_TEXT.slice(-3), '}\n\n', 'the raw fragment ends `}\\n\\n`');
 eq(BASE_INDEX.slice(RAW_AT - 3, RAW_AT), '}\n\n', 'it opened right after a complete `}\\n\\n` seam');
-eq(lineAt(BASE_INDEX, RAW_AT), START_LINE, 'it opened on its pinned line');
 eq(BASE_INDEX.slice(RAW_AT, RAW_AT + BANNER.length), BANNER, 'it opened on its own banner');
 eq({ at: U.RAW_AT, end: U.RAW_END, chars: U.RAW_CHARS, sha: U.RAW_SHA256 },
   { at: RAW_AT, end: RAW_END, chars: RAW.chars, sha: RAW.sha }, 'the undo helper pins the same raw range');
-// The structural separator is exactly one LF, and the undo owns it.
 eq(BASE_INDEX.slice(U.SEPARATOR_AT, U.SEPARATOR_AT + 1), '\n', 'the pinned separator offset holds one LF');
-eq(U.SEPARATOR, '\n', 'the undo re-inserts exactly that');
 eq(U.SEPARATOR_AT, RAW_END - 1, 'the separator is the raw fragment’s last unit');
+// The rejected alternative is pinned too: the choice stays checkable.
+eq(sha256(BASE_INDEX.slice(RAW_AT, Q_END)), Q_RAW_SHA, 'Candidate Q’s range still hashes to its audited value');
+ok(Q_END < RAW_END, 'Q stopped earlier, leaving the two panel openers inline');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('3. The module file');
@@ -304,23 +284,20 @@ eq(MODULE, BODY_TEXT, '…the same bytes, compared directly and not only by hash
 eq(MODULE.slice(-2), '}\n', 'it ends on a real line of code');
 ok(!/\n\s*\n$/.test(MODULE), '…with no blank line at EOF, so `git diff --check` stays clean');
 eq(MODULE.indexOf('\r'), -1, 'the module is LF-only');
-eq(MODULE.length, U.MODULE_CHARS, 'the undo helper pins the module length');
-eq(sha256(MODULE), U.MODULE_SHA256, '…and its hash');
+eq(sha256(MODULE), U.MODULE_SHA256, 'the undo helper pins its hash');
 eq(MODULE.slice(0, BANNER.length), BANNER, 'the module opens on the banner the block carried');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The six owners');
+section('4. The four owners');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(shape(MODULE), OWNERS, 'the module declares exactly its six owners, in order, with the pinned spans');
+eq(shape(MODULE), OWNERS, 'the module declares exactly its four owners, in order, with the pinned spans');
 eq(shape(MODULE).filter((d) => d.form === 'var').length, 0, 'it declares NO mutable state at all');
-eq(shape(MODULE).filter((d) => d.isAsync).length, 0, '…and NO async owner');
-eq(shape(MODULE).every((d) => d.form === 'function'), true, 'all six are plain function declarations');
-eq(OWNERS.reduce((n, o) => n + o.chars, 0), 48734, 'the six owner spans sum to 48,734 units');
-ok(OWNERS.find((o) => o.name === 'showTradeDetails').chars > 38000,
-  'showTradeDetails alone is over 38,000 units — the bulk of the module');
+eq(shape(MODULE).filter((d) => d.isAsync).length, 3, 'three of the four are async');
+eq(shape(MODULE).every((d) => d.form === 'function'), true, 'all four are function declarations');
+eq(OWNERS.reduce((n, o) => n + o.chars, 0), 19470, 'the four owner spans sum to 19,470 units');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('5. Load-time purity');
+section('5. Load-time purity — async is not a load-time hazard');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const decls = scanTopLevelDeclarations(MODULE);
@@ -328,29 +305,30 @@ section('5. Load-time purity');
   decls.forEach((d) => { for (let i = d.start; i <= d.end; i++) ch[i] = ' '; });
   eq(maskLiterals(ch.join('')).replace(/\s+/g, ''), '', 'declarations, comments and whitespace only at top level');
 }
-const loaded = loadInEmptyVm(MODULE, 'journal-trade-detail.js');
+const loaded = loadInEmptyVm(MODULE, 'portfolio-data-fetch.js');
 ok(loaded.ok, 'the module evaluates in a completely empty VM with no error');
 eq(loaded.globals, OWNER_NAMES.slice().sort(), '…and defines exactly its own owners, nothing else');
 eq(topLevelCallSites(MODULE).length, 0, 'zero top-level calls');
+eq(topLevelHits(MODULE, /\bawait\b/).length, 0, 'no top-level await — the async owners run only when called');
 eq(topLevelHits(MODULE, /\b(?:document|window)\s*\./).length, 0, 'zero top-level DOM access');
-eq(topLevelHits(MODULE, /\baddEventListener\b/).length, 0, 'zero top-level listeners');
 eq(topLevelHits(MODULE, /\b(?:setTimeout|setInterval|requestAnimationFrame)\b/).length, 0, 'zero top-level timers');
-eq(topLevelHits(MODULE, /\b(?:localStorage|sessionStorage|indexedDB)\b/).length, 0, 'zero top-level storage access');
 eq(topLevelHits(MODULE, /\b(?:fetch|XMLHttpRequest|WebSocket)\b/).length, 0, 'zero top-level network work');
-eq(topLevelHits(MODULE, /\b(?:journalManager|positionManager|portfolioManager)\b/).length, 0, 'zero top-level journal work');
+// The timer this module owns is armed by showAccountPanel, never at load.
+ok(MODULE.indexOf('setInterval(fetchPortfolioData,60000)') > 0, 'the 60s refresh timer exists in the module…');
+eq(topLevelHits(MODULE, /setInterval\(fetchPortfolioData/).length, 0, '…and is armed only from inside a function');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('6. Dependencies');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(freeIdentifiers(MODULE), DEPENDENCIES, 'the module free-depends on exactly these 15 names');
-eq(DEPENDENCIES.length, 15, 'fifteen — the smallest surface of any section the audit screened');
+eq(freeIdentifiers(MODULE).filter((n) => OWNER_NAMES.indexOf(n) < 0), DEPENDENCIES,
+  'the module free-depends on exactly these 25 names');
 eq(classifyReferences(MODULE, DEPENDENCIES).loadTime, [], 'it reads NO dependency at evaluation time');
-eq(classifyReferences(MODULE, DEPENDENCIES).callTime.length, CALLTIME_REFS, '113 call-time references');
+eq(classifyReferences(MODULE, DEPENDENCIES).callTime.length, CALLTIME_REFS, '105 call-time references');
 eq(DEPENDENCIES.filter((n) => !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(n)), [],
   'every dependency is a whole plain identifier, not a state object path');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('7. The consumer topology, in the shipped document');
+section('7. The consumer topology, and state in BOTH directions');
 // ─────────────────────────────────────────────────────────────────────────────
 const CODE = INDEX.slice(CODE_AT, CODE_END);
 const VIEWS = lexicalViews(CODE);
@@ -360,48 +338,62 @@ const decls = scanTopLevelDeclarations(CODE);
   const hosts = {}, genHosts = {};
   for (const n of OWNER_NAMES) {
     for (const i of refSites(VIEWS.code, n)) {
+      if (/\bfunction\s+$/.test(VIEWS.code.slice(Math.max(0, i - 40), i))) continue;
       code++;
-      hosts[n] = (decls.find((d) => i >= d.start && i <= d.end) || { name: '(top level)' }).name;
+      hosts[n] = (hosts[n] || []).concat((decls.find((d) => i >= d.start && i <= d.end) || { name: '(top level)' }).name);
     }
     for (const i of refSites(VIEWS.strings, n)) {
       generated++;
       genHosts[(decls.find((d) => i >= d.start && i <= d.end) || { name: '(top level)' }).name] = true;
     }
   }
-  eq({ code, generated }, { code: 2, generated: 2 },
-    'the monolith keeps two executable call sites and two generated handlers');
-  eq(hosts, EXTERNAL_CODE, '…and the call sites are in renderPortfolioJournalView and submitClosePosition');
-  eq(Object.keys(genHosts).sort(), GENERATED_BY.slice().sort(),
-    '…the generated handlers come from the positions panel and the journal view');
+  eq({ code, generated }, { code: 4, generated: 1 },
+    'the monolith keeps four executable call sites and one generated reference');
+  eq(hosts, EXTERNAL_CODE, '…in togglePortfolioAutoRefresh, computeMarketRegime and runScan');
+  eq(Object.keys(genHosts).sort(), GENERATED_BY, '…and the generated one comes from showDetail');
 }
 eq(countLiteral(INDEX.slice(0, CODE_AT), STATIC_HANDLER), 1, 'the one static markup handler survives');
-// The banner left with the code; the markup comment stayed. Neither can be
-// matched for the other — they use different rule characters.
-eq(INDEX.indexOf(BANNER), -1, 'the code banner is GONE from index.html');
-eq(countLiteral(INDEX, MARKUP_COMMENT), 1, '…while the markup comment naming the same feature STAYS');
-ok(INDEX.indexOf(MARKUP_COMMENT) < CODE_AT, '…in markup, not in the script');
-ok(BANNER.indexOf('══') < 0 && MARKUP_COMMENT.indexOf('──') < 0,
-  'the two use different rules, so neither can be matched for the other');
-// Not one owner body survives inline.
+eq(INDEX.indexOf(BANNER), -1, 'the banner is GONE from index.html');
 for (const name of OWNER_NAMES) {
   eq(countLiteral(VIEWS.code, 'function ' + name + '('), 0,
     'no inline declaration of ' + name + ' survives: it lives only in the module');
+}
+// State, both directions — the axis that chose this region.
+{
+  const GLOBAL_VARS = decls.filter((d) => d.form === 'var').map((d) => d.name);
+  const own = new Set(OWNER_NAMES);
+  const masked = maskLiterals(MODULE);
+  let outbound = 0;
+  const outNames = new Set();
+  for (const n of GLOBAL_VARS) {
+    if (own.has(n)) continue;
+    for (const i of refSites(masked, n)) if (isWriteAt(masked, i, n)) { outbound++; outNames.add(n); }
+  }
+  eq(outbound, 0, 'OUTBOUND: the module writes NO monolith global it does not own');
+  eq(Array.from(outNames), [], '…and so there is no foreign name to list');
+  eq(scanTopLevelDeclarations(MODULE).filter((d) => d.form === 'var'), [],
+    'INBOUND: it owns no state, so nothing outside can write state it owns');
+  // A control, so `0` is not indistinguishable from not measuring.
+  const probe = maskLiterals('var _foreign = 1;\nfunction f(){ _foreign = 2; _foreign.x = 3; }\n');
+  let n = 0;
+  for (const i of refSites(probe, '_foreign')) if (isWriteAt(probe, i, '_foreign')) n++;
+  eq(n, 3, 'the outbound rule detects all three writes when there are writes to detect');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('8. The shipped index.html — exactly what the audit predicted');
 // ─────────────────────────────────────────────────────────────────────────────
 eq(metrics(INDEX), { chars: INDEX_CHARS, utf8: INDEX_UTF8, lf: INDEX_LF, sha: INDEX_SHA256 },
-  'the shipped document is 1,765,976 units / 30,869 LF / 4c37a2ac… — the audit’s published prediction');
+  'the shipped document is 1,746,489 units / 30,539 LF / 124d838e… — the audit’s published prediction');
 eq(BASE_CHARS - RAW.chars + (MODULE_TAG.length + 1), INDEX_CHARS,
-  'the arithmetic holds: 1,815,024 − 49,104 + 56 = 1,765,976');
-eq(BASE_LF - RAW.lf + 1, INDEX_LF, 'the LF arithmetic holds: 31,737 − 869 + 1 = 30,869');
-eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the document loads 59 local scripts');
-eq(countLiteral(INDEX, MODULE_TAG), 1, 'exactly one trade-detail tag');
+  'the arithmetic holds: 1,765,976 − 19,550 + 63 = 1,746,489');
+eq(BASE_LF - RAW.lf + 1, INDEX_LF, 'the LF arithmetic holds: 30,869 − 331 + 1 = 30,539');
+eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the document loads 60 local scripts');
+eq(countLiteral(INDEX, MODULE_TAG), 1, 'exactly one portfolio tag');
 eq(INDEX.indexOf(MODULE_TAG), TAG_AT, '…at its pinned offset');
 eq(countLiteral(INDEX, ANCHOR_TAG + '\n' + MODULE_TAG + '\n' + INLINE_OPEN), 1,
-  'the tag sits between journal-trade-forms.js and the inline monolith, on its own line');
-eq(localScripts(INDEX).map((t) => t.src).slice(-2), ['./js/ui/journal-trade-forms.js', MODULE_SRC],
+  'the tag sits between journal-trade-detail.js and the inline monolith, on its own line');
+eq(localScripts(INDEX).map((t) => t.src).slice(-2), ['./js/ui/journal-trade-detail.js', MODULE_SRC],
   'the new tag is the LAST local script');
 eq(INDEX.slice(CODE_AT - INLINE_OPEN.length, CODE_AT), INLINE_OPEN, 'the inline script opens at its pinned offset');
 eq(INDEX.slice(CODE_END, CODE_END + 9), '</script>', 'and closes at its pinned offset');
@@ -412,111 +404,81 @@ ok(INDEX.indexOf('\r') < 0, 'the shipped document is LF-only');
 section('9. The byte-exact undo');
 // ─────────────────────────────────────────────────────────────────────────────
 ok(U.isApplied(INDEX), 'the undo helper recognises the layer as applied');
-const restored = U.undoJournalTradeDetail(INDEX, MODULE);
+const restored = U.undoPortfolioDataFetch(INDEX, MODULE);
 eq(restored, BASE_INDEX, 'the reverse transform reconstructs the base byte for byte');
 eq(sha256(restored), BASE_INDEX_SHA256, '…with the base SHA-256');
-eq(metrics(restored), { chars: BASE_CHARS, utf8: BASE_UTF8, lf: BASE_LF, sha: BASE_INDEX_SHA256 },
-  '…and every measured dimension of the base');
 eq(U.EXTRACTED_SHA256, INDEX_SHA256, 'the helper pins the shipped document it undoes');
 eq(U.EXTRACTED_LOCAL_SCRIPTS, LOCAL_SCRIPT_COUNT, '…and its script count');
 eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('10. Load order: a module defined AFTER three of its callers');
+section('10. Load order');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
 eq(PARTS.length, PARTS_TOTAL, 'the application is 60 module tags plus the inline monolith');
-eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 2,
-  '…one position before the portfolio module, which now precedes the inline monolith');
-let totalCallTime = 0;
-for (const [src, spec] of Object.entries(DEPENDANTS)) {
-  const idx = PARTS.findIndex((p) => p.src === src);
-  eq(idx, spec.position, src + ' loads at its pinned position');
-  ok(idx < MODULE_POSITION, src + ' loads BEFORE the module that now defines what it calls');
-  const cls = classifyReferences(PARTS[idx].code, [spec.owner]);
-  eq(cls.loadTime, [], src + ': NOT ONE reference is evaluation-time');
-  eq(cls.callTime.length, spec.callTime, src + ': ' + spec.callTime + ' call-time reference(s)');
-  totalCallTime += cls.callTime.length;
-}
-// The dependant set is DERIVED, not assumed: reasoning about three named
-// modules is only sound if three is all of them.
+eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 59');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 1, '…immediately before the inline monolith');
 {
+  // The referencing set is DERIVED, not assumed.
   const referencing = PARTS
     .filter((p) => OWNER_NAMES.some((n) => refSites(maskLiterals(p.code), n).length > 0))
     .map((p) => p.src || '(inline monolith)');
-  eq(referencing, Object.keys(DEPENDANTS).concat([MODULE_SRC, '(inline monolith)']),
-    'exactly five parts reference these owners: the three dependants, the module itself, and the monolith');
+  eq(referencing, [MODULE_SRC, '(inline monolith)'],
+    'exactly two parts reference these owners: the module itself and the monolith');
   const loadTimeAnywhere = [];
   for (const p of PARTS) {
     for (const r of classifyReferences(p.code, OWNER_NAMES).loadTime) {
       loadTimeAnywhere.push((p.src || 'inline') + ':' + r.name);
     }
   }
-  eq(loadTimeAnywhere, [],
-    'and NOWHERE in the application is an owner read at evaluation time — which is what makes the order safe');
+  eq(loadTimeAnywhere, [], 'and NOWHERE in the application is an owner read at evaluation time');
 }
-// The audit counted 18 call-time references application-wide before the move.
-// The move relocates twelve of them — the region's own internal calls — into
-// the module, and changes nothing else. Both halves are measured.
-const inlineCallTime = classifyReferences(PARTS[PARTS.length - 1].code, OWNER_NAMES).callTime.length;
-eq(inlineCallTime, 2, 'the monolith retains exactly its two external call sites');
-const moduleInternal = classifyReferences(MODULE, OWNER_NAMES).callTime.length;
-eq(moduleInternal, 12, 'the module carries its own twelve internal calls');
-eq(totalCallTime + inlineCallTime, 6, 'six references now cross the module boundary, and all are call-time');
-eq(totalCallTime + inlineCallTime + moduleInternal, TOTAL_CALLTIME,
-  '…which with the internal twelve is the audit’s eighteen, unchanged by the move');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('11. Mutation-sensitive negative controls');
 // ─────────────────────────────────────────────────────────────────────────────
-throws(() => U.undoJournalTradeDetail(null, MODULE), /JOURNAL_TRADE_DETAIL_UNDO_BAD_INPUT/,
+throws(() => U.undoPortfolioDataFetch(null, MODULE), /PORTFOLIO_DATA_FETCH_UNDO_BAD_INPUT/,
   '11.1 a non-string document is rejected');
-throws(() => U.undoJournalTradeDetail(INDEX, null), /JOURNAL_TRADE_DETAIL_UNDO_BAD_INPUT/,
+throws(() => U.undoPortfolioDataFetch(INDEX, null), /PORTFOLIO_DATA_FETCH_UNDO_BAD_INPUT/,
   '11.2 a non-string module is rejected');
-throws(() => U.undoJournalTradeDetail(INDEX, MODULE + ' '), /JOURNAL_TRADE_DETAIL_UNDO_MODULE_IDENTITY/,
+throws(() => U.undoPortfolioDataFetch(INDEX, MODULE + ' '), /PORTFOLIO_DATA_FETCH_UNDO_MODULE_IDENTITY/,
   '11.3 a padded module is rejected');
-throws(() => U.undoJournalTradeDetail(INDEX, MODULE.slice(0, -1)), /JOURNAL_TRADE_DETAIL_UNDO_MODULE_IDENTITY/,
+throws(() => U.undoPortfolioDataFetch(INDEX, MODULE.slice(0, -1)), /PORTFOLIO_DATA_FETCH_UNDO_MODULE_IDENTITY/,
   '11.4 a truncated module is rejected');
-throws(() => U.undoJournalTradeDetail(INDEX, MODULE + '\n'), /JOURNAL_TRADE_DETAIL_UNDO_MODULE_IDENTITY/,
+throws(() => U.undoPortfolioDataFetch(INDEX, MODULE + '\n'), /PORTFOLIO_DATA_FETCH_UNDO_MODULE_IDENTITY/,
   '11.5 a module that ABSORBED the structural separator is rejected');
 {
-  const sameLen = MODULE.replace('trade not found', 'trade not fouud');
+  const sameLen = MODULE.replace('portfolio', 'portfolia');
   eq(sameLen.length, MODULE.length, 'the same-length mutant really is the same length');
   ok(sameLen !== MODULE, '…and really is different');
-  throws(() => U.undoJournalTradeDetail(INDEX, sameLen), /JOURNAL_TRADE_DETAIL_UNDO_MODULE_IDENTITY/,
+  throws(() => U.undoPortfolioDataFetch(INDEX, sameLen), /PORTFOLIO_DATA_FETCH_UNDO_MODULE_IDENTITY/,
     '11.6 a SAME-LENGTH edit inside the module is caught by its hash');
 }
 {
-  // Same length AND same LF count, but no longer ending `}\n`: this reaches
-  // MODULE_SEPARATOR, so a caller learns which mistake was made rather than
-  // only that some hash did not match.
   const swapped = MODULE.slice(0, -2) + '\n}';
   eq(swapped.length, MODULE.length, 'the separator mutant is the same length');
   eq(countLf(swapped), countLf(MODULE), '…and carries the same number of LFs');
-  throws(() => U.undoJournalTradeDetail(INDEX, swapped), /JOURNAL_TRADE_DETAIL_UNDO_MODULE_SEPARATOR/,
+  throws(() => U.undoPortfolioDataFetch(INDEX, swapped), /PORTFOLIO_DATA_FETCH_UNDO_MODULE_SEPARATOR/,
     '11.7 a module not ending on a real line of code gets its OWN error');
 }
-throws(() => U.undoJournalTradeDetail(BASE_INDEX, MODULE), /JOURNAL_TRADE_DETAIL_UNDO_TAG_IDENTITY/,
+throws(() => U.undoPortfolioDataFetch(BASE_INDEX, MODULE), /PORTFOLIO_DATA_FETCH_UNDO_TAG_IDENTITY/,
   '11.8 an already-unextracted document has no tag and is rejected');
-throws(() => U.undoJournalTradeDetail(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
-  /JOURNAL_TRADE_DETAIL_UNDO_TAG_IDENTITY/, '11.9 a duplicate tag is rejected');
+throws(() => U.undoPortfolioDataFetch(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG), MODULE),
+  /PORTFOLIO_DATA_FETCH_UNDO_TAG_IDENTITY/, '11.9 a duplicate tag is rejected');
 {
   const reordered = INDEX.replace(ANCHOR_TAG + '\n' + MODULE_TAG, MODULE_TAG + '\n' + ANCHOR_TAG);
   eq(countLiteral(reordered, MODULE_TAG), 1, 'the reordered mutant still has exactly one tag');
-  throws(() => U.undoJournalTradeDetail(reordered, MODULE), /JOURNAL_TRADE_DETAIL_UNDO_TAG_ADJACENCY/,
+  throws(() => U.undoPortfolioDataFetch(reordered, MODULE), /PORTFOLIO_DATA_FETCH_UNDO_TAG_ADJACENCY/,
     '11.10 a tag moved before its anchor fails adjacency, not identity');
 }
-throws(() => U.undoJournalTradeDetail(INDEX + ' ', MODULE), /JOURNAL_TRADE_DETAIL_UNDO_EXTRACTED_IDENTITY/,
+throws(() => U.undoPortfolioDataFetch(INDEX + ' ', MODULE), /PORTFOLIO_DATA_FETCH_UNDO_EXTRACTED_IDENTITY/,
   '11.11 one foreign byte anywhere in the document is rejected');
 {
-  // A separator left stranded inline: the document is one unit too long.
   const stranded = INDEX.slice(0, CODE_END) + '\n' + INDEX.slice(CODE_END);
   eq(stranded.length, INDEX_CHARS + 1, 'the stranded-separator mutant is one unit too long');
-  throws(() => U.undoJournalTradeDetail(stranded, MODULE), /JOURNAL_TRADE_DETAIL_UNDO_EXTRACTED_IDENTITY/,
+  throws(() => U.undoPortfolioDataFetch(stranded, MODULE), /PORTFOLIO_DATA_FETCH_UNDO_EXTRACTED_IDENTITY/,
     '11.12 a structural separator left inline is rejected');
 }
-// isApplied is ROUTING, not safety: it answers only "is the tag here".
 eq(U.isApplied(BASE_INDEX), false, '11.13 isApplied is false for a document predating this layer');
 eq(U.isApplied(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG)), false,
   '11.14 …and false for a duplicated tag, so the guards below it do the real work');
@@ -529,31 +491,28 @@ const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEA
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
-eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL],
+eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), ['index.html', MODULE_REL],
   'production footprint is exactly index.html plus the one new module');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
 ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
-  'no temporary trade-detail audit is shipped: this contract replaces it one for one');
+  'no temporary portfolio audit is shipped: this contract replaces it one for one');
 ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow or bootstrap script changed');
 ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
   'no documentation changed, except the repository working notes');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
-ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
-// The rejected candidate was never built: H would have been the metrics block
-// without closeTradeDetail, so the test is what this module CONTAINS.
-eq(countLiteral(MODULE, 'function closeTradeDetail()'), 1,
-  'the shipped module carries closeTradeDetail: Candidate G, not the rejected H');
-ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-trade-metrics.js')),
-  'no metrics-only module exists (rejected Candidate H)');
+  'the suite is 142 test files: the audit was replaced one for one');
+// The rejected alternative was never built.
+ok(!fs.existsSync(path.join(ROOT, 'js/portfolio/portfolio-panel.js')),
+  'no openers-only module exists (rejected Candidate Q)');
+eq(countLiteral(MODULE, 'async function showAccountPanel()'), 1,
+  'the shipped module carries showAccountPanel: Candidate P, not the rejected Q');
 
 console.log('\n' + pass + ' assertions passed');
-console.log('JOURNAL_TRADE_DETAIL_BOUNDARY_OK');
+console.log('PORTFOLIO_DATA_FETCH_BOUNDARY_OK');

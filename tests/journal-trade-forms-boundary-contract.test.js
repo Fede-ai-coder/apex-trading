@@ -290,9 +290,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // proved rather than assumed.
 const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
-const INDEX = TRADE_DETAIL_U.isApplied(LIVE_INDEX)
-  ? TRADE_DETAIL_U.undoJournalTradeDetail(LIVE_INDEX, TRADE_DETAIL_MODULE)
+// The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
+// every undo below still sees the exact document it was cut against. Its helper
+// re-verifies its own output by length and SHA-256, so the hop is proved.
+const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
+const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
+const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
   : LIVE_INDEX;
+const INDEX = TRADE_DETAIL_U.isApplied(PRE_PORTFOLIO)
+  ? TRADE_DETAIL_U.undoJournalTradeDetail(PRE_PORTFOLIO, TRADE_DETAIL_MODULE)
+  : PRE_PORTFOLIO;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
 
@@ -553,7 +561,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/ui/journal-trade-detail.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
   'production footprint is exactly index.html plus this owner and the later trade-detail owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -564,7 +572,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
   'no documentation changed, except the repository working notes');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')), 'no configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
+  rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
