@@ -300,8 +300,15 @@ const afterTdEnd = INDEX.indexOf('>', afterTdAt);
 const afterTdTag = afterTdEnd >= 0 ? INDEX.slice(afterTdAt, afterTdEnd + 1) : '';
 ok(INDEX.indexOf(tradeFormsTag) > INDEX.indexOf(closeLegsTag) && afterTfTag === tradeDetailOpen,
   'the Journal trade-forms owner loads immediately before the Journal trade-detail owner');
-ok(INDEX.indexOf(tradeDetailTag) > INDEX.indexOf(tradeFormsTag) && !/\bsrc\s*=/i.test(afterTdTag),
-  'the Journal trade-detail owner loads immediately before the residual inline application script');
+const portfolioOpen = '<script src="./js/portfolio/portfolio-data-fetch.js">';
+const portfolioTag = portfolioOpen + '</script>';
+const afterPfAt = INDEX.indexOf('<script', INDEX.indexOf(portfolioTag) + portfolioTag.length);
+const afterPfEnd = INDEX.indexOf('>', afterPfAt);
+const afterPfTag = afterPfEnd >= 0 ? INDEX.slice(afterPfAt, afterPfEnd + 1) : '';
+ok(INDEX.indexOf(tradeDetailTag) > INDEX.indexOf(tradeFormsTag) && afterTdTag === portfolioOpen,
+  'the Journal trade-detail owner loads immediately before the portfolio data-fetch owner');
+ok(INDEX.indexOf(portfolioTag) > INDEX.indexOf(tradeDetailTag) && !/\bsrc\s*=/i.test(afterPfTag),
+  'the portfolio data-fetch owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

@@ -603,7 +603,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL, 'js/portfolio/portfolio-data-fetch.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL, 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
   'production footprint is exactly index.html plus the Close Legs owner and the later trade-forms owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');

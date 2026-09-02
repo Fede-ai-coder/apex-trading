@@ -25,11 +25,14 @@
 // converts internal calls into boundary crossings. Q would also strand
 // `onclick="showAccountPanel()"`, the one static markup handler.
 //
-// THREE OF FOUR OWNERS ARE ASYNC, a first for this family. §5 proves it is not
-// a load-time hazard: zero top-level calls, zero evaluation-time dependency
-// reads, no top-level `await`, and the module evaluates in a completely empty
-// VM defining nothing but its own four owners. Async is a property of the
-// functions, not of loading them.
+// ASYNC OWNERS, AND WHAT IS ACTUALLY TRUE OF THEM. Three of the four are async.
+// That is not a first — nine of the sixteen layers in this chain ship async
+// owners, and journal-remote-persistence shipped six of eight, the same ratio
+// as this one. The point worth making is not novelty but harmlessness: async is
+// a property of the functions, not of loading them.
+// §5 proves it: zero top-level calls, zero evaluation-time dependency reads, no
+// top-level `await`, and the module evaluates in a completely empty VM defining
+// nothing but its own four owners.
 //
 // RELOCATION ONLY. Every moved byte is byte-identical to the base, and §9
 // proves the reverse transform reconstructs 8e6b01b8:index.html exactly.

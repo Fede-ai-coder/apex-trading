@@ -2366,8 +2366,8 @@ section('30. physical script order');
   ok(iTtReconnect >= 0, 'index.html loads the TT reconnect script');
   eq(iApexPostAuth, iTtReconnect - 1,
      'ORDER: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(iTtReconnect, srcs.length - 5,
-     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
+  eq(iTtReconnect, srcs.length - 6,
+     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail and portfolio owners');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2470,8 +2470,8 @@ section('30. physical script order');
   ok(ttReconnectTagIdx >= 0, 'tag order: the TT reconnect owner is present');
   eq(apexPostAuthTagIdx, ttReconnectTagIdx - 1,
      'tag order: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(ttReconnectTagIdx, inlineTagIdx - 4,
-     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
+  eq(ttReconnectTagIdx, inlineTagIdx - 5,
+     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail and portfolio owners');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');

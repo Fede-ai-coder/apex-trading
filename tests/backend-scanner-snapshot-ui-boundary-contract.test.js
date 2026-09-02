@@ -1139,14 +1139,16 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      'the MCX charts owner is immediately before the Apex shared post-auth owner');
   eq(idx(APEX_POST_AUTH_REL), idx(TT_RECONNECT_REL) - 1,
      'the Apex shared post-auth owner is immediately before the TT reconnect owner');
-  eq(idx(TT_RECONNECT_REL), SCRIPT_ORDER.length - 5,
-     'the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
-  eq(idx(CLOSE_LEGS_REL), SCRIPT_ORDER.length - 4,
+  eq(idx(TT_RECONNECT_REL), SCRIPT_ORDER.length - 6,
+     'the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail and portfolio owners');
+  eq(idx(CLOSE_LEGS_REL), SCRIPT_ORDER.length - 5,
      'the Journal Close Legs owner is immediately before the Journal trade-forms owner');
-  eq(idx(TRADE_FORMS_REL), SCRIPT_ORDER.length - 3,
+  eq(idx(TRADE_FORMS_REL), SCRIPT_ORDER.length - 4,
      'the Journal trade-forms owner is immediately before the Journal trade-detail owner');
-  eq(idx('./js/ui/journal-trade-detail.js'), SCRIPT_ORDER.length - 2,
-     'the Journal trade-detail owner is the last external script before the monolith');
+  eq(idx('./js/ui/journal-trade-detail.js'), SCRIPT_ORDER.length - 3,
+     'the Journal trade-detail owner is immediately before the portfolio owner');
+  eq(idx('./js/portfolio/portfolio-data-fetch.js'), SCRIPT_ORDER.length - 2,
+     'the portfolio owner is the last external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -3422,7 +3424,8 @@ section('29. script order');
   const APEX_POST_AUTH_EXTRACTION_SCRIPTS = ['./js/services/apex-post-auth-init.js'];
   const TT_RECONNECT_EXTRACTION_SCRIPTS = ['./js/ui/tt-reconnect.js'];
   const CLOSE_LEGS_EXTRACTION_SCRIPTS = ['./js/ui/journal-close-legs.js'];
-  const TRADE_FORMS_EXTRACTION_SCRIPTS = ['./js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js'];
+  const TRADE_FORMS_EXTRACTION_SCRIPTS = ['./js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js',
+    './js/portfolio/portfolio-data-fetch.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
     .concat(EIC_EXTRACTION_SCRIPTS)

@@ -19,10 +19,12 @@
 // modules that already call it, which is safe only because nothing reads its
 // owners at evaluation time; that is proved in its own contract, not here.
 //
-// Portfolio data fetch is the newest layer and sits on top of all of them. It
-// is the first with ASYNC owners — three of its four — which is likewise not a
-// load-time property: its contract proves the block has no top-level call, no
-// top-level await, and no evaluation-time dependency read.
+// Portfolio data fetch is the newest layer and sits on top of all of them.
+// Three of its four owners are async, which is unremarkable here — nine of these
+// sixteen layers ship async owners, journal-remote-persistence six of eight —
+// and in every case it is not a load-time property: its contract proves the
+// block has no top-level call, no top-level await, and no evaluation-time
+// dependency read.
 //
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
