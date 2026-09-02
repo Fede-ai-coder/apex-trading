@@ -603,11 +603,12 @@ ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in t
 ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
   'no temporary Journal forms audit is shipped: this contract replaces it');
 ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow or bootstrap script changed');
-ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
+ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
+  'no documentation changed, except the repository working notes');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
   rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
