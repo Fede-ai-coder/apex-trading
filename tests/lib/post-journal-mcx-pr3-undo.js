@@ -22,6 +22,40 @@
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
 // out of order fails closed rather than producing an approximate tree.
+//
+// THE SEPARATOR CONVENTION IS NOT UNIFORM ACROSS THIS CHAIN, and this is the
+// only file that spans all of it, so it is recorded here. Read one recent
+// layer's helper and it is easy to assume `module = block − one LF` everywhere.
+// It is not:
+//
+//     THE EIGHT OLDEST — journal core, regime policy, journal UI, journal
+//     remote, write-through, #402 migration, #404 manual import, #405
+//     backup/restore — have no separator concept at all. The module IS the
+//     whole removed block, and each undo re-inserts `moduleSource` alone.
+//
+//     THE SEVEN FROM #406 ONWARD — macro check, #408 charts, #410 post-auth,
+//     #411 TT reconnect, #413 close legs, #415 trade forms, #417 trade detail —
+//     treat the block as `body + one structural LF`. BOTH leave index.html,
+//     only the body is written to the module file, and the undo re-inserts the
+//     body followed by SEPARATOR.
+//
+// Both shapes are byte-exact; neither is a defect. The reliable tell is the
+// `const SEPARATOR = '\n'` declaration: the seven have it, the eight do not.
+//
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only four of the
+// seven pin a single RAW_CHARS one unit longer than MODULE_CHARS — post-auth,
+// TT reconnect, close legs, trade detail. The multi-fragment layers pin their
+// fragments individually instead (charts weaves three, trade forms joins two),
+// and macro check pins neither constant. A future layer that reasons about
+// "the" convention must ask which era it means, and must not infer the era
+// from those constants.
+//
+// Layer shapes, measured against the shipped modules rather than assumed, and
+// scoped to what was actually measured: of the FIFTEEN layers this bridge
+// peels, every one is a single contiguous fragment except #408 (three) and
+// #415 (two). That is not a statement about the repository at large — the MCX3
+// delegate below this chain is itself two fragments, and the older EIC, PESS
+// and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
 const JOURNAL_TRADE_DETAIL = require('./journal-trade-detail-undo.js');
