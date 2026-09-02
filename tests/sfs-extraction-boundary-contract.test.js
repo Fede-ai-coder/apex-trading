@@ -1428,9 +1428,13 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
   eq(local.filter((s) => s.src === './js/ui/journal-close-legs.js').length, 1,
      '4.9i exactly one Journal Close Legs tag, no duplicate');
   eq(local[local.length - 2].src, './js/ui/journal-trade-forms.js',
-     '4.9j the Journal trade-forms owner is the LAST local application script before the inline monolith');
+     '4.9j the Journal trade-forms owner is immediately before the Journal trade-detail owner');
   eq(local.filter((s) => s.src === './js/ui/journal-trade-forms.js').length, 1,
      '4.9k exactly one Journal trade-forms tag, no duplicate');
+  eq(local[local.length - 1].src, './js/ui/journal-trade-detail.js',
+     '4.9k2 the Journal trade-detail owner is the LAST local application script before the inline monolith');
+  eq(local.filter((s) => s.src === './js/ui/journal-trade-detail.js').length, 1,
+     '4.9k3 exactly one Journal trade-detail tag, no duplicate');
   eq(local.filter((s) => s.src === './js/ui/mcx-charts.js').length, 1,
      '4.9d exactly one MCX charts tag, no duplicate');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');

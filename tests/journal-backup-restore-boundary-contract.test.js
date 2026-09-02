@@ -124,7 +124,7 @@ const MCX_MACRO_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.
 // The Journal Close Legs owner is the newest layer of all and sits on top of
 // the TT reconnect owner: peel it FIRST so the TT reconnect undo below still
 // sees the exact document it was cut against.
-// The Journal trade-forms owner is the newest layer of all: peel it FIRST so
+// The Journal trade-forms owner is a later layer than this one: peel it after
 // every undo below still sees the exact document it was cut against.
 // The Journal trade-detail owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper

@@ -224,7 +224,7 @@ const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
-// The Journal trade-forms owner is the newest layer of all: peel it FIRST so
+// The Journal trade-forms owner is a later layer than this one: peel it after
 // every undo below still sees the exact document it was cut against.
 // The Journal trade-detail owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
