@@ -91,10 +91,10 @@ const BASE_UTF8 = 1909396;
 const BASE_LF = 32951;
 const BASE_INDEX_SHA256 = '7dd13923b25053960fb8b26bcf0d2383ebe27abe0f7b66607fa5893478503dcd';
 const BASE_LOCAL_SCRIPTS = 56;
-// Ratchet. Advanced to 141 by the Journal trade-detail extraction audit, which
-// adds tests/temporary-journal-trade-detail-boundary-audit.test.js. That audit
-// is replaced one-for-one by its permanent contract, so the count stays at 141.
-const TEST_FILE_COUNT = 141;
+// Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
+// adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
+// is replaced one-for-one by its permanent contract, so the count stays at 142.
+const TEST_FILE_COUNT = 142;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1740414;
@@ -612,7 +612,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 
   rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 141 test files: the shipped contracts plus the trade-detail audit');
+  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
 // The audit's rejected candidates were never built. Candidate D was the WHOLE
 // forms window — Manual Entry, Close Legs and Adjustment in one module. A later
 // layer (#414 Candidate F) does ship js/ui/journal-trade-forms.js, but that is

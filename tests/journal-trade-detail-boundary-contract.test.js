@@ -75,9 +75,9 @@ const BASE_UTF8 = 1848827;
 const BASE_LF = 31737;
 const BASE_INDEX_SHA256 = '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24283bb976156';
 const BASE_LOCAL_SCRIPTS = 58;
-// Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
-// count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 141;
+// Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit. That
+// audit is replaced one-for-one by its permanent contract, so it stays at 142.
+const TEST_FILE_COUNT = 142;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 1717386;
@@ -538,7 +538,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is still 141 test files: the audit was replaced one for one');
+  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
 // The rejected candidate was never built: H would have been the metrics block
 // without closeTradeDetail, so the test is what this module CONTAINS.
 eq(countLiteral(MODULE, 'function closeTradeDetail()'), 1,
