@@ -276,7 +276,17 @@ console.log('JOURNAL TRADE FORMS — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · two fragments · audited Candidate F (#414) · base=' + BASE_SHA);
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The Journal trade-detail owner is a LATER layer sitting on top of this one,
+// so the live document is no longer the one this layer shipped. Peel it first
+// and every assertion below still measures the exact document this contract
+// pins. The helper re-verifies its output by length and SHA-256, so the hop is
+// proved rather than assumed.
+const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
+const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
+const INDEX = TRADE_DETAIL_U.isApplied(LIVE_INDEX)
+  ? TRADE_DETAIL_U.undoJournalTradeDetail(LIVE_INDEX, TRADE_DETAIL_MODULE)
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
 
@@ -537,7 +547,8 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', MODULE_REL], 'production footprint is exactly index.html plus this owner');
+eq(changedProduction, ['index.html', 'js/ui/journal-trade-detail.js', MODULE_REL],
+  'production footprint is exactly index.html plus this owner and the later trade-detail owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -545,7 +556,8 @@ ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)), 'no temporary audit is shipped: t
 ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow changed');
 ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')), 'no configuration changed');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+  rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is 141 test files: the shipped contracts plus the trade-detail audit');

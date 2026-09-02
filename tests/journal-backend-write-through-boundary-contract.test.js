@@ -17,6 +17,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
@@ -397,6 +398,7 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
+const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
@@ -422,7 +424,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The Journal trade-forms owner is now the NEWEST layer of all, sitting on
 // top of Close Legs: peel it first so every undo below still sees the exact
 // document it was cut against.
-const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(INDEX, TRADE_FORMS_MODULE);
+// The Journal trade-detail owner is now the NEWEST layer of all, sitting on
+// top of trade forms: peel it first so every undo below still sees the exact
+// document it was cut against.
+const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(INDEX, TRADE_DETAIL_MODULE);
+const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
 const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(preTradeForms, CLOSE_LEGS_MODULE);
 const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
 eq(preCloseLegs.length, CLOSE_LEGS_U.BASE_CHARS,
@@ -474,9 +480,9 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1815024, 'current shipped index UTF-16 length is the post-trade-forms value');
-eq(sha256(INDEX), '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24283bb976156',
-  'current shipped index SHA-256 is the post-trade-forms value');
+eq(INDEX.length, 1765976, 'current shipped index UTF-16 length is the post-trade-detail value');
+eq(sha256(INDEX), '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9',
+  'current shipped index SHA-256 is the post-trade-detail value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -762,7 +768,7 @@ eq(changedProduction, [
   'index.html', MODULE_REL, 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',
-  'js/ui/journal-close-legs.js', 'js/ui/journal-trade-forms.js'
+  'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'
 ].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');

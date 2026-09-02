@@ -242,6 +242,9 @@ const CLOSE_LEGS_EXTRACTION_SCRIPTS = [
 const TRADE_FORMS_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-forms.js',
 ];
+const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
+  './js/ui/journal-trade-detail.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -251,7 +254,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(APEX_POST_AUTH_EXTRACTION_SCRIPTS)
   .concat(TT_RECONNECT_EXTRACTION_SCRIPTS)
   .concat(CLOSE_LEGS_EXTRACTION_SCRIPTS)
-  .concat(TRADE_FORMS_EXTRACTION_SCRIPTS);
+  .concat(TRADE_FORMS_EXTRACTION_SCRIPTS)
+  .concat(TRADE_DETAIL_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2743,8 +2747,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 58,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect and Journal Close Legs extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 59,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3490,7 +3494,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && APEX_POST_AUTH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && TT_RECONNECT_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && CLOSE_LEGS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && TRADE_FORMS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && TRADE_FORMS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && TRADE_DETAIL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
@@ -3521,23 +3526,33 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   // The Journal trade-forms owner is a later, independently audited TWO-FRAGMENT
   // relocation (audit #414 candidate F). Like Journal UI and MCX charts it is
   // RECORDED here but must not feed back into the historical DSB ceiling.
-  eq(SHIPPED_MODULES[1].name, './js/ui/journal-trade-forms.js',
-     'the later Journal trade-forms owner is now the second-largest shipped module');
-  eq(SHIPPED_MODULES[1].declBytes, 47527, 'Journal trade-forms declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[1].fileBytes, 48160, 'Journal trade-forms complete file bytes are recorded separately');
+  // The Journal trade-detail owner is a later, independently audited contiguous
+  // relocation (audit #416 candidate G). It enters the ranking ABOVE trade
+  // forms and, like every later layer here, is RECORDED but excluded by name
+  // from AUDIT_TIME_MODULES so the historical DSB ceiling is untouched.
+  eq(SHIPPED_MODULES[1].name, './js/ui/journal-trade-detail.js',
+     'the later Journal trade-detail owner is now the second-largest shipped module');
+  eq(SHIPPED_MODULES[1].declBytes, 48734, 'Journal trade-detail declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[1].fileBytes, 49103, 'Journal trade-detail complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[1].declBytes > SIZE_CEILING,
-     'the later whole-owner Journal trade-forms module intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[2].name, './js/ui/mcx-charts.js',
-     'the later MCX charts owner is now the third-largest shipped module');
-  eq(SHIPPED_MODULES[2].declBytes, 40962, 'MCX charts declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[2].fileBytes, 44506, 'MCX charts complete file bytes are recorded separately');
+     'the later whole-owner Journal trade-detail module intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[2].name, './js/ui/journal-trade-forms.js',
+     'the later Journal trade-forms owner is now the third-largest shipped module');
+  eq(SHIPPED_MODULES[2].declBytes, 47527, 'Journal trade-forms declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[2].fileBytes, 48160, 'Journal trade-forms complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[2].declBytes > SIZE_CEILING,
+     'the later whole-owner Journal trade-forms module intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[3].name, './js/ui/mcx-charts.js',
+     'the later MCX charts owner is now the fourth-largest shipped module');
+  eq(SHIPPED_MODULES[3].declBytes, 40962, 'MCX charts declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[3].fileBytes, 44506, 'MCX charts complete file bytes are recorded separately');
+  ok(SHIPPED_MODULES[3].declBytes > SIZE_CEILING,
      'the later whole-owner MCX charts module intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[3].name, './js/ui/sfs-panel.js',
-     'the SFS UI panel is now the fourth-largest shipped module');
-  ok(SHIPPED_MODULES[3].declBytes <= SIZE_CEILING,
+  eq(SHIPPED_MODULES[4].name, './js/ui/sfs-panel.js',
+     'the SFS UI panel is now the fifth-largest shipped module');
+  ok(SHIPPED_MODULES[4].declBytes <= SIZE_CEILING,
      'the SFS UI panel remains under the unchanged historical ceiling');
-  eq(SHIPPED_MODULES[4].name, SERVICE_SRC,
+  eq(SHIPPED_MODULES[5].name, SERVICE_SRC,
      'the DSB service is now the fifth-largest shipped module');
 }
 note('secondary metric only — largest complete file: ' + LARGEST_SHIPPED.fileBytes +

@@ -57,6 +57,7 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
@@ -64,6 +65,7 @@ const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
+const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
@@ -91,7 +93,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The Journal trade-forms owner is now the NEWEST layer of all, sitting on
 // top of Close Legs: peel it first so every undo below still sees the exact
 // document it was cut against.
-const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(INDEX, TRADE_FORMS_MODULE);
+// The Journal trade-detail owner is now the NEWEST layer of all, sitting on
+// top of trade forms: peel it first so every undo below still sees the exact
+// document it was cut against.
+const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(INDEX, TRADE_DETAIL_MODULE);
+const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
 const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(preTradeForms, CLOSE_LEGS_MODULE);
 const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
 // No assertions here: this peel runs before the harness is initialised. The
@@ -360,9 +366,9 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1815024, 'current shipped index UTF-16 length is the post-trade-forms value');
-eq(sha256(INDEX), '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24283bb976156',
-  'current shipped index SHA-256 is the post-trade-forms value');
+eq(INDEX.length, 1765976, 'current shipped index UTF-16 length is the post-trade-detail value');
+eq(sha256(INDEX), '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9',
+  'current shipped index SHA-256 is the post-trade-detail value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -618,7 +624,7 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore, MCX charts, MCX macro-check and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');

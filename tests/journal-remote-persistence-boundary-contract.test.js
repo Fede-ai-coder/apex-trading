@@ -18,6 +18,7 @@ const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');
@@ -64,6 +65,7 @@ const APEX_POST_AUTH_TAG = '<script src="./js/services/apex-post-auth-init.js"><
 const TT_RECONNECT_TAG = '<script src="./js/ui/tt-reconnect.js"></script>';
 const CLOSE_LEGS_TAG = '<script src="./js/ui/journal-close-legs.js"></script>';
 const TRADE_FORMS_TAG = '<script src="./js/ui/journal-trade-forms.js"></script>';
+const TRADE_DETAIL_TAG = '<script src=\"./js/ui/journal-trade-detail.js\"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -157,6 +159,7 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
 const TT_RECONNECT_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/tt-reconnect.js'), 'utf8');
@@ -182,7 +185,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The Journal trade-forms owner is now the NEWEST layer of all, sitting on
 // top of Close Legs: peel it first so every undo below still sees the exact
 // document it was cut against.
-const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(INDEX, TRADE_FORMS_MODULE);
+// The Journal trade-detail owner is now the NEWEST layer of all, sitting on
+// top of trade forms: peel it first so every undo below still sees the exact
+// document it was cut against.
+const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(INDEX, TRADE_DETAIL_MODULE);
+const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
 const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(preTradeForms, CLOSE_LEGS_MODULE);
 const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
 eq(preCloseLegs.length, CLOSE_LEGS_U.BASE_CHARS,
@@ -260,8 +267,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n',
-  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> inline');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
   INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) &&
@@ -403,7 +410,7 @@ same(changedProduction, [
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
   'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',
   'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js', 'js/ui/journal-close-legs.js',
-  'js/ui/journal-trade-forms.js',
+  'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js',
 ].sort(), 'production footprint includes Journal Remote plus later Write-through, Migration, Manual Import, Backup/Restore, MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs modules');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');

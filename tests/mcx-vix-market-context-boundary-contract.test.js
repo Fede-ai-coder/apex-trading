@@ -293,8 +293,15 @@ const afterTfEnd = INDEX.indexOf('>', afterTfAt);
 const afterTfTag = afterTfEnd >= 0 ? INDEX.slice(afterTfAt, afterTfEnd + 1) : '';
 ok(INDEX.indexOf(closeLegsTag) > INDEX.indexOf(ttReconnectTag) && afterClTag === tradeFormsOpen,
   'the Journal Close Legs owner loads immediately before the Journal trade-forms owner');
-ok(INDEX.indexOf(tradeFormsTag) > INDEX.indexOf(closeLegsTag) && !/\bsrc\s*=/i.test(afterTfTag),
-  'the Journal trade-forms owner loads immediately before the residual inline application script');
+const tradeDetailOpen = '<script src="./js/ui/journal-trade-detail.js">';
+const tradeDetailTag = tradeDetailOpen + '</script>';
+const afterTdAt = INDEX.indexOf('<script', INDEX.indexOf(tradeDetailTag) + tradeDetailTag.length);
+const afterTdEnd = INDEX.indexOf('>', afterTdAt);
+const afterTdTag = afterTdEnd >= 0 ? INDEX.slice(afterTdAt, afterTdEnd + 1) : '';
+ok(INDEX.indexOf(tradeFormsTag) > INDEX.indexOf(closeLegsTag) && afterTfTag === tradeDetailOpen,
+  'the Journal trade-forms owner loads immediately before the Journal trade-detail owner');
+ok(INDEX.indexOf(tradeDetailTag) > INDEX.indexOf(tradeFormsTag) && !/\bsrc\s*=/i.test(afterTdTag),
+  'the Journal trade-detail owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.
