@@ -22,6 +22,29 @@
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
 // out of order fails closed rather than producing an approximate tree.
+//
+// THE SEPARATOR CONVENTION IS NOT UNIFORM ACROSS THIS CHAIN, and this is the
+// only file that spans all of it, so it is recorded here. Read one recent
+// layer's helper and it is easy to assume `module = block − one LF` everywhere.
+// It is not:
+//
+//     #402 migration, #404 manual import, #405 backup/restore
+//         no separator concept at all. The module IS the whole removed block,
+//         and the undo re-inserts `moduleSource` alone.
+//
+//     #406 macro check onward, through #417 trade detail
+//         the block is `body + one structural LF`. BOTH leave index.html, only
+//         the body is written to the module file, and the undo re-inserts
+//         `moduleSource + SEPARATOR`.
+//
+// Both shapes are byte-exact; neither is a defect. The distinction is visible
+// in each helper: the later ones declare `const SEPARATOR = '\n'` and a RAW_*
+// range one unit longer than MODULE_*, the earlier three declare neither. Any
+// future layer that reasons about "the" convention must ask which era it is
+// talking about.
+//
+// Layer shapes, measured against the shipped modules rather than assumed: all
+// are one contiguous fragment except #408 (three) and #415 (two).
 const fs = require('fs');
 const path = require('path');
 const JOURNAL_TRADE_DETAIL = require('./journal-trade-detail-undo.js');
