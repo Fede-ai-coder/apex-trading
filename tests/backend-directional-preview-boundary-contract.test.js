@@ -2366,8 +2366,8 @@ section('30. physical script order');
   ok(iTtReconnect >= 0, 'index.html loads the TT reconnect script');
   eq(iApexPostAuth, iTtReconnect - 1,
      'ORDER: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(iTtReconnect, srcs.length - 4,
-     'ORDER: the TT reconnect owner precedes the Journal Close Legs and trade-forms owners');
+  eq(iTtReconnect, srcs.length - 5,
+     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
   eq(iDsbService, iDsbPanel - 1, 'ORDER: the DSB service is the script immediately before the DSB panel');
   eq(iDsbAdapter, iDsbService - 1, 'ORDER: the DSB pure adapter is the script immediately before the DSB service');
   eq(iPreview, iDsbAdapter - 1, 'ORDER: the BDSP module is the script immediately before the DSB pure adapter');
@@ -2470,8 +2470,8 @@ section('30. physical script order');
   ok(ttReconnectTagIdx >= 0, 'tag order: the TT reconnect owner is present');
   eq(apexPostAuthTagIdx, ttReconnectTagIdx - 1,
      'tag order: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(ttReconnectTagIdx, inlineTagIdx - 3,
-     'tag order: the TT reconnect owner precedes the Journal Close Legs and trade-forms owners');
+  eq(ttReconnectTagIdx, inlineTagIdx - 4,
+     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
   eq(dsbServiceTagIdx, dsbPanelTagIdx - 1, 'tag order: no tag was inserted between the DSB service and the DSB panel');
   eq(dsbAdapterTagIdx, dsbServiceTagIdx - 1, 'tag order: no tag was inserted between the DSB pure adapter and the DSB service');
   eq(previewTagIdx, dsbAdapterTagIdx - 1, 'tag order: no tag was inserted between the BDSP module and the DSB pure adapter');
@@ -2523,8 +2523,8 @@ section('30. physical script order');
       EIC_PANEL_REL, EIC_TICKER_PANEL_REL, EIC_LIVE_DEEP_DIVE_REL, PRETRADE_RISK_MODAL_REL, JOURNAL_UI_REL,
       JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, MCX_CHARTS_REL,
       './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js',
-      './js/ui/journal-trade-forms.js'].slice().sort(),
-     'SCOPE: js/ui/ contributes exactly seventeen named scripts, including the later Journal UI, Backup/Restore, MCX macro-check, MCX charts, TT reconnect, Journal Close Legs and trade-forms owners');
+      './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js'].slice().sort(),
+     'SCOPE: js/ui/ contributes exactly eighteen named scripts, including the later Journal UI, Backup/Restore, MCX macro-check, MCX charts, TT reconnect, Journal Close Legs and trade-forms owners');
   // The files this PR was forbidden to touch are still their own scripts.
   [ADAPTER_REL, BSS_SERVICE_REL].forEach(function (rel) {
     eq(PARTS.filter(function (p) { return p.src === rel; }).length, 1, rel + ' is still referenced exactly once');
