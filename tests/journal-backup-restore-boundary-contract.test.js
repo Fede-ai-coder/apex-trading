@@ -924,7 +924,8 @@ section('8. Panel open/close and list rendering behavior');
     'the temporary Backup/Restore audit is absent after extraction');
   ok(!changed.some((rel) => rel.startsWith('.github/')),
     'no workflow or bootstrap script changed');
-  ok(!changed.some((rel) => rel.endsWith('.md')), 'no documentation changed');
+  ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
+    'no documentation changed, except the repository working notes');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
 
