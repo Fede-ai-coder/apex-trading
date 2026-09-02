@@ -81,8 +81,10 @@ const BASE_UTF8 = 1897113;
 const BASE_LF = 32721;
 const BASE_INDEX_SHA256 = '8e52b9a882b29c3097c4bc6031c90349be4fffba481710a909b6f6f8695b4721';
 const BASE_LOCAL_SCRIPTS = 57;
-// The audit added the 140th file; this contract replaces it ONE-FOR-ONE.
-const TEST_FILE_COUNT = 140;
+// Ratchet. Advanced to 141 by the Journal trade-detail extraction audit, which
+// adds tests/temporary-journal-trade-detail-boundary-audit.test.js. That audit
+// is replaced one-for-one by its permanent contract, so the count stays at 141.
+const TEST_FILE_COUNT = 141;
 
 // ── The two moved fragments, in base coordinates ─────────────────────────────
 const HANDLERS = {
@@ -546,7 +548,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is still 140 test files: this contract replaced the audit one-for-one');
+  'the suite is 141 test files: the shipped contracts plus the trade-detail audit');
 // The audit's rejected candidate was never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-manual-entry.js')), 'no manual-entry-only module exists');
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-adjustment.js')), 'no adjustment-only module exists');
