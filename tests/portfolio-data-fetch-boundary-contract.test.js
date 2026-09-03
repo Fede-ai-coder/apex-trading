@@ -26,9 +26,9 @@
 // `onclick="showAccountPanel()"`, the one static markup handler.
 //
 // ASYNC OWNERS, AND WHAT IS ACTUALLY TRUE OF THEM. Three of the four are async.
-// That is not a first — nine of the sixteen layers in this chain ship async
-// owners, and journal-remote-persistence shipped six of eight, the same ratio
-// as this one. The point worth making is not novelty but harmlessness: async is
+// That is not a first — ten of the sixteen layers in this chain ship async
+// owners (nine of them predate this one), and journal-remote-persistence
+// shipped six of eight, the same ratio as this one. The point worth making is not novelty but harmlessness: async is
 // a property of the functions, not of loading them.
 // §5 proves it: zero top-level calls, zero evaluation-time dependency reads, no
 // top-level `await`, and the module evaluates in a completely empty VM defining
@@ -78,7 +78,7 @@ const BASE_INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a6
 const BASE_LOCAL_SCRIPTS = 59;
 // Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
 // count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 143;
+const TEST_FILE_COUNT = 144;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 196604;
@@ -126,7 +126,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 61;
+const PARTS_TOTAL = 62;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -241,7 +241,15 @@ function isWriteAt(text, at, name) {
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 // This is the NEWEST layer, so the live document is the one it shipped.
-const INDEX = APP_LOADER.loadIndexHtml();
+const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// Backend portfolios was cut AFTER this layer, so the live document is no longer
+// the one this contract shipped. Peel it first; its helper re-verifies its own
+// output by length and SHA-256, so the hop is proved rather than assumed.
+const INDEX = BACKEND_PORTFOLIOS_U.isApplied(LIVE_INDEX)
+  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
 
@@ -418,9 +426,15 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 60 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 61 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 59');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 1, '…immediately before the inline monolith');
+// This section reads the LIVE load order, not the peeled document, so it states
+// what is true now: backend-portfolios was cut after this layer and sits between
+// this module and the inline monolith.
+eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
+  '…followed by the backend-portfolios module, which was cut later');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 2,
+  '…and the inline monolith is two positions on');
 {
   // The referencing set is DERIVED, not assumed.
   const referencing = PARTS
@@ -494,8 +508,11 @@ const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEA
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
-eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), ['index.html', MODULE_REL],
-  'production footprint is exactly index.html plus the one new module');
+// Measured from THIS layer's base, so it now also carries the backend-portfolios
+// module cut afterwards. Still exhaustive: a fourth production file fails here.
+eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
+  ['index.html', 'js/portfolio/backend-portfolios.js', MODULE_REL],
+  'production footprint since this base is index.html, this module, and the later backend-portfolios module');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -507,10 +524,11 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+  rel === 'js/portfolio/backend-portfolios.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
-  'every other changed path is a test artifact');
+  'every other changed path is a test artifact or the later backend-portfolios module');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 142 test files: the audit was replaced one for one');
+  'the suite is 144 test files: the backend-portfolios audit was replaced one for one, plus the extraction-seam contract');
 // The rejected alternative was never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/portfolio/portfolio-panel.js')),
   'no openers-only module exists (rejected Candidate Q)');

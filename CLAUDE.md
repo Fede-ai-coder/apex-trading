@@ -56,6 +56,13 @@ sample it was inferred from.** The recurring failure is a universal asserted
 from a partial look — "the earlier three", "every layer", "and no other". If a
 claim cannot be checked exhaustively, scope it explicitly to what was measured.
 
+**A claim worth stating twice is worth executing.** Prose that keeps being
+restated is prose that keeps drifting: the boundary rule was rewritten wrong
+twice in two cycles, and the second version was wrong about the counterexample
+the first had just uncovered — both passed review, because review reads and
+does not run. When a rule matters enough to repeat, move it into a helper with
+a contract, and leave the comment pointing at the file that runs.
+
 Prefer stating facts from artifacts that are already proven (the undo helpers
 reconstruct byte-exactly and run in the suite) over a freshly written
 measurement script.
@@ -93,11 +100,49 @@ Two different rules, for two different questions — do not conflate them:
 - **Screening** a section: one column-0 `// ── ` banner line running to the
   next `// ── ` banner. That is the rule the shipped screen in
   `tests/journal-trade-detail-boundary-contract.test.js` states and uses.
-- **The extractable boundary** of a chosen region: it ends after its LAST
-  top-level declaration, at the `}\n\n` seam. That can stop well before the
-  next `// ── ` banner, because an `// ══` block header for the *next* feature
-  may sit in between. Taking the screening rule as the boundary swallowed 551
-  units of the following feature on the first attempt at the trade-detail cut.
+- **The extractable boundary** of a chosen region is *not* a rule of the same
+  kind, and two attempts to write one as a rule were both wrong. See below.
+
+### The boundary is a judgement; only the seam is mechanical
+
+Do not look for a rule that computes where a region ends. There isn't one, and
+`tests/extraction-boundary-rule-contract.test.js` measures why against the five
+boundaries the undo helpers still record:
+
+- `tt-reconnect` and `apex-post-auth-init` are each followed **immediately** by
+  another feature's code, with no `// ══` header and no `// ── ` banner
+  between — so "extend to the next header" would swallow it;
+- `journal-trade-detail` **spans** a `// ── ` section banner — so "stop at the
+  next banner" would cut it in half.
+
+The mistakes point in opposite directions, which is the tell that no banner or
+header rule can be right. Deciding which code belongs to the feature is the
+judgement an audit publishes and defends.
+
+Two rules were written down anyway, and both are now pinned as dead in §6 of
+that contract:
+
+1. *"ends after its LAST top-level declaration."* False for
+   `js/services/journal-backend-write-through.js`, which ends on 4,878 units of
+   trailing top-level code — an IIFE, which is not a declaration. Fifteen of
+   sixteen layers matched, which is exactly how a wrong rule survives.
+2. *"walk forward from the last declaration, absorbing statement lines."*
+   Written in audit #422 to fix (1), and wrong on the same module: it stops at
+   the first blank line, and that IIFE contains blank lines. Same 4,878 short.
+
+What **is** mechanical, and lives in `tests/lib/extraction-boundary.js`:
+
+- `snapBodyEnd(src, at, limit)` — once you have chosen the last construct, the
+  body ends just past the newline of the last line **containing code**;
+  declarations, bare statements and IIFEs need no separate case.
+- `assertSeam(src, at, bodyEnd)` — fail-closed on the four invariants every
+  recorded boundary satisfies: the region opens on a line start, the body is
+  line-terminated, the body's last line is code, and exactly one newline
+  separates body from what follows. Call it in Phase 2 before writing anything.
+
+Taking the screening rule as the boundary swallowed 551 units of the following
+feature on the first attempt at the trade-detail cut, and would have swallowed
+17,734 units at the backend-portfolios cut.
 
 Measure **both directions of state coupling**. Inbound (writes from outside
 into state the region owns) is not enough: a region that declares no `var`

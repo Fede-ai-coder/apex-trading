@@ -244,6 +244,7 @@ const TRADE_FORMS_EXTRACTION_SCRIPTS = [
 ];
 const PORTFOLIO_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-data-fetch.js',
+  './js/portfolio/backend-portfolios.js',
 ];
 const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-detail.js',
@@ -2754,8 +2755,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 60,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch Journal Close Legs extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 61,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios and Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2946,8 +2947,38 @@ function topLevelDeclarations(code) {
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat([
       './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
       './js/services/journal-backend-write-through.js', './js/ui/mcx-charts.js',
+      './js/portfolio/backend-portfolios.js',
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches and the MCX charts state owners');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners and the backend-portfolios re-exports');
+
+  // The backend-portfolios module is the newest entry on that list and the only
+  // one whose residue is assignments to `window`. It is NOT waved through on the
+  // byte budget: its whole top-level text must be `window.X = <own owner>;`
+  // wrapped in try/catch, with no call of any kind. That is strictly stronger
+  // than the threshold it crossed.
+  {
+    const part = APP_PARTS.find(function (p) { return p.name === './js/portfolio/backend-portfolios.js'; });
+    ok(!!part, 'the backend-portfolios module is part of the loaded application');
+    const topLevel = stripFunctions(maskSource(part.code));
+    const calls = [];
+    const re = /([A-Za-z_$][A-Za-z0-9_$.]*)\s*\(/g;
+    let m;
+    while ((m = re.exec(topLevel)) !== null) calls.push(m[1]);
+    deepEq(calls.filter(function (c) { return c !== 'catch'; }), [],
+       'backend-portfolios performs NO call at load time — only `catch (e)` matches the call shape');
+    const targets = (topLevel.match(/window\.[A-Za-z0-9_$]+\s*=/g) || [])
+      .map(function (t) { return t.replace(/\s*=$/, ''); });
+    deepEq(targets.length, 10, 'its ten `window.X =` re-exports are the whole of its load-time effect');
+    // Besides the re-exports the module declares exactly one binding of its own.
+    // It is pinned literally, so a second declaration appearing later fails here.
+    const OWN_STATE = 'var_portfolioBackendSyncInFlight=false';
+    const nonWindow = topLevel.replace(/window\.[A-Za-z0-9_$]+\s*=\s*[A-Za-z0-9_$]+\s*;/g, '')
+      .replace(/\btry\b|\bcatch\b|\(e\)|[{}\s;]/g, '');
+    deepEq(nonWindow, OWN_STATE,
+       'the only other load-time text is its own single `var` declaration, initialised from a literal');
+    deepEq(nonWindow.replace(OWN_STATE, ''), '',
+       'and nothing at all survives once that and the try/catch wrappers are removed');
+  }
   const regimePolicyPart = APP_PARTS.find(function (p) { return p.name === './js/services/mcx-regime-policy.js'; });
   ok(!!regimePolicyPart, 'Regime Policy is present for explicit load-time residue proof');
   const regimePolicyTopLevel = stripFunctions(maskSource(regimePolicyPart.code));
@@ -3796,13 +3827,38 @@ eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308
   const modulesTouchingWindow = localParts
     .filter(function (p) { return WINDOW_ASSIGN.test(stripFunctions(maskSource(p.code))); })
     .map(function (p) { return p.src; });
-  deepEq(modulesTouchingWindow, [],
-    'ZERO shipped modules assign anything to window AT EVALUATION TIME — W1 would be the first');
+  // ONE shipped module now does, and the distinction matters for W1. The
+  // backend-portfolios extraction relocated a block that ALREADY performed these
+  // ten assignments at top level, inside the inline monolith. Nothing new is
+  // exposed; the same statements run at the module's evaluation instead of the
+  // monolith's, which is earlier in document order. Its own contract proves they
+  // read nothing the module does not own, so running earlier changes no value.
+  //
+  // W1 is therefore no longer unprecedented, but the precedent is a RELOCATION
+  // of exposures that already existed — not a decision to expose something new,
+  // which is what W1 would be. Pinned by name AND by content: a second module,
+  // or an eleventh assignment here, still fails.
+  deepEq(modulesTouchingWindow, ['./js/portfolio/backend-portfolios.js'],
+    'exactly ONE shipped module assigns to window at evaluation time, and only by relocation');
+  {
+    const part = localParts.find(function (p) { return p.src === './js/portfolio/backend-portfolios.js'; });
+    const topLevel = stripFunctions(maskSource(part.code));
+    const targets = (topLevel.match(/window\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g) || [])
+      .map(function (t) { return t.replace(/^window\s*\.\s*/, '').replace(/\s*=$/, ''); }).sort();
+    deepEq(targets, [
+      '_portfolioOpenBackendLoad', '_syncPortfoliosFromBackend', 'apexUpdatePortfolio',
+      'backendCreatePortfolio', 'backendDeletePortfolio', 'backendGetPortfolio',
+      'backendListPortfolios', 'backendUpdatePortfolio', 'getPortfolioJournalReconciliation',
+      'viewLinkedTradesInJournal',
+    ], 'and those assignments are exactly the ten re-exports the relocated block already made');
+  }
   const modulesAssigningWindowAtAll = localParts
     .filter(function (p) { return WINDOW_ASSIGN.test(maskSource(p.code)); })
     .map(function (p) { return p.src; });
-  deepEq(modulesAssigningWindowAtAll, ['./js/ui/pretrade-risk-modal.js', './js/services/mcx-vix-market-context.js'],
-    'exactly TWO shipped modules assign to window anywhere — the PRETRADE risk modal and the MCX VIX owner, and both only from function bodies');
+  deepEq(modulesAssigningWindowAtAll,
+    ['./js/ui/pretrade-risk-modal.js', './js/services/mcx-vix-market-context.js',
+     './js/portfolio/backend-portfolios.js'],
+    'exactly THREE shipped modules assign to window anywhere — the PRETRADE risk modal and the MCX VIX owner from function bodies only, and backend-portfolios from top level as pinned above');
   {
     const modal = localParts.filter(function (p) { return p.src === './js/ui/pretrade-risk-modal.js'; })[0];
     ok(!!modal, 'the PRETRADE risk-modal module is part of the measured local set');

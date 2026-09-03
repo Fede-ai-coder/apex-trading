@@ -94,7 +94,7 @@ const BASE_LOCAL_SCRIPTS = 56;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
 // adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
 // is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 143;
+const TEST_FILE_COUNT = 144;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1740414;
@@ -299,11 +299,18 @@ const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade
 // The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved.
+const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
-const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
+// Backend portfolios is now the NEWEST layer of all: peel it first so every
+// undo below still sees the exact document it was cut against.
+const PRE_BACKEND_PORTFOLIOS = BACKEND_PORTFOLIOS_U.isApplied(LIVE_INDEX)
+  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(LIVE_INDEX, BACKEND_PORTFOLIOS_MODULE)
   : LIVE_INDEX;
+const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(PRE_BACKEND_PORTFOLIOS)
+  ? PORTFOLIO_U.undoPortfolioDataFetch(PRE_BACKEND_PORTFOLIOS, PORTFOLIO_MODULE)
+  : PRE_BACKEND_PORTFOLIOS;
 const PRE_TRADE_DETAIL = TRADE_DETAIL_U.isApplied(PRE_PORTFOLIO)
   ? TRADE_DETAIL_U.undoJournalTradeDetail(PRE_PORTFOLIO, TRADE_DETAIL_MODULE)
   : PRE_PORTFOLIO;
@@ -603,7 +610,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL, 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL, 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
   'production footprint is exactly index.html plus the Close Legs owner and the later trade-forms owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -617,10 +624,10 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+  rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
+  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
 // The audit's rejected candidates were never built. Candidate D was the WHOLE
 // forms window — Manual Entry, Close Legs and Adjustment in one module. A later
 // layer (#414 Candidate F) does ship js/ui/journal-trade-forms.js, but that is

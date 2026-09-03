@@ -18,6 +18,7 @@ const U = require('./lib/journal-remote-persistence-undo.js');
 const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
@@ -68,6 +69,7 @@ const CLOSE_LEGS_TAG = '<script src="./js/ui/journal-close-legs.js"></script>';
 const TRADE_FORMS_TAG = '<script src="./js/ui/journal-trade-forms.js"></script>';
 const TRADE_DETAIL_TAG = '<script src=\"./js/ui/journal-trade-detail.js\"></script>';
 const PORTFOLIO_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></script>';
+const BACKEND_PORTFOLIOS_TAG = '<script src="./js/portfolio/backend-portfolios.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -161,6 +163,7 @@ const expectedIndex = baseWithoutSlice.replace(
   JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n<script>'
 );
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
 const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
@@ -193,7 +196,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // document it was cut against.
 // The Portfolio data-fetch owner is now the NEWEST layer: peel it first so
 // every undo below still sees the document it was cut against.
-const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(INDEX, PORTFOLIO_MODULE);
+// Backend portfolios is now the NEWEST layer of all, sitting on top of the
+// portfolio data fetch: peel it first so every undo below still sees the exact
+// document it was cut against.
+const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(INDEX, BACKEND_PORTFOLIOS_MODULE);
+const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);
 const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(prePortfolio, TRADE_DETAIL_MODULE);
 const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
 const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(preTradeForms, CLOSE_LEGS_MODULE);
@@ -273,8 +280,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n',
-  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> inline');
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
   INDEX.indexOf(WRITE_TAG) < INDEX.indexOf(MIGRATION_TAG) &&
@@ -412,7 +419,7 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 same(changedProduction, [
-  'index.html', MODULE_REL, 'js/portfolio/portfolio-data-fetch.js', 'js/services/journal-backend-write-through.js',
+  'index.html', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/services/journal-backend-write-through.js',
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
   'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',
   'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js', 'js/ui/journal-close-legs.js',

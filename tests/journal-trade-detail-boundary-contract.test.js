@@ -77,7 +77,7 @@ const BASE_INDEX_SHA256 = '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24
 const BASE_LOCAL_SCRIPTS = 58;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit. That
 // audit is replaced one-for-one by its permanent contract, so it stays at 142.
-const TEST_FILE_COUNT = 143;
+const TEST_FILE_COUNT = 144;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 1717386;
@@ -131,7 +131,7 @@ const DEPENDANTS = {
   './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
 };
 const MODULE_POSITION = 58;
-const PARTS_TOTAL = 61;
+const PARTS_TOTAL = 62;
 const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,11 +253,18 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The Portfolio data-fetch owner is a LATER layer sitting on top of this one, so
 // the live document is no longer the one this layer shipped. Peel it first.
+const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
-const INDEX = PORTFOLIO_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
+// Backend portfolios is now the newest layer of all; peel it before the
+// portfolio data fetch, or that undo sees a document it was not cut against.
+const PRE_BACKEND_PORTFOLIOS = BACKEND_PORTFOLIOS_U.isApplied(LIVE_INDEX)
+  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(LIVE_INDEX, BACKEND_PORTFOLIOS_MODULE)
   : LIVE_INDEX;
+const INDEX = PORTFOLIO_U.isApplied(PRE_BACKEND_PORTFOLIOS)
+  ? PORTFOLIO_U.undoPortfolioDataFetch(PRE_BACKEND_PORTFOLIOS, PORTFOLIO_MODULE)
+  : PRE_BACKEND_PORTFOLIOS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
 
@@ -425,10 +432,11 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order: a module defined AFTER three of its callers');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 60 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 61 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 2,
-  '…one position before the portfolio module, which now precedes the inline monolith');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 3,
+  '…three positions before the inline monolith: the portfolio data-fetch and\n' +
+  '   backend-portfolios modules were both cut after this one and load between');
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
   const idx = PARTS.findIndex((p) => p.src === src);
@@ -530,7 +538,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL],
+  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL],
   'production footprint is exactly index.html plus the one new module');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -543,11 +551,11 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-data-fetch.js' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
+  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
 // The rejected candidate was never built: H would have been the metrics block
 // without closeTradeDetail, so the test is what this module CONTAINS.
 eq(countLiteral(MODULE, 'function closeTradeDetail()'), 1,

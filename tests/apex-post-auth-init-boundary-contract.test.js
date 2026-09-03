@@ -71,7 +71,7 @@ const BASE_LOCAL_SCRIPTS = 54;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
 // adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
 // is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 143;
+const TEST_FILE_COUNT = 144;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1874908;
@@ -297,11 +297,18 @@ const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade
 // The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved.
+const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
-const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
+// Backend portfolios is now the NEWEST layer of all: peel it first so every
+// undo below still sees the exact document it was cut against.
+const PRE_BACKEND_PORTFOLIOS = BACKEND_PORTFOLIOS_U.isApplied(LIVE_INDEX)
+  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(LIVE_INDEX, BACKEND_PORTFOLIOS_MODULE)
   : LIVE_INDEX;
+const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(PRE_BACKEND_PORTFOLIOS)
+  ? PORTFOLIO_U.undoPortfolioDataFetch(PRE_BACKEND_PORTFOLIOS, PORTFOLIO_MODULE)
+  : PRE_BACKEND_PORTFOLIOS;
 const PRE_TRADE_DETAIL = TRADE_DETAIL_U.isApplied(PRE_PORTFOLIO)
   ? TRADE_DETAIL_U.undoJournalTradeDetail(PRE_PORTFOLIO, TRADE_DETAIL_MODULE)
   : PRE_PORTFOLIO;
@@ -382,9 +389,9 @@ eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries ex
 // reconnect undo is proved to return the document to this contract's EXACT #410
 // state — the guarantee this file has always owned, now reached through a peel.
 eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
-eq(LIVE_INDEX.length, PORTFOLIO_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), PORTFOLIO_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
-eq(localScripts(LIVE_INDEX).length, 60, 'the live shipped index carries 60 local application scripts');
+eq(LIVE_INDEX.length, BACKEND_PORTFOLIOS_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), BACKEND_PORTFOLIOS_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(localScripts(LIVE_INDEX).length, 61, 'the live shipped index carries 61 local application scripts');
 eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
 eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
 eq(localScripts(INDEX).length, TT_RECONNECT_U.BASE_LOCAL_SCRIPTS, '…with exactly 55 local application scripts');
@@ -479,8 +486,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // module is second-to-last rather than last. The invariant this line protects —
 // the module evaluates before the inline monolith that calls it — is unchanged
 // and asserted in its stronger, current form.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-7),
-  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-8),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', '(inline)'],
   'in execution order the module runs immediately before the TT reconnect owner, which precedes the Journal Close Legs owner and then the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -700,8 +707,9 @@ const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
 ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
   'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
-ok(ttIdx === LIVE_PARTS.length - 6,
-  '…and immediately before the Journal Close Legs owner, then trade forms, then trade detail');
+ok(ttIdx === LIVE_PARTS.length - 7,
+  '…and immediately before the Journal Close Legs owner, then trade forms, trade detail,\n' +
+  '   portfolio data fetch and backend portfolios');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
   'the generated reconnect handler is untouched inside showReconnectPanel');
 // Contiguity is the whole point: nothing sits between the two halves any more.
@@ -896,7 +904,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -910,10 +918,10 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 142 test files: the shipped contracts plus the portfolio-data-fetch audit');
+  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
 // The follow-up reconnect-UI extraction HAS now shipped, as exactly one module
 // with its own permanent contract and undo helper. The audit's other rejected
 // candidates were never built, and are still asserted absent.
