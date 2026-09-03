@@ -12,9 +12,9 @@
 //     async function showIVPanel(ticker)     1,763 units — the IVR side panel
 //
 // ASYNC OWNERS, AND WHAT IS ACTUALLY TRUE OF THEM. Three of the four are async.
-// That is not a first — nine of the sixteen layers in this chain ship async
-// owners, and journal-remote-persistence shipped six of eight, the same ratio
-// as this one. The point worth making is not novelty but harmlessness: async is
+// That is not a first — ten of the sixteen layers in this chain ship async
+// owners (nine of them predate this one), and journal-remote-persistence
+// shipped six of eight, the same ratio as this one. The point worth making is not novelty but harmlessness: async is
 // a property of the functions, not of loading them.
 // Audit #420 established the harmlessness: zero top-level calls, no dependency
 // read at evaluation time, no top-level `await`, and a clean empty-VM load.

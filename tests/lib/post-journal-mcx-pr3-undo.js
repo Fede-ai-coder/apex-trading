@@ -1,11 +1,13 @@
 'use strict';
-// Current-app reconstruction bridge after Portfolio data fetch + Journal trade
+// Current-app reconstruction bridge after Backend portfolios + Portfolio data
+// fetch + Journal trade
 // detail + Journal trade forms + Journal Close Legs + TT reconnect UI + Apex
 // post-auth init + MCX charts + MCX macro check + Backup/Restore + Manual
 // Import + Journal Migration + Write-through + Journal Remote + Journal UI +
 // Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Portfolio data-fetch relocation first, then Journal trade detail,
+// newest Backend-portfolios relocation first, then Portfolio data fetch,
+// then Journal trade detail,
 // Journal trade forms, Journal Close Legs, TT reconnect, Apex post-auth, MCX
 // charts, MCX macro check, Backup/Restore, Manual Import, Migration,
 // Write-through, Journal Remote, Journal UI, Regime Policy, Journal Core, and
@@ -19,12 +21,20 @@
 // modules that already call it, which is safe only because nothing reads its
 // owners at evaluation time; that is proved in its own contract, not here.
 //
-// Portfolio data fetch is the newest layer and sits on top of all of them.
-// Three of its four owners are async, which is unremarkable here — nine of these
-// sixteen layers ship async owners, journal-remote-persistence six of eight —
-// and in every case it is not a load-time property: its contract proves the
-// block has no top-level call, no top-level await, and no evaluation-time
-// dependency read.
+// Portfolio data fetch sits below the newest layer. Three of its four owners
+// are async, which is unremarkable here — eleven of these seventeen layers
+// ship async owners, journal-remote-persistence six of eight — and in every case it
+// is not a load-time property: its contract proves the block has no top-level
+// call, no top-level await, and no evaluation-time dependency read.
+//
+// Backend portfolios is the newest layer and sits on top of all of them. Its
+// seam is not a closing brace: the region ends on a top-level statement,
+// `window.viewLinkedTradesInJournal = …;`, so its body ends `;\n` and its raw
+// fragment `;\n\n`. FIFTEEN of the sixteen earlier layers end `}\n`; the
+// exception is journal-backend-write-through, which ends `})();`. It is
+// also the first to carry top-level statements at all — twelve of them, all
+// `window.X = X` re-exports and their `try` wrappers, which its contract proves
+// read nothing the region does not own.
 //
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
@@ -40,33 +50,35 @@
 //     backup/restore — have no separator concept at all. The module IS the
 //     whole removed block, and each undo re-inserts `moduleSource` alone.
 //
-//     THE EIGHT FROM #406 ONWARD — macro check, #408 charts, #410 post-auth,
+//     THE NINE FROM #406 ONWARD — macro check, #408 charts, #410 post-auth,
 //     #411 TT reconnect, #413 close legs, #415 trade forms, #417 trade detail,
-//     #421 portfolio data fetch —
+//     #421 portfolio data fetch, #423 backend portfolios —
 //     treat the block as `body + one structural LF`. BOTH leave index.html,
 //     only the body is written to the module file, and the undo re-inserts the
 //     body followed by SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the eight newest have it, the eight
+// `const SEPARATOR = '\n'` declaration: the nine newest have it, the eight
 // oldest do not.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only FIVE of the
-// eight pin a single RAW_CHARS one unit longer than MODULE_CHARS — post-auth,
-// TT reconnect, close legs, trade detail and portfolio data fetch. The
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only SIX of the
+// nine pin a single RAW_CHARS one unit longer than MODULE_CHARS — post-auth,
+// TT reconnect, close legs, trade detail, portfolio data fetch and backend
+// portfolios. The
 // multi-fragment layers pin their fragments individually instead (charts weaves
 // three, trade forms joins two), and macro check pins neither constant. A future layer that reasons about
 // "the" convention must ask which era it means, and must not infer the era
 // from those constants.
 //
 // Layer shapes, measured against the shipped modules rather than assumed, and
-// scoped to what was actually measured: of the SIXTEEN layers this bridge
+// scoped to what was actually measured: of the SEVENTEEN layers this bridge
 // peels, every one is a single contiguous fragment except #408 (three) and
 // #415 (two). That is not a statement about the repository at large — the MCX3
 // delegate below this chain is itself two fragments, and the older EIC, PESS
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const BACKEND_PORTFOLIOS = require('./backend-portfolios-undo.js');
 const PORTFOLIO_DATA_FETCH = require('./portfolio-data-fetch-undo.js');
 const JOURNAL_TRADE_DETAIL = require('./journal-trade-detail-undo.js');
 const JOURNAL_TRADE_FORMS = require('./journal-trade-forms-undo.js');
@@ -85,6 +97,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const BACKEND_PORTFOLIOS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'backend-portfolios.js'),
+  'utf8'
+);
 const PORTFOLIO_DATA_FETCH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-data-fetch.js'),
   'utf8'
@@ -151,9 +167,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const prePortfolio = PORTFOLIO_DATA_FETCH.isApplied(html)
-    ? PORTFOLIO_DATA_FETCH.undoPortfolioDataFetch(html, PORTFOLIO_DATA_FETCH_SOURCE)
+  const preBackendPortfolios = BACKEND_PORTFOLIOS.isApplied(html)
+    ? BACKEND_PORTFOLIOS.undoBackendPortfolios(html, BACKEND_PORTFOLIOS_SOURCE)
     : html;
+  const prePortfolio = PORTFOLIO_DATA_FETCH.isApplied(preBackendPortfolios)
+    ? PORTFOLIO_DATA_FETCH.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_DATA_FETCH_SOURCE)
+    : preBackendPortfolios;
   const preTradeDetail = JOURNAL_TRADE_DETAIL.isApplied(prePortfolio)
     ? JOURNAL_TRADE_DETAIL.undoJournalTradeDetail(prePortfolio, JOURNAL_TRADE_DETAIL_SOURCE)
     : prePortfolio;
