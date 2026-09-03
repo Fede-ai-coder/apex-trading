@@ -69,7 +69,7 @@ const BASE_LOCAL_SCRIPTS = 55;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
 // adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
 // is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 142;
+const TEST_FILE_COUNT = 143;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1872896;
