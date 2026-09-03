@@ -131,9 +131,17 @@ const MCX_MACRO_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-macro-check.
 // re-verifies its own output by length and SHA-256, so the hop is proved.
 const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
-const PRE_TRADE_DETAIL = TRADE_DETAIL_U.isApplied(LIVE_INDEX)
-  ? TRADE_DETAIL_U.undoJournalTradeDetail(LIVE_INDEX, TRADE_DETAIL_MODULE)
+// The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
+// every undo below still sees the exact document it was cut against. Its helper
+// re-verifies its own output by length and SHA-256, so the hop is proved.
+const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
+const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
+const PRE_PORTFOLIO = PORTFOLIO_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_U.undoPortfolioDataFetch(LIVE_INDEX, PORTFOLIO_MODULE)
   : LIVE_INDEX;
+const PRE_TRADE_DETAIL = TRADE_DETAIL_U.isApplied(PRE_PORTFOLIO)
+  ? TRADE_DETAIL_U.undoJournalTradeDetail(PRE_PORTFOLIO, TRADE_DETAIL_MODULE)
+  : PRE_PORTFOLIO;
 const PRE_TRADE_FORMS = TRADE_FORMS_U.isApplied(PRE_TRADE_DETAIL)
   ? TRADE_FORMS_U.undoJournalTradeForms(PRE_TRADE_DETAIL, TRADE_FORMS_MODULE)
   : PRE_TRADE_DETAIL;
@@ -490,9 +498,9 @@ eq(INDEX.length, 1933458, 'extracted index UTF-16 length is exact');
 eq(Buffer.byteLength(INDEX, 'utf8'), 1968899, 'extracted index UTF-8 byte length is exact');
 eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'extracted index SHA-256 is the audited prediction');
-eq(LIVE_INDEX.length, 1765976, 'current shipped index UTF-16 length is the post-trade-detail value');
-eq(sha256(LIVE_INDEX), '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9',
-  'current shipped index SHA-256 is the post-trade-detail value');
+eq(LIVE_INDEX.length, 1746489, 'current shipped index UTF-16 length is the post-portfolio value');
+eq(sha256(LIVE_INDEX), '124d838e3974cf40b5d97c18fec767233c8655114dcb0dd1282c8da5537bedee',
+  'current shipped index SHA-256 is the post-portfolio value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -572,8 +580,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
   'index carried exactly 52 local application scripts when this extraction landed');
 eq(APP_LOADER.parseScriptTags(PRE_MCX_CHARTS).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 53,
   'peeling MCX charts restores the 53 local application scripts of the post-macro-check index');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 59,
-  'the current shipped index carries exactly 59 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 60,
+  'the current shipped index carries exactly 60 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -916,7 +924,7 @@ section('8. Panel open/close and list rendering behavior');
   section('14. Exact production scope');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Backup/Restore contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Backup/Restore undo helper is part of the change');

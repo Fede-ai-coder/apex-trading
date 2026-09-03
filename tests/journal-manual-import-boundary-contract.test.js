@@ -57,6 +57,7 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
@@ -65,6 +66,7 @@ const APEX_POST_AUTH_U = require('./lib/apex-post-auth-init-undo.js');
 const MCX_CHARTS_U = require('./lib/mcx-charts-undo.js');
 const MCX_MACRO_CHECK_U = require('./lib/mcx-macro-check-undo.js');
 const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
+const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
 const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-detail.js'), 'utf8');
 const TRADE_FORMS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade-forms.js'), 'utf8');
 const CLOSE_LEGS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-close-legs.js'), 'utf8');
@@ -96,7 +98,10 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The Journal trade-detail owner is now the NEWEST layer of all, sitting on
 // top of trade forms: peel it first so every undo below still sees the exact
 // document it was cut against.
-const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(INDEX, TRADE_DETAIL_MODULE);
+// The Portfolio data-fetch owner is now the NEWEST layer: peel it first so
+// every undo below still sees the document it was cut against.
+const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(INDEX, PORTFOLIO_MODULE);
+const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(prePortfolio, TRADE_DETAIL_MODULE);
 const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
 const preCloseLegs = CLOSE_LEGS_U.undoJournalCloseLegs(preTradeForms, CLOSE_LEGS_MODULE);
 const preTtReconnect = TT_RECONNECT_U.undoTtReconnect(preCloseLegs, TT_RECONNECT_MODULE);
@@ -366,9 +371,9 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1765976, 'current shipped index UTF-16 length is the post-trade-detail value');
-eq(sha256(INDEX), '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9',
-  'current shipped index SHA-256 is the post-trade-detail value');
+eq(INDEX.length, 1746489, 'current shipped index UTF-16 length is the post-portfolio value');
+eq(sha256(INDEX), '124d838e3974cf40b5d97c18fec767233c8655114dcb0dd1282c8da5537bedee',
+  'current shipped index SHA-256 is the post-portfolio value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -624,7 +629,7 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/portfolio-data-fetch.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore, MCX charts, MCX macro-check and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');

@@ -242,6 +242,9 @@ const CLOSE_LEGS_EXTRACTION_SCRIPTS = [
 const TRADE_FORMS_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-forms.js',
 ];
+const PORTFOLIO_EXTRACTION_SCRIPTS = [
+  './js/portfolio/portfolio-data-fetch.js',
+];
 const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-detail.js',
 ];
@@ -255,7 +258,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(TT_RECONNECT_EXTRACTION_SCRIPTS)
   .concat(CLOSE_LEGS_EXTRACTION_SCRIPTS)
   .concat(TRADE_FORMS_EXTRACTION_SCRIPTS)
-  .concat(TRADE_DETAIL_EXTRACTION_SCRIPTS);
+  .concat(TRADE_DETAIL_EXTRACTION_SCRIPTS)
+  .concat(PORTFOLIO_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -1161,7 +1165,10 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   eq(MCX2_RELOCATED_ABOVE, 24690, 'the MCX VIX relocation removed exactly 24,690 chars from the monolith');
   // MCX3's two cuts are BELOW both shared-price outliers, so they do not
   // contribute to this piecewise 'relocated above' offset.
-  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE;
+  // The portfolio data-fetch block (#421) was removed from ABOVE both
+  // declarations, so it shifts them by its full raw size, separator included.
+  const PORTFOLIO_RELOCATED_ABOVE = 19550;
+  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2747,8 +2754,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 59,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail Journal Close Legs extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 60,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3495,7 +3502,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && TT_RECONNECT_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && CLOSE_LEGS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && TRADE_FORMS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && TRADE_DETAIL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && TRADE_DETAIL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && PORTFOLIO_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

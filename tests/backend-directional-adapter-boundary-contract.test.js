@@ -672,8 +672,8 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(ttReconnectTagIdx >= 0, 'tag order: the TT reconnect owner is present');
   eq(apexPostAuthTagIdx, ttReconnectTagIdx - 1,
      'tag order: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(ttReconnectTagIdx, inlineTagIdx - 4,
-     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
+  eq(ttReconnectTagIdx, inlineTagIdx - 5,
+     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail and portfolio owners');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -719,9 +719,9 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // only its distance from the tail grew.
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 27,
-   'ORDER: the adapter sits twenty-seven parts from the tail');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 26,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 28,
+   'ORDER: the adapter sits twenty-eight parts from the tail');
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 27,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
@@ -812,8 +812,8 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
   eq(ttReconnectPart.length, 1, 'ORDER: the TT reconnect owner is present exactly once');
   eq(PART_RANGES.indexOf(apexPostAuthPart[0]), PART_RANGES.indexOf(ttReconnectPart[0]) - 1,
      'ORDER: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(PART_RANGES.indexOf(ttReconnectPart[0]), PART_RANGES.length - 5,
-     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms and trade-detail owners');
+  eq(PART_RANGES.indexOf(ttReconnectPart[0]), PART_RANGES.length - 6,
+     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail and portfolio owners');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,
