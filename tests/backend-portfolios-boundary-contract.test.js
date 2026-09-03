@@ -384,6 +384,50 @@ section('6. Dependencies — all read at call time');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+section('6b. Cross-module dependencies — the ones the monolith does NOT declare');
+// ─────────────────────────────────────────────────────────────────────────────
+// §6 measures only names the MONOLITH declares, which is the right question for
+// what the extraction left behind — but it is not the whole dependency picture.
+// This module also calls `ttCall` and reads `BACKEND`, both declared in earlier
+// MODULES. A behavioural smoke test found that gap; it is closed here.
+{
+  const locals = APP_LOADER.parseScriptTags(INDEX)
+    .filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+  const owned = new Set(OWNERS.map((o) => o.name));
+  const masked = maskLiterals(MODULE);
+  const referenced = new Set();
+  const idRe = /(^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)/g;
+  let m;
+  while ((m = idRe.exec(masked))) if (!owned.has(m[2])) referenced.add(m[2]);
+
+  const fromModules = {};
+  for (const rel of locals) {
+    if (rel === MODULE_REL) continue;
+    for (const d of scanTopLevelDeclarations(fs.readFileSync(path.join(ROOT, rel), 'utf8'))) {
+      if (referenced.has(d.name)) (fromModules[rel] = fromModules[rel] || []).push(d.name);
+    }
+  }
+  eq(fromModules, {
+    'js/api/backend-client.js': ['ttCall'],
+    'js/config/backend-config.js': ['BACKEND'],
+  }, 'it takes exactly two names from other modules: ttCall and BACKEND');
+
+  // Both must already be defined when this module's own top-level code runs.
+  // They are not read at evaluation time (§5 proves that), but the ORDER is what
+  // makes every later call resolve, so it is pinned rather than assumed.
+  const mine = locals.indexOf(MODULE_REL);
+  for (const rel of Object.keys(fromModules)) {
+    ok(locals.indexOf(rel) < mine,
+      rel + ' loads before this module (position ' + locals.indexOf(rel) + ' of ' + mine + ')');
+  }
+  eq(locals.indexOf('js/api/backend-client.js'), 3, 'the backend client loads fourth');
+  eq(locals.indexOf('js/config/backend-config.js'), 4, 'the backend config fifth');
+  // And the module must NOT reach the network any other way.
+  eq(refSites(masked, 'fetch').length, 0, 'it never calls fetch directly — every request goes through ttCall');
+  eq(refSites(masked, 'XMLHttpRequest').length, 0, '…and never XMLHttpRequest');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 section('7. Consumers — including three modules that load FIRST');
 // ─────────────────────────────────────────────────────────────────────────────
 {
@@ -525,4 +569,112 @@ section('12. Fail-closed — every documented error, by its exact message');
     P + 'EXTRACTED_IDENTITY', 'a document with foreign content appended');
 }
 
-console.log('\n' + pass + ' assertions passed.');
+// ─────────────────────────────────────────────────────────────────────────────
+section('13. Behavioural — the relocated code still runs');
+// ─────────────────────────────────────────────────────────────────────────────
+// Byte-exactness is proved by §11; this proves the bytes still WORK when loaded
+// as a classic script. The stub is built from what the module actually
+// references, not from guesswork: writing it wrong six times and the module
+// zero is what surfaced the cross-module gap §6b now pins.
+{
+  const calls = [];
+  const nodes = {};
+  const el = (id) => ({ id, style: {}, _html: '', value: '',
+    classList: { add() {}, remove() {}, toggle() {} },
+    set innerHTML(v) { this._html = v; }, get innerHTML() { return this._html; },
+    appendChild() {}, addEventListener() {}, querySelector() { return null; },
+    querySelectorAll() { return []; }, remove() {}, focus() {}, closest() { return null; } });
+  const doc = {
+    getElementById(id) { if (!nodes[id]) nodes[id] = el(id); return nodes[id]; },
+    createElement(t) { return el(t); }, querySelector() { return null; },
+    querySelectorAll() { return []; }, addEventListener() {}, body: el('body'),
+  };
+  const portfolios = [{ id: 'p1', name: 'Core' }, { id: 'p2', name: 'Hedge' }];
+  const trades = [
+    { id: 't1', portfolioId: 'p1', ticker: 'SPY', status: 'closed', pnl: 120 },
+    { id: 't2', portfolioId: 'p2', ticker: 'QQQ', status: 'open', pnl: 0 },
+    { id: 't3', portfolioId: 'gone', ticker: 'IWM', status: 'open', pnl: 0 },
+  ];
+  let ttCalls = [];
+  const box = {
+    console: { log() {}, warn() {}, error() {}, debug() {} },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    Promise, Date, Math, JSON, String, Number, Boolean, Array, Object,
+    isNaN, parseFloat, parseInt, encodeURIComponent, decodeURIComponent,
+    document: doc,
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    BACKEND: 'https://backend.test',
+    ttCall: async (p, o) => { ttCalls.push({ path: String(p), method: (o && o.method) || 'GET' });
+      return { ok: true, portfolios }; },
+    fetch: async () => { throw new Error('the module must not call fetch directly'); },
+    S: { ttConnected: true, backendKey: 'k', portfolioData: {}, scanData: [] },
+    _activeView: 'portfolio',
+    _portfolioRiskDebugEnabled: () => false,
+    isApexLocalDevEnv: () => false,
+    showToast: (m) => calls.push(['showToast', String(m).slice(0, 40)]),
+    showView: (v) => calls.push(['showView', v]),
+    escHtml: (x) => String(x == null ? '' : x).replace(/[&<>"]/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])),
+    jStatBox: (a, b) => '<div>' + a + ':' + b + '</div>',
+    portStat: (a, b) => '<div>' + a + ':' + b + '</div>',
+    renderPortfolioJournalView: () => calls.push(['renderPortfolioJournalView']),
+    _jSyncJournalFromBackend: async () => { calls.push(['jSync']); return true; },
+    _updateStormBanner: () => calls.push(['storm']),
+    portfolioManager: {
+      getAll: () => portfolios.slice(),
+      getById: (id) => portfolios.find((p) => p.id === id) || null,
+      getSource: () => 'local', getLoadError: () => null,
+      setLoadError: () => calls.push(['setLoadError']),
+      setFromBackend: (l) => calls.push(['setFromBackend', (l || []).length]),
+      upsertLocal: (p) => { calls.push(['upsertLocal', p && p.id]); return p; },
+      removeLocalOnly: (id) => calls.push(['removeLocalOnly', id]),
+    },
+    journalManager: {
+      getAll: () => trades.slice(),
+      getOpenTrades: (pid) => trades.filter((t) => t.status === 'open' && (pid == null || t.portfolioId === pid)),
+      getStats: (pid) => ({ totalPnL: pid === 'p1' ? 120 : 0, total: 1, closed: 1, open: 1 }),
+      loadFromBackend: async () => true,
+    },
+  };
+  box.window = box;
+  box.globalThis = box;
+  vm.createContext(box);
+  vm.runInContext(MODULE, box, { filename: 'backend-portfolios.js' });
+
+  eq(ttCalls.length, 0, 'loading issues no request');
+  eq(calls.length, 0, '…and calls nothing at all');
+
+  const done = [];
+  const run = async () => {
+    ttCalls = [];
+    await box.backendListPortfolios();
+    done.push(['GET', ttCalls.length === 1 && /portfolio/i.test(ttCalls[0].path)]);
+    ttCalls = [];
+    await box.backendCreatePortfolio({ name: 'New' });
+    done.push(['POST', ttCalls.length === 1 && ttCalls[0].method === 'POST']);
+    ttCalls = [];
+    await box.backendDeletePortfolio('p1');
+    done.push(['DELETE', ttCalls.length === 1 && ttCalls[0].method === 'DELETE']);
+    ttCalls = [];
+    await Promise.all([box._syncPortfoliosFromBackend(), box._syncPortfoliosFromBackend()]);
+    done.push(['sync guards re-entry', ttCalls.length <= 1]);
+  };
+  // The synchronous paths first.
+  box.renderPortfolioView();
+  const html = Object.keys(nodes).map((k) => nodes[k]._html || '').join('');
+  ok(/Core/.test(html) && /Hedge/.test(html), 'renderPortfolioView renders both portfolios');
+  const rec = box.getPortfolioJournalReconciliation();
+  ok(/gone|unassigned|orphan/i.test(JSON.stringify(rec)),
+    'the reconciliation report still finds the trade whose portfolio is missing');
+
+  // Then the async ones. The summary is printed from inside, so the process
+  // cannot exit reporting success while a rejection is still pending.
+  run().then(() => {
+    for (const [name, okp] of done) ok(okp, 'behaviour: ' + name);
+    eq(done.length, 4, 'four async paths were driven');
+    console.log('\n' + pass + ' assertions passed.');
+  }).catch((e) => {
+    console.error('\nFAIL  behavioural: ' + e.message);
+    process.exit(1);
+  });
+}
