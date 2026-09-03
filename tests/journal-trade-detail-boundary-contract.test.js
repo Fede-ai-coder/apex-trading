@@ -77,7 +77,7 @@ const BASE_INDEX_SHA256 = '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24
 const BASE_LOCAL_SCRIPTS = 58;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit. That
 // audit is replaced one-for-one by its permanent contract, so it stays at 142.
-const TEST_FILE_COUNT = 144;
+const TEST_FILE_COUNT = 145;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 1717386;
