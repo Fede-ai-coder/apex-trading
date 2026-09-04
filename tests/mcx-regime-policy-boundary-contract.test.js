@@ -18,6 +18,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
@@ -48,6 +49,7 @@ const APP = APP_LOADER.loadAppJavaScriptSource();
 // NEWEST-FIRST so every later undo sees the exact document it was cut against.
 // The helper re-verifies what it hands back by length and SHA-256, so this hop
 // is proved, not assumed.
+const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
@@ -77,7 +79,11 @@ const MCX_CHARTS_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/mcx-charts.js')
 // Manual expiry is now the NEWEST layer of all: peel it first, then backend
 // portfolios, so every undo below still sees the exact document it was cut
 // against.
-const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(INDEX, EXPIRY_MANUAL_MODULE);
+// The portfolio alignment + row traffic light pair is now the NEWEST layer of
+// all, sitting on top of manual expiry: peel it FIRST so every undo below
+// still sees the exact document it was cut against.
+const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(INDEX, TRAFFIC_LIGHT_MODULE);
+const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
 const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
 const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);
 const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(prePortfolio, TRADE_DETAIL_MODULE);
@@ -159,6 +165,7 @@ const TRADE_DETAIL_TAG = '<script src=\"./js/ui/journal-trade-detail.js\"></scri
 const PORTFOLIO_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></script>';
 const BACKEND_PORTFOLIOS_TAG = '<script src="./js/portfolio/backend-portfolios.js"></script>';
 const EXPIRY_MANUAL_TAG = '<script src="./js/portfolio/portfolio-expiry-manual.js"></script>';
+const TRAFFIC_LIGHT_TAG = '<script src="./js/portfolio/portfolio-traffic-light.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -225,8 +232,8 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n',
-  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n',
+  'service tail ends Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&
   migrationAt > writeAt && INDEX.indexOf(MANUAL_TAG) > migrationAt &&

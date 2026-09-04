@@ -297,17 +297,25 @@ const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade
 // The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved.
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
 // Backend portfolios is now the NEWEST layer of all: peel it first so every
 // undo below still sees the exact document it was cut against.
-const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(LIVE_INDEX)
-  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(LIVE_INDEX, EXPIRY_MANUAL_MODULE)
+// The portfolio alignment + row traffic light pair is now the NEWEST layer of
+// all, sitting on top of manual expiry: peel it FIRST so every undo below
+// still sees the exact document it was cut against.
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(LIVE_INDEX, TRAFFIC_LIGHT_MODULE)
   : LIVE_INDEX;
+const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
+  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(PRE_TRAFFIC_LIGHT, EXPIRY_MANUAL_MODULE)
+  : PRE_TRAFFIC_LIGHT;
 const PRE_BACKEND_PORTFOLIOS = BACKEND_PORTFOLIOS_U.isApplied(PRE_EXPIRY_MANUAL)
   ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(PRE_EXPIRY_MANUAL, BACKEND_PORTFOLIOS_MODULE)
   : PRE_EXPIRY_MANUAL;
@@ -394,9 +402,9 @@ eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries ex
 // reconnect undo is proved to return the document to this contract's EXACT #410
 // state — the guarantee this file has always owned, now reached through a peel.
 eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
-eq(LIVE_INDEX.length, EXPIRY_MANUAL_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), EXPIRY_MANUAL_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
-eq(localScripts(LIVE_INDEX).length, 62, 'the live shipped index carries 62 local application scripts');
+eq(LIVE_INDEX.length, TRAFFIC_LIGHT_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), TRAFFIC_LIGHT_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(localScripts(LIVE_INDEX).length, 63, 'the live shipped index carries 63 local application scripts');
 eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
 eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
 eq(localScripts(INDEX).length, TT_RECONNECT_U.BASE_LOCAL_SCRIPTS, '…with exactly 55 local application scripts');
@@ -491,8 +499,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // module is second-to-last rather than last. The invariant this line protects —
 // the module evaluates before the inline monolith that calls it — is unchanged
 // and asserted in its stronger, current form.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-9),
-  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-10),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', '(inline)'],
   'in execution order the module runs immediately before the TT reconnect owner, which precedes the Journal Close Legs owner and then the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -712,7 +720,7 @@ const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
 ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
   'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
-ok(ttIdx === LIVE_PARTS.length - 8,
+ok(ttIdx === LIVE_PARTS.length - 9,
   '…and immediately before the Journal Close Legs owner, then trade forms, trade detail,\n' +
   '   portfolio data fetch, backend portfolios and manual expiry');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
@@ -909,7 +917,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -923,7 +931,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+  rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');

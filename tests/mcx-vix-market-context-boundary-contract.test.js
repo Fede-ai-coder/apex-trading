@@ -321,8 +321,17 @@ const afterEmEnd = INDEX.indexOf('>', afterEmAt);
 const afterEmTag = afterEmEnd >= 0 ? INDEX.slice(afterEmAt, afterEmEnd + 1) : '';
 ok(INDEX.indexOf(backendPortfoliosTag) > INDEX.indexOf(portfolioTag) && afterBpTag === expiryManualOpen,
   'the backend-portfolios owner loads immediately before the manual-expiry owner');
-ok(INDEX.indexOf(expiryManualTag) > INDEX.indexOf(backendPortfoliosTag) && !/\bsrc\s*=/i.test(afterEmTag),
-  'the manual-expiry owner loads immediately before the residual inline application script');
+const trafficLightOpen = '<script src="./js/portfolio/portfolio-traffic-light.js">';
+const trafficLightTag = trafficLightOpen + '</script>';
+const afterTlAt = INDEX.indexOf('<script', INDEX.indexOf(trafficLightTag) + trafficLightTag.length);
+const afterTlEnd = INDEX.indexOf('>', afterTlAt);
+const afterTlTag = afterTlEnd >= 0 ? INDEX.slice(afterTlAt, afterTlEnd + 1) : '';
+ok(INDEX.indexOf(expiryManualTag) > INDEX.indexOf(backendPortfoliosTag) && afterEmTag === trafficLightOpen,
+  'the manual-expiry owner loads immediately before the traffic-light owner');
+// Re-terminated with the chain: without this the last tag would be checked by
+// nothing, which is how this family lost coverage once before.
+ok(INDEX.indexOf(trafficLightTag) > INDEX.indexOf(expiryManualTag) && !/\bsrc\s*=/i.test(afterTlTag),
+  'the traffic-light owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

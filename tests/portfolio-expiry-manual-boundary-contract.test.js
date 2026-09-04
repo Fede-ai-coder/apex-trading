@@ -121,7 +121,15 @@ function isWriteAt(text, at, name) {
 }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The alignment + traffic light pair was cut AFTER this layer, so the live
+// document is no longer the one this contract shipped. Peel it first; its
+// helper re-verifies its own output by length and SHA-256.
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
+const INDEX = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 
 console.log('MANUAL EXPIRY RESOLUTION — PERMANENT BOUNDARY CONTRACT');
@@ -134,7 +142,7 @@ eq(sha256(INDEX), UNDO.EXTRACTED_SHA256, '…confirmed by hash');
 eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 8,769 units');
 eq(sha256(MODULE), UNDO.MODULE_SHA256, '…confirmed by hash');
 eq(APP_LOADER.parseScriptTags(INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT, 'sixty-two local application scripts');
+  LOCAL_SCRIPT_COUNT, 'sixty-two local application scripts — INDEX here is the PEELED document');
 ok(INDEX.indexOf('\r') < 0, 'the document is LF-only');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length,
   TEST_FILE_COUNT, 'the suite is ' + TEST_FILE_COUNT + ' test files — the audit is replaced one for one');
@@ -412,8 +420,8 @@ section('11. Production footprint');
 {
   const tracked = git(['ls-files', 'js/portfolio/']).trim().split('\n').filter(Boolean);
   eq(tracked.sort(), ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js',
-    'js/portfolio/portfolio-expiry-manual.js'],
-    'js/portfolio holds exactly the three portfolio modules');
+    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js'],
+    'js/portfolio holds exactly the four portfolio modules');
 }
 
 console.log('\n' + pass + ' assertions passed.');

@@ -63,8 +63,10 @@ const EXPECTED_DEPENDENCIES = [
 const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
@@ -112,7 +114,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // Manual expiry is now the NEWEST layer of all: peel it first, then backend
 // portfolios, so every undo below still sees the exact document it was cut
 // against.
-const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(INDEX, EXPIRY_MANUAL_MODULE);
+// The portfolio alignment + row traffic light pair is now the NEWEST layer of
+// all, sitting on top of manual expiry: peel it FIRST so every undo below
+// still sees the exact document it was cut against.
+const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(INDEX, TRAFFIC_LIGHT_MODULE);
+const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
 const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
 const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);
 const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(prePortfolio, TRADE_DETAIL_MODULE);
@@ -480,9 +486,9 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1715096, 'current shipped index UTF-16 length is the post-expiry-manual value');
-eq(sha256(INDEX), '6592efa65f0d71ab12fce84e31ea6acf0f9f1868066107d87b16e2711f9376de',
-  'current shipped index SHA-256 is the post-expiry-manual value');
+eq(INDEX.length, 1643350, 'current shipped index UTF-16 length is the post-traffic-light value');
+eq(sha256(INDEX), '63dbe633ddb5edaa2a2343c161120b78275eac20a0bfc41b1f1fa1bd6127206f',
+  'current shipped index SHA-256 is the post-traffic-light value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -567,8 +573,9 @@ const TRADE_DETAIL_TAG2 = '<script src=\"./js/ui/journal-trade-detail.js\"></scr
 const PORTFOLIO_TAG2 = '<script src="./js/portfolio/portfolio-data-fetch.js"></script>';
 const BACKEND_PORTFOLIOS_TAG2 = '<script src="./js/portfolio/backend-portfolios.js"></script>';
 const EXPIRY_MANUAL_TAG2 = '<script src="./js/portfolio/portfolio-expiry-manual.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n<script>'), 1,
-  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the inline monolith');
+const TRAFFIC_LIGHT_TAG2 = '<script src="./js/portfolio/portfolio-traffic-light.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n<script>'), 1,
+  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
 eq(countLiteral(preMcxMacroCheck, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n<script>'), 1,
@@ -803,7 +810,7 @@ eq(identifierCountMasked(maskLiterals(
 section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/services/apex-post-auth-init.js',
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js',
   'js/services/journal-manual-import.js', MODULE_REL,
   'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
   'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
