@@ -56,12 +56,37 @@ sample it was inferred from.** The recurring failure is a universal asserted
 from a partial look — "the earlier three", "every layer", "and no other". If a
 claim cannot be checked exhaustively, scope it explicitly to what was measured.
 
+**A superlative or a uniqueness claim needs an assertion that measures it, or
+it must be scoped to what was actually measured.** "The first", "the only",
+"the smallest", "the cleanest", "unlike every other" — each of these
+quantifies over a whole set, and each was written from a partial look four
+times in a row, wrong every time:
+
+| written | measured |
+|---|---|
+| "the first layer with async owners" | nine of the fifteen before it already had them |
+| "the first seam that is not a closing brace" | `journal-backend-write-through` already ended `})();` |
+| "twelve top-level statements, also a first" | same layer already carried 85 |
+| "it loads in an empty VM — the two before it needed a stub" | sixteen of eighteen load bare |
+
+Two of the four are refuted by the same file, which invites the lesson "watch
+that one outlier". That lesson is itself a fifth instance of the mistake: the
+other two are not refuted by it at all — the async claim by nine layers
+scattered through the chain, the empty-VM claim by a different layer again.
+What all four share is that each was inferred from **the layers nearest to
+hand**, and which layer refutes a claim changes with the claim. So either it
+becomes an `eq` over the whole set — which is what those four are now, in §6
+and §9 of `tests/extraction-boundary-rule-contract.test.js` — or it says "of
+the seven candidates measured here", and stops there.
+
 **A claim worth stating twice is worth executing.** Prose that keeps being
 restated is prose that keeps drifting: the boundary rule was rewritten wrong
 twice in two cycles, and the second version was wrong about the counterexample
 the first had just uncovered — both passed review, because review reads and
 does not run. When a rule matters enough to repeat, move it into a helper with
 a contract, and leave the comment pointing at the file that runs.
+`tests/lib/extraction-boundary.js` is where the boundary, banner, binding and
+evaluation-time rules ended up for exactly this reason.
 
 Prefer stating facts from artifacts that are already proven (the undo helpers
 reconstruct byte-exactly and run in the suite) over a freshly written
