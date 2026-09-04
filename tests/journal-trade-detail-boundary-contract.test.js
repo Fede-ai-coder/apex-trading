@@ -77,7 +77,7 @@ const BASE_INDEX_SHA256 = '7e0851ae220daa6454cf2f3f093821b29c8aff8ba137cb0bbef24
 const BASE_LOCAL_SCRIPTS = 58;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit. That
 // audit is replaced one-for-one by its permanent contract, so it stays at 142.
-const TEST_FILE_COUNT = 145;
+const TEST_FILE_COUNT = 146;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 1717386;
@@ -560,7 +560,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
+  'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');
 // The rejected candidate was never built: H would have been the metrics block
 // without closeTradeDetail, so the test is what this module CONTAINS.
 eq(countLiteral(MODULE, 'function closeTradeDetail()'), 1,

@@ -69,7 +69,7 @@ const BASE_LOCAL_SCRIPTS = 55;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
 // adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
 // is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 145;
+const TEST_FILE_COUNT = 146;
 
 // ── The audited raw fragment, and its two parts ──────────────────────────────
 const RAW_AT = 1872896;
@@ -673,7 +673,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 
   rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
+  'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');
 // The audit's rejected candidates were never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-auth-lifecycle.js')), 'no combined TT auth lifecycle module exists');
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/tt-reconnect-panel.js')), 'no separate reconnect panel module exists');

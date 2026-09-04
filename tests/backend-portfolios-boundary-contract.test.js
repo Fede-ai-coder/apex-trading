@@ -68,7 +68,7 @@ const ANCHOR_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></scrip
 const INLINE_OPEN = '<script>';
 
 const BASE_SHA = '336a3391369d67d2a63721a720eb798814b72664';
-const TEST_FILE_COUNT = 145;
+const TEST_FILE_COUNT = 146;
 const LOCAL_SCRIPT_COUNT = 61;
 
 const OWNERS = [
@@ -179,7 +179,7 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((t) => t.src && /^\.\//.test(t.src))
   LOCAL_SCRIPT_COUNT, 'sixty-one local application scripts');
 ok(INDEX.indexOf('\r') < 0, 'the document is LF-only');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length,
-  TEST_FILE_COUNT, 'the suite is 144 test files');
+  TEST_FILE_COUNT, 'the suite is ' + TEST_FILE_COUNT + ' test files');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The seam — through the shared rule, not a comment');
