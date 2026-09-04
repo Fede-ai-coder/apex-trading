@@ -314,8 +314,15 @@ const afterBpEnd = INDEX.indexOf('>', afterBpAt);
 const afterBpTag = afterBpEnd >= 0 ? INDEX.slice(afterBpAt, afterBpEnd + 1) : '';
 ok(INDEX.indexOf(portfolioTag) > INDEX.indexOf(tradeDetailTag) && afterPfTag === backendPortfoliosOpen,
   'the portfolio data-fetch owner loads immediately before the backend-portfolios owner');
-ok(INDEX.indexOf(backendPortfoliosTag) > INDEX.indexOf(portfolioTag) && !/\bsrc\s*=/i.test(afterBpTag),
-  'the backend-portfolios owner loads immediately before the residual inline application script');
+const expiryManualOpen = '<script src="./js/portfolio/portfolio-expiry-manual.js">';
+const expiryManualTag = expiryManualOpen + '</script>';
+const afterEmAt = INDEX.indexOf('<script', INDEX.indexOf(expiryManualTag) + expiryManualTag.length);
+const afterEmEnd = INDEX.indexOf('>', afterEmAt);
+const afterEmTag = afterEmEnd >= 0 ? INDEX.slice(afterEmAt, afterEmEnd + 1) : '';
+ok(INDEX.indexOf(backendPortfoliosTag) > INDEX.indexOf(portfolioTag) && afterBpTag === expiryManualOpen,
+  'the backend-portfolios owner loads immediately before the manual-expiry owner');
+ok(INDEX.indexOf(expiryManualTag) > INDEX.indexOf(backendPortfoliosTag) && !/\bsrc\s*=/i.test(afterEmTag),
+  'the manual-expiry owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

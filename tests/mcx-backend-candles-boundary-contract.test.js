@@ -60,6 +60,7 @@ const TRADE_FORMS_TAG = '<script src="./js/ui/journal-trade-forms.js"></script>'
 const TRADE_DETAIL_TAG = '<script src=\"./js/ui/journal-trade-detail.js\"></script>';
 const PORTFOLIO_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></script>';
 const BACKEND_PORTFOLIOS_TAG = '<script src="./js/portfolio/backend-portfolios.js"></script>';
+const EXPIRY_MANUAL_TAG = '<script src="./js/portfolio/portfolio-expiry-manual.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -126,8 +127,8 @@ eq(count(INDEX, MCX2_TAG), 1, 'exactly one MCX2 tag');
 eq(count(INDEX, MCX3_TAG), 1, 'exactly one MCX3 tag');
 const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At = INDEX.indexOf(MCX3_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
-eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n' + JOURNAL_BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n',
-  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> inline');
+eq(INDEX.slice(mcx1At, inlineAt), MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + JOURNAL_REMOTE_TAG + '\n' + JOURNAL_WRITE_THROUGH_TAG + '\n' + JOURNAL_MIGRATION_TAG + '\n' + JOURNAL_MANUAL_IMPORT_TAG + '\n' + JOURNAL_BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n',
+  'service tail ends Journal Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> inline');
 const journalAt = INDEX.indexOf(JOURNAL_TAG);
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'MCX3 loads synchronously after its predecessors and immediately before Journal Core');

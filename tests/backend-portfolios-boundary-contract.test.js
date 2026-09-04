@@ -155,7 +155,15 @@ function isWriteAt(text, at, name) {
 }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// Manual expiry was cut AFTER this layer, so the live document is no longer the
+// one this contract shipped. Peel it first; its helper re-verifies its own
+// output by length and SHA-256, so the hop is proved rather than assumed.
+const INDEX = EXPIRY_MANUAL_U.isApplied(LIVE_INDEX)
+  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 
 console.log('BACKEND-BACKED PORTFOLIOS — PERMANENT BOUNDARY CONTRACT');
@@ -526,8 +534,9 @@ section('10. Production footprint');
   const tracked = git(['ls-files', 'js/']).trim().split('\n').filter(Boolean);
   ok(tracked.includes(MODULE_REL), 'the module is tracked');
   eq(tracked.filter((f) => f.startsWith('js/portfolio/')).sort(),
-    ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js'],
-    'js/portfolio holds exactly the two portfolio modules');
+    ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js',
+     'js/portfolio/portfolio-expiry-manual.js'],
+    'js/portfolio holds exactly the three portfolio modules');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

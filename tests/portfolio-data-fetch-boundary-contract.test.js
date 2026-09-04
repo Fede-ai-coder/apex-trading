@@ -126,7 +126,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 62;
+const PARTS_TOTAL = 63;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -241,15 +241,21 @@ function isWriteAt(text, at, name) {
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 // This is the NEWEST layer, so the live document is the one it shipped.
+const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // Backend portfolios was cut AFTER this layer, so the live document is no longer
 // the one this contract shipped. Peel it first; its helper re-verifies its own
 // output by length and SHA-256, so the hop is proved rather than assumed.
-const INDEX = BACKEND_PORTFOLIOS_U.isApplied(LIVE_INDEX)
-  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8'))
+// Two layers were cut AFTER this one; peel both, newest first.
+const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(LIVE_INDEX)
+  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = BACKEND_PORTFOLIOS_U.isApplied(PRE_EXPIRY_MANUAL)
+  ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(
+      PRE_EXPIRY_MANUAL, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8'))
+  : PRE_EXPIRY_MANUAL;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const BASE_INDEX = git(['show', BASE_SHA + ':index.html']);
 
@@ -426,15 +432,15 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 61 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 62 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 59');
 // This section reads the LIVE load order, not the peeled document, so it states
 // what is true now: backend-portfolios was cut after this layer and sits between
 // this module and the inline monolith.
 eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
   '…followed by the backend-portfolios module, which was cut later');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 2,
-  '…and the inline monolith is two positions on');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 3,
+  '…and the inline monolith is three positions on');
 {
   // The referencing set is DERIVED, not assumed.
   const referencing = PARTS
@@ -509,10 +515,11 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 // Measured from THIS layer's base, so it now also carries the backend-portfolios
-// module cut afterwards. Still exhaustive: a fourth production file fails here.
+// modules cut afterwards. Still exhaustive: a fifth production file fails here.
 eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/backend-portfolios.js', MODULE_REL],
-  'production footprint since this base is index.html, this module, and the later backend-portfolios module');
+  ['index.html', 'js/portfolio/backend-portfolios.js', MODULE_REL,
+   'js/portfolio/portfolio-expiry-manual.js'],
+  'production footprint since this base is index.html, this module, and the two later portfolio modules');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -524,7 +531,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-  rel === 'js/portfolio/backend-portfolios.js' ||
+  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/backend-portfolios.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact or the later backend-portfolios module');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

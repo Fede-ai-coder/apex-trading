@@ -57,7 +57,9 @@ const EXPECTED_DEPENDENCIES = [
 ];
 
 const INDEX = APP_LOADER.loadIndexHtml();
+const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const TRADE_DETAIL_U = require('./lib/journal-trade-detail-undo.js');
@@ -102,10 +104,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // document it was cut against.
 // The Portfolio data-fetch owner is now the NEWEST layer: peel it first so
 // every undo below still sees the document it was cut against.
-// Backend portfolios is now the NEWEST layer of all, sitting on top of the
-// portfolio data fetch: peel it first so every undo below still sees the exact
-// document it was cut against.
-const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(INDEX, BACKEND_PORTFOLIOS_MODULE);
+// Manual expiry is now the NEWEST layer of all: peel it first, then backend
+// portfolios, so every undo below still sees the exact document it was cut
+// against.
+const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(INDEX, EXPIRY_MANUAL_MODULE);
+const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
 const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);
 const preTradeDetail = TRADE_DETAIL_U.undoJournalTradeDetail(prePortfolio, TRADE_DETAIL_MODULE);
 const preTradeForms = TRADE_FORMS_U.undoJournalTradeForms(preTradeDetail, TRADE_FORMS_MODULE);
@@ -377,9 +380,9 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1723800, 'current shipped index UTF-16 length is the post-backend-portfolios value');
-eq(sha256(INDEX), '5e820b246f62b7e874d3ebe637a1b42b370fbe34698c8980d3781e47862c5ff5',
-  'current shipped index SHA-256 is the post-backend-portfolios value');
+eq(INDEX.length, 1715096, 'current shipped index UTF-16 length is the post-expiry-manual value');
+eq(sha256(INDEX), '6592efa65f0d71ab12fce84e31ea6acf0f9f1868066107d87b16e2711f9376de',
+  'current shipped index SHA-256 is the post-expiry-manual value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -635,7 +638,7 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore, MCX charts, MCX macro-check and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');
