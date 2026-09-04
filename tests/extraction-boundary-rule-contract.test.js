@@ -30,6 +30,11 @@
 //     a bare statement — but only ONE of the sixteen that predate this cycle,
 //     which is why fifteen-of-sixteen read like a law.
 //
+//   • §9 pins the four "firsts" that were published and were false, over the
+//     whole chain rather than the neighbours each was inferred from. It also
+//     pins the thing that is NOT true about them — that one recurring outlier
+//     explains all four — because a first draft of §9 asserted exactly that.
+//
 // Historical offsets are reached by peeling the undo onion newest-first with
 // the shipped helpers, which reconstruct byte-exactly or throw. Nothing here
 // re-measures the tree with a fresh scratch tool.
@@ -38,6 +43,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_LOADER = require('./lib/load-app-source.js');
@@ -418,6 +424,100 @@ section('8. Can a region be a module at all — the swing rejection, kept');
   }
   ok(CODE.indexOf('S.swing = {') >= 0,
     'the swing block is still inline, still performing S.swing at top level');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('9. The four superlatives, measured over the whole set');
+// ─────────────────────────────────────────────────────────────────────────────
+// Four "firsts" were published in four consecutive cycles, and all four were
+// false — each inferred from the layers at hand rather than from the chain.
+// §6 already pins the seam one. The other three are pinned here, because the
+// rule they cost us ("a superlative needs an assertion that measures it, or a
+// stated scope") is worth no more than the assertion behind it.
+//
+// WHAT THE FOUR HAVE IN COMMON is NOT one recurring outlier — a first draft of
+// this section asserted that and was wrong, which is the fifth instance of the
+// same mistake and the reason these are assertions now. Measured: TWO of the
+// four are falsified by the same layer, journal-backend-write-through, and the
+// other two are not falsified by it at all. The async claim is falsified by
+// nine layers scattered through the chain; the empty-VM claim by the layer two
+// places back, which loads bare.
+//
+// So the mechanism is not "watch that one file". It is that each claim was
+// inferred from the layers NEAREST TO HAND, and which layer refutes a claim
+// changes with the claim. Checking the neighbours is what produced all four.
+{
+  const FETCH_LAYER = 'js/portfolio/portfolio-data-fetch.js';
+  const NEWEST_TRAILING = 'js/portfolio/backend-portfolios.js';
+
+  const hasAsyncOwner = (rel) => scanTopLevelDeclarations(read(rel)).some((d) => !!d.isAsync);
+  // Control: the flag distinguishes something. A detector that always answers
+  // the same way would make every count below meaningless.
+  eq(scanTopLevelDeclarations('async function a(){}\n').some((d) => !!d.isAsync), true,
+     'control — an async declaration is detected as async');
+  eq(scanTopLevelDeclarations('function a(){}\n').some((d) => !!d.isAsync), false,
+     'control — a plain declaration is not');
+
+  // (a) "the first layer with async owners", published of portfolio-data-fetch.
+  const withAsync = CHAIN.filter(hasAsyncOwner);
+  eq(withAsync.length, 11, 'eleven of the eighteen layers own an async declaration');
+  const earlier = CHAIN.slice(0, CHAIN.indexOf(FETCH_LAYER));
+  eq(earlier.length, 15, 'fifteen layers predate the one the claim was made about');
+  eq(earlier.filter(hasAsyncOwner).length, 9, '…and NINE of them already had async owners');
+
+  // (b) "twelve top-level statements, also a first". Count the lines that carry
+  // code once every top-level declaration is blanked out — the same residue §6
+  // walks, counted rather than tested for emptiness.
+  function topLevelStatementLines(src) {
+    const ch = Array.from(src);
+    for (const d of scanTopLevelDeclarations(src)) {
+      for (let i = d.start; i <= d.end; i++) ch[i] = ' ';
+    }
+    return ch.join('').split('\n').filter((l) => !isBlankOrComment(l)).length;
+  }
+  // Control: on an input whose answer is known by inspection, and where a
+  // scanner that ignored declarations would answer differently.
+  eq(topLevelStatementLines('var a = 1;\nb();\n\n// c\nd();\n'), 2,
+     'control — two statement lines, the declaration and the comment excluded');
+  eq(topLevelStatementLines('function a(){\n  b();\n}\nvar c = 1;\n'), 0,
+     'control — declarations only counts zero, INCLUDING the statements inside them');
+  eq(topLevelStatementLines(read(TRAILING_CODE_LAYER)), 85,
+     'the layer called "a first at twelve" already carried 85 top-level statement lines');
+
+  // (c) "it loads in an empty VM — the two before it needed a stub."
+  function loadsBare(src, filename) {
+    const sandbox = {};
+    try {
+      vm.createContext(sandbox);
+      vm.runInContext(src, sandbox, { filename: filename });
+      return true;
+    } catch (e) { return false; }
+  }
+  eq(loadsBare('var a = 1;\n', 'control-bare.js'), true,
+     'control — a self-contained source loads in an empty VM');
+  eq(loadsBare('missingHost.go();\n', 'control-host.js'), false,
+     '…and one that reaches for a host does not');
+  const needHost = CHAIN.filter((rel) => !loadsBare(read(rel), rel));
+  eq(needHost, [TRAILING_CODE_LAYER, NEWEST_TRAILING],
+     'exactly TWO of the eighteen need a host to load');
+  eq(CHAIN.length - needHost.length, 16, '…so sixteen load bare, not two');
+
+  // WHICH LAYER REFUTES WHICH CLAIM. Two of the four share a refuter; the other
+  // two do not, and asserting otherwise is the mistake this section exists for.
+  ok(topLevelStatementLines(read(TRAILING_CODE_LAYER)) > 12,
+     'write-through refutes the statement claim');
+  eq(read(TRAILING_CODE_LAYER).trimEnd().slice(-5), '})();',
+     '…and the seam claim §6 pins — the two that DO share a refuter');
+  eq(withAsync.indexOf(TRAILING_CODE_LAYER), -1,
+     'but it owns nothing async, so it does NOT refute the async claim');
+  eq(loadsBare(read(TRAILING_CODE_LAYER), TRAILING_CODE_LAYER), false,
+     '…and it does not load bare, so it does not refute the empty-VM claim either');
+  // Those two are refuted elsewhere, and not in one place: nine layers for the
+  // async claim, and for the empty-VM claim the layer two places back — which
+  // was one of "the two before it" the claim said had needed a stub.
+  eq(loadsBare(read(FETCH_LAYER), FETCH_LAYER), true,
+     'the layer two places back loads bare, which is what refuted the empty-VM claim');
+  eq(loadsBare(read(NEWEST_TRAILING), NEWEST_TRAILING), false, '…while the one before it did not');
 }
 
 console.log('\n' + pass + ' assertions passed.');
