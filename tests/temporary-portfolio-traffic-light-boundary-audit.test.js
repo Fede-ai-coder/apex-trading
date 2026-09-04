@@ -544,7 +544,16 @@ section('8. The extraction Phase 2 must reproduce');
 section('9. Production is byte-identical to the base');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(git(['rev-parse', 'HEAD']).trim(), BASE_SHA, 'measured at the pinned base commit');
+  // NOT `HEAD === BASE_SHA`: the audit commit sits ON TOP of the base, so that
+  // holds only in the working tree before committing — which is exactly when it
+  // was first run, and why it passed locally and failed in CI. What is true at
+  // every point after the commit is that the base is an ancestor.
+  const isAncestor = (a, b) => {
+    try { git(['merge-base', '--is-ancestor', a, b]); return true; } catch (e) { return false; }
+  };
+  ok(isAncestor(BASE_SHA, 'HEAD'), 'the pinned base is an ancestor of HEAD');
+  eq(isAncestor('HEAD', BASE_SHA), false,
+    'control — the relation is directional, so the check is not vacuously true');
   const changed = git(['diff', '--name-only', BASE_SHA]).split('\n').filter(Boolean);
   eq(changed.filter((f) => !/^tests\//.test(f)), [],
     'not one file outside tests/ differs from the base');
