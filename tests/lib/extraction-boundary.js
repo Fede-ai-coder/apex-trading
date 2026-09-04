@@ -94,4 +94,87 @@ function assertSeam(source, at, bodyEnd) {
   return bodyEnd + 1;
 }
 
-module.exports = { isBlankOrComment, snapBodyEnd, assertSeam };
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TWO SCREENING RULES, also as code rather than prose.
+//
+// Audit #424 found both of these wrong in the same cycle, and both are in this
+// repository's own list of ways ad-hoc checkers fail. They are here so the next
+// screen cannot get them wrong again by reading a comment.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// WHERE THE FEATURE BOUNDARIES ARE. Neither indentation rule alone works:
+//
+//   column-0 only      misses 83 banners that sit at four spaces
+//   any indentation    admits 77 that sit INSIDE function bodies, where they
+//                      delimit nothing extractable — one "16,714-unit region"
+//                      found that way held 548 units of top-level declarations
+//                      and the rest was a function body
+//
+// A banner marks a feature boundary only when it is at TOP LEVEL. Pass the
+// monolith and the function-body ranges the caller already computed.
+function topLevelBanners(src, functionBodies) {
+  if (typeof src !== 'string') throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  const bodies = functionBodies || [];
+  const inFn = (i) => bodies.some((r) => i >= r.start && i <= r.end);
+  const marks = [];
+  for (const re of [/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ── /gm]) {
+    let m;
+    while ((m = re.exec(src))) if (!inFn(m.index)) marks.push(m.index);
+  }
+  return marks.sort((a, b) => a - b);
+}
+
+// WHAT COUNTS AS A BINDING A REGION MIGHT WRITE. The outbound coupling check
+// scanned `var` declarations only. `S` — the application state object the whole
+// monolith hangs off — is a `const`, so the check never tested it, and a region
+// performing `S.swing = { … }` at load scored a PERFECT ZERO outbound. Scanning
+// var, const and let took that region from 0 to 74.
+//
+// "Mutable by keyword" was never the question. The question is whether the
+// region assigns through a name it does not own, and `const` bindings are
+// assigned through constantly.
+const BINDING_FORMS = ['var', 'const', 'let'];
+function bindingNames(declarations) {
+  if (!Array.isArray(declarations)) throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  return declarations.filter((d) => BINDING_FORMS.indexOf(d.form) >= 0).map((d) => d.name);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CAN THIS REGION BE A MODULE AT ALL? The question that disqualified the best
+// candidate this programme ever measured.
+//
+// Module tags load BEFORE the inline monolith. So any name a region reads at
+// EVALUATION time must already exist when the module runs — and names declared
+// inside the monolith do not. Audit #424's swing candidate scored four external
+// edges over 242,294 units and still could not be taken, because it performs
+// `S.swing = { … }` at top level and `S` is a `const` declared in the monolith.
+// The extracted module would have thrown at load.
+//
+// `evaluationTimeReads` returns the names a region touches OUTSIDE every one of
+// its own top-level declarations. An extractable region returns only names that
+// already exist when a module loads. It is the caller's job to decide which
+// those are; this returns the list to check.
+function evaluationTimeReads(src, declarations, maskFn) {
+  if (typeof src !== 'string') throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  if (!Array.isArray(declarations)) throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  if (typeof maskFn !== 'function') throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  const owned = new Set(declarations.map((d) => d.name));
+  const spans = declarations.map((d) => [d.start, d.end]);
+  const outside = (i) => !spans.some(([a, b]) => i >= a && i <= b);
+  const masked = maskFn(src);
+  const found = new Set();
+  const re = /(^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)/g;
+  let m;
+  while ((m = re.exec(masked))) {
+    const i = m.index + m[1].length;
+    if (!outside(i) || owned.has(m[2])) continue;
+    found.add(m[2]);
+  }
+  return Array.from(found).sort();
+}
+
+module.exports = {
+  isBlankOrComment, snapBodyEnd, assertSeam,
+  topLevelBanners, BINDING_FORMS, bindingNames,
+  evaluationTimeReads,
+};

@@ -11,7 +11,7 @@
 //
 // WHAT IS ACTUALLY TRUE, and what this file pins:
 //
-//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the six
+//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the seven
 //     boundaries the undo helpers still record and shows that no rule over
 //     banners or headers reproduces them: two are followed immediately by
 //     another feature's code with no header between, and one SPANS a `// ── `
@@ -22,11 +22,11 @@
 //   • Four seam INVARIANTS hold at every recorded boundary. §3 verifies them
 //     against real historical offsets — recorded when those regions were cut,
 //     so they cannot have been fitted to this file — and §4 against the
-//     seventeen shipped modules.
+//     eighteen shipped modules.
 //
 //   • §6 pins the two dead rules against the case that killed them, so neither
 //     can be reintroduced by someone who finds the old comment. Two of the
-//     seventeen layers end on trailing top-level code — one on an IIFE, one on
+//     eighteen layers end on trailing top-level code — one on an IIFE, one on
 //     a bare statement — but only ONE of the sixteen that predate this cycle,
 //     which is why fifteen-of-sixteen read like a law.
 //
@@ -41,9 +41,11 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const APP_LOADER = require('./lib/load-app-source.js');
-const { scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
-const { isBlankOrComment, snapBodyEnd, assertSeam } = require('./lib/extraction-boundary.js');
+const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('./lib/eic-contract-guards.js');
+const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
+  evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const EXPIRY_MANUAL = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS = require('./lib/backend-portfolios-undo.js');
 const PORTFOLIO = require('./lib/portfolio-data-fetch-undo.js');
 const TRADE_DETAIL = require('./lib/journal-trade-detail-undo.js');
@@ -52,7 +54,7 @@ const CLOSE_LEGS = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH = require('./lib/apex-post-auth-init-undo.js');
 
-// The seventeen shipped layers, oldest first.
+// The eighteen shipped layers, oldest first.
 const CHAIN = [
   'js/services/journal-core.js',
   'js/services/mcx-regime-policy.js',
@@ -71,8 +73,9 @@ const CHAIN = [
   'js/ui/journal-trade-detail.js',
   'js/portfolio/portfolio-data-fetch.js',
   'js/portfolio/backend-portfolios.js',
+  'js/portfolio/portfolio-expiry-manual.js',
 ];
-const CHAIN_LENGTH = 17;
+const CHAIN_LENGTH = 18;
 
 // The one layer that already ended on trailing top-level code, and by how much.
 const TRAILING_CODE_LAYER = 'js/services/journal-backend-write-through.js';
@@ -137,13 +140,15 @@ section('2. snapBodyEnd — the mechanical half');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('3. The four invariants, at six REAL historical boundaries');
+section('3. The four invariants, at seven REAL historical boundaries');
 // ─────────────────────────────────────────────────────────────────────────────
 // Peel the onion newest-first. Each helper reconstructs byte-exactly or throws,
 // so reaching a layer's base at all is already a proof of identity.
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = EXPIRY_MANUAL.undoPortfolioExpiryManual(doc, read('js/portfolio/portfolio-expiry-manual.js'));
+  HISTORY.push({ name: 'portfolio-expiry-manual', H: EXPIRY_MANUAL, doc });
   doc = BACKEND_PORTFOLIOS.undoBackendPortfolios(doc, read('js/portfolio/backend-portfolios.js'));
   HISTORY.push({ name: 'backend-portfolios', H: BACKEND_PORTFOLIOS, doc });
   doc = PORTFOLIO.undoPortfolioDataFetch(doc, read('js/portfolio/portfolio-data-fetch.js'));
@@ -158,7 +163,7 @@ const HISTORY = [];
   doc = APEX_POST_AUTH.undoApexPostAuthInit(doc, read('js/services/apex-post-auth-init.js'));
   HISTORY.push({ name: 'apex-post-auth-init', H: APEX_POST_AUTH, doc });
 }
-eq(HISTORY.length, 6, 'six layers still record their own raw offsets');
+eq(HISTORY.length, 7, 'seven layers still record their own raw offsets');
 
 for (const { name, H, doc } of HISTORY) {
   const at = H.RAW_AT;
@@ -190,9 +195,9 @@ for (const { name, H, doc } of HISTORY) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The seventeen shipped modules');
+section('4. The eighteen shipped modules');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the seventeen shipped layers');
+eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the eighteen shipped layers');
 for (const rel of CHAIN) {
   const src = read(rel);
   ok(src.length > 0, rel + ': exists and is non-empty');
@@ -218,7 +223,7 @@ section('5. WHERE a region ends is a judgement, not a rule');
     if (!isBlankOrComment(firstLine)) followedByCode.push(name);
   }
   eq(followedByCode, ['tt-reconnect', 'apex-post-auth-init'],
-    'two of the six are followed directly by unrelated code, with no header between');
+    'two of the seven are followed directly by unrelated code, with no header between');
   ok(followedByCode.length > 0,
     '…so "extend to the next feature header" is not the rule, and never was');
 
@@ -285,9 +290,9 @@ section('6. The two dead rules, pinned against the case that killed them');
     if (tail.split('\n').some((l) => !isBlankOrComment(l))) withTrailingCode.push(rel);
   }
   eq(withTrailingCode, [TRAILING_CODE_LAYER, 'js/portfolio/backend-portfolios.js'],
-    'TWO of the seventeen end on trailing top-level code');
-  eq(CHAIN.length - withTrailingCode.length, 15,
-    '…and fifteen end at their last declaration');
+    'TWO of the eighteen end on trailing top-level code');
+  eq(CHAIN.length - withTrailingCode.length, 16,
+    '…and sixteen end at their last declaration');
   // The distinction that matters: of the SIXTEEN layers that predate the cycle
   // which uncovered this, exactly one did — which is why fifteen-of-sixteen felt
   // like a law. The newest layer is the second case, and it is a statement
@@ -298,6 +303,121 @@ section('6. The two dead rules, pinned against the case that killed them');
     'the earlier one ends on an IIFE');
   eq(read('js/portfolio/backend-portfolios.js').trimEnd().slice(-1), ';',
     'and the newest on a bare statement');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('7. The two screening rules audit #424 corrected');
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  // BANNERS. Measured against the live monolith, which is the only place the
+  // numbers mean anything.
+  const html = APP_LOADER.loadIndexHtml();
+  const tags = APP_LOADER.parseScriptTags(html).filter((t) => !t.src && t.inline.length > 1000);
+  eq(tags.length, 1, 'there is exactly one inline application script');
+  const CODE = tags[0].inline;
+  const collect = (res) => { const out = []; for (const re of res) { let m; while ((m = re.exec(CODE))) out.push(m.index); } return out; };
+  const columnZero = collect([/^\/\/ ═══/gm, /^\/\/ ── /gm]);
+  const anyIndent = collect([/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ── /gm]);
+  const bodies = functionBodyRanges(CODE).filter((r) => !r.iife);
+  const topLevel = topLevelBanners(CODE, bodies);
+
+  ok(anyIndent.length > columnZero.length,
+    'the column-0 rule misses banners that sit at an indent (' +
+    (anyIndent.length - columnZero.length) + ' of them)');
+  ok(topLevel.length < anyIndent.length,
+    '…and any-indent admits banners inside function bodies (' +
+    (anyIndent.length - topLevel.length) + ' of them)');
+  ok(topLevel.length > columnZero.length,
+    'so the top-level rule finds strictly more than column-0');
+  eq(topLevelBanners(CODE, bodies), topLevel, 'the helper is deterministic');
+  for (const i of topLevel) {
+    ok(!bodies.some((r) => i >= r.start && i <= r.end),
+      'every mark the helper returns is outside every function body');
+    break;
+  }
+  throwsWith(() => topLevelBanners(null, []), 'EXTRACTION_SEAM_BAD_SOURCE', 'a non-string is refused');
+
+  // A CONTROL on the smallest possible input, so the numbers above are not the
+  // only evidence the filter does anything.
+  {
+    const probe = 'function f(){\n  // ── inside a body ──\n}\n// ── at top level ──\nvar x = 1;\n';
+    const pBodies = functionBodyRanges(probe).filter((r) => !r.iife);
+    const marks = topLevelBanners(probe, pBodies);
+    eq(marks.length, 1, 'CONTROL: of two banners, only the top-level one is returned');
+    ok(probe.slice(marks[0]).indexOf('at top level') >= 0, '…and it is the right one');
+  }
+}
+{
+  // BINDINGS. The rule that hid the swing block's 74 outbound writes.
+  eq(BINDING_FORMS, ['var', 'const', 'let'], 'all three declaration forms count as bindings');
+  const decls = scanTopLevelDeclarations(
+    'var _v = 1;\nconst _c = {};\nlet _l = [];\nfunction f(){}\n');
+  eq(bindingNames(decls).sort(), ['_c', '_l', '_v'], 'bindingNames returns them and not the function');
+  ok(bindingNames(decls).length > decls.filter((d) => d.form === 'var').length,
+    'CONTROL: it returns strictly more than a var-only filter, which is the whole point');
+  throwsWith(() => bindingNames('nope'), 'EXTRACTION_SEAM_BAD_SOURCE', 'a non-array is refused');
+
+  // And on the live monolith, the gap is not hypothetical.
+  const html = APP_LOADER.loadIndexHtml();
+  const CODE = APP_LOADER.parseScriptTags(html).filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+  const mono = scanTopLevelDeclarations(CODE);
+  const consts = mono.filter((d) => d.form === 'const').map((d) => d.name);
+  ok(consts.indexOf('S') >= 0,
+    'the monolith’s central state object S is a CONST — invisible to the old rule');
+  ok(bindingNames(mono).length > mono.filter((d) => d.form === 'var').length,
+    'so the corrected rule scans strictly more bindings than the old one did');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('8. Can a region be a module at all — the swing rejection, kept');
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit #424 rejected the best-coupled region this programme has ever measured,
+// and that audit is gone. The reason is kept here so the candidate cannot be
+// retried on its coupling numbers alone.
+{
+  // Every shipped module passes the test, by construction — each one loads.
+  for (const rel of CHAIN) {
+    const src = read(rel);
+    const decls = scanTopLevelDeclarations(src);
+    const reads = evaluationTimeReads(src, decls, maskLiterals);
+    const monolithOnly = reads.filter((n) => n === 'S');
+    eq(monolithOnly, [], rel + ' reads no monolith-declared S at evaluation time');
+  }
+
+  // The rule itself, on the smallest inputs that show it working.
+  {
+    const inert = 'function f(){ return outer; }\n';
+    eq(evaluationTimeReads(inert, scanTopLevelDeclarations(inert), maskLiterals), [],
+      'a region whose only reference is inside a declaration reads nothing at load');
+    const hazard = 'function f(){ return 1; }\nOuterState.slice = {};\n';
+    eq(evaluationTimeReads(hazard, scanTopLevelDeclarations(hazard), maskLiterals), ['OuterState'],
+      'CONTROL: a top-level assignment through a foreign name IS reported');
+    ok(evaluationTimeReads(hazard, scanTopLevelDeclarations(hazard), maskLiterals).length >
+       evaluationTimeReads(inert, scanTopLevelDeclarations(inert), maskLiterals).length,
+      '…and the two inputs are distinguished, so the metric is not constant');
+  }
+  throwsWith(() => evaluationTimeReads(null, [], maskLiterals),
+    'EXTRACTION_SEAM_BAD_SOURCE', 'a non-string is refused');
+  throwsWith(() => evaluationTimeReads('x', 'nope', maskLiterals),
+    'EXTRACTION_SEAM_BAD_SOURCE', 'a non-array of declarations is refused');
+  throwsWith(() => evaluationTimeReads('x', [], null),
+    'EXTRACTION_SEAM_BAD_SOURCE', 'a missing mask function is refused');
+
+  // And the reason the swing region cannot be one: S is a const inside the
+  // monolith, so a module loading before it would not find S at all.
+  const html = APP_LOADER.loadIndexHtml();
+  const CODE = APP_LOADER.parseScriptTags(html).filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+  const sDecl = scanTopLevelDeclarations(CODE).filter((d) => d.name === 'S');
+  eq(sDecl.length, 1, 'the monolith declares S exactly once');
+  eq(sDecl[0].form, 'const', '…as a const, which is why a var-only outbound scan never saw it');
+  const locals = APP_LOADER.parseScriptTags(html)
+    .filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+  for (const rel of locals) {
+    eq(scanTopLevelDeclarations(read(rel)).filter((d) => d.name === 'S').length, 0,
+      rel + ' does not declare S either, so no module can supply it');
+  }
+  ok(CODE.indexOf('S.swing = {') >= 0,
+    'the swing block is still inline, still performing S.swing at top level');
 }
 
 console.log('\n' + pass + ' assertions passed.');

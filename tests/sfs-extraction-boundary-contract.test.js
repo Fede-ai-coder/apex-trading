@@ -1407,45 +1407,51 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
      '4.7 the scan service loads IMMEDIATELY after the config/state module it reads');
   ok(idx(SCAN_SERVICE_TAG) < idx('./js/services/sfs-candle-predicates.js'),
      '4.8 …and ahead of the SFS candle modules that call its helpers');
-  eq(local.length, 61,
-     '4.9 index.html loads 61 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check, MCX charts, Apex post-auth, TT reconnect, Journal Close Legs, portfolio data-fetch and backend-portfolios owners');
-  eq(local[local.length - 9].src, './js/ui/mcx-macro-check.js',
+  eq(local.length, 62,
+     '4.9 index.html loads 62 local application scripts, including PRETRADE, all four MCX owners, seven Journal owners and the MCX macro-check, MCX charts, Apex post-auth, TT reconnect, Journal Close Legs, portfolio data-fetch, backend-portfolios and manual-expiry owners');
+  eq(local[local.length - 10].src, './js/ui/mcx-macro-check.js',
      '4.9a the MCX macro-check owner is immediately before the MCX charts owner');
   eq(local.filter((s) => s.src === './js/ui/mcx-macro-check.js').length, 1,
      '4.9b exactly one MCX macro-check tag, no duplicate');
-  eq(local[local.length - 8].src, './js/ui/mcx-charts.js',
+  eq(local[local.length - 9].src, './js/ui/mcx-charts.js',
      '4.9c the MCX charts owner is immediately before the Apex shared post-auth owner');
-  eq(local[local.length - 7].src, './js/services/apex-post-auth-init.js',
+  eq(local[local.length - 8].src, './js/services/apex-post-auth-init.js',
      '4.9d the Apex shared post-auth owner is immediately before the TT reconnect owner');
   eq(local.filter((s) => s.src === './js/services/apex-post-auth-init.js').length, 1,
      '4.9e exactly one Apex post-auth tag, no duplicate');
-  eq(local[local.length - 6].src, './js/ui/tt-reconnect.js',
+  eq(local[local.length - 7].src, './js/ui/tt-reconnect.js',
      '4.9f the TT reconnect owner is immediately before the Journal Close Legs owner');
   eq(local.filter((s) => s.src === './js/ui/tt-reconnect.js').length, 1,
      '4.9g exactly one TT reconnect tag, no duplicate');
-  eq(local[local.length - 5].src, './js/ui/journal-close-legs.js',
+  eq(local[local.length - 6].src, './js/ui/journal-close-legs.js',
      '4.9h the Journal Close Legs owner is immediately before the Journal trade-forms owner');
   eq(local.filter((s) => s.src === './js/ui/journal-close-legs.js').length, 1,
      '4.9i exactly one Journal Close Legs tag, no duplicate');
-  eq(local[local.length - 4].src, './js/ui/journal-trade-forms.js',
+  eq(local[local.length - 5].src, './js/ui/journal-trade-forms.js',
      '4.9j the Journal trade-forms owner is immediately before the Journal trade-detail owner');
   eq(local.filter((s) => s.src === './js/ui/journal-trade-forms.js').length, 1,
      '4.9k exactly one Journal trade-forms tag, no duplicate');
-  eq(local[local.length - 3].src, './js/ui/journal-trade-detail.js',
+  eq(local[local.length - 4].src, './js/ui/journal-trade-detail.js',
      '4.9k2 the Journal trade-detail owner is immediately before the portfolio owner');
   eq(local.filter((s) => s.src === './js/ui/journal-trade-detail.js').length, 1,
      '4.9k3 exactly one Journal trade-detail tag, no duplicate');
-  eq(local[local.length - 2].src, './js/portfolio/portfolio-data-fetch.js',
+  eq(local[local.length - 3].src, './js/portfolio/portfolio-data-fetch.js',
      '4.9k4 the portfolio data-fetch owner is immediately before the backend-portfolios owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-data-fetch.js').length, 1,
      '4.9k5 exactly one portfolio data-fetch tag, no duplicate');
   // The chain shifted by one, so the END of it must be re-pinned. Without these
   // two the last slot would be asserted by nothing at all — the exact way this
   // family lost coverage once before.
-  eq(local[local.length - 1].src, './js/portfolio/backend-portfolios.js',
-     '4.9k6 the backend-portfolios owner is the LAST local application script before the inline monolith');
+  eq(local[local.length - 2].src, './js/portfolio/backend-portfolios.js',
+     '4.9k6 the backend-portfolios owner is immediately before the manual-expiry owner');
   eq(local.filter((s) => s.src === './js/portfolio/backend-portfolios.js').length, 1,
      '4.9k7 exactly one backend-portfolios tag, no duplicate');
+  // The chain shifted again, so its END is re-pinned again. Leaving it would put
+  // the last slot back under no assertion at all.
+  eq(local[local.length - 1].src, './js/portfolio/portfolio-expiry-manual.js',
+     '4.9k8 the manual-expiry owner is the LAST local application script before the inline monolith');
+  eq(local.filter((s) => s.src === './js/portfolio/portfolio-expiry-manual.js').length, 1,
+     '4.9k9 exactly one manual-expiry tag, no duplicate');
   eq(local.filter((s) => s.src === './js/ui/mcx-charts.js').length, 1,
      '4.9d exactly one MCX charts tag, no duplicate');
   ok(idx(UI_PANEL_TAG) >= 0, '4.10 the UI panel module is loaded by index.html');
