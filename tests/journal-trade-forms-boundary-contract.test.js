@@ -90,7 +90,7 @@ const BASE_LOCAL_SCRIPTS = 57;
 // Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
 // adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
 // is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 145;
+const TEST_FILE_COUNT = 146;
 
 // ── The two moved fragments, in base coordinates ─────────────────────────────
 const HANDLERS = {
@@ -587,7 +587,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 144 test files: the shipped contracts, plus the extraction-seam contract');
+  'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');
 // The audit's rejected candidate was never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-manual-entry.js')), 'no manual-entry-only module exists');
 ok(!fs.existsSync(path.join(ROOT, 'js/ui/journal-adjustment.js')), 'no adjustment-only module exists');

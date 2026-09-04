@@ -78,7 +78,7 @@ const BASE_INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a6
 const BASE_LOCAL_SCRIPTS = 59;
 // Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
 // count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 145;
+const TEST_FILE_COUNT = 146;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 196604;
@@ -535,7 +535,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact or the later backend-portfolios module');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  'the suite is 144 test files: the backend-portfolios audit was replaced one for one, plus the extraction-seam contract');
+  'the suite is ' + TEST_FILE_COUNT + ' test files: the backend-portfolios audit was replaced one for one, plus the extraction-seam contract');
 // The rejected alternative was never built.
 ok(!fs.existsSync(path.join(ROOT, 'js/portfolio/portfolio-panel.js')),
   'no openers-only module exists (rejected Candidate Q)');
