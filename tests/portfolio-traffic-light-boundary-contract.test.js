@@ -160,7 +160,14 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('PORTFOLIO ALIGNMENT + ROW TRAFFIC LIGHT — PERMANENT BOUNDARY CONTRACT');
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The candle-store chart pair was cut AFTER this layer, so the live document is
+// no longer the one this contract shipped. Peel it first.
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
+const INDEX = CANDLE_CHART_U.isApplied(LIVE_INDEX)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

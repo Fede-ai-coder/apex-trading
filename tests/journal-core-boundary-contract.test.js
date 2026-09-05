@@ -20,6 +20,7 @@ const JOURNAL_UI_U = require('./lib/journal-ui-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const WRITE_U = require('./lib/journal-backend-write-through-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
@@ -90,6 +91,7 @@ const PORTFOLIO_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></sc
 const BACKEND_PORTFOLIOS_TAG = '<script src="./js/portfolio/backend-portfolios.js"></script>';
 const EXPIRY_MANUAL_TAG = '<script src="./js/portfolio/portfolio-expiry-manual.js"></script>';
 const TRAFFIC_LIGHT_TAG = '<script src="./js/portfolio/portfolio-traffic-light.js"></script>';
+const CANDLE_CHART_TAG = '<script src="./js/ui/backend-candle-store-chart.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -150,8 +152,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n',
-  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n',
+  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(JOURNAL_TAG), 'Journal Core tag is classic synchronous src-only form');
@@ -259,6 +261,7 @@ section('6. snapshot/tagging and analytics semantics remain callable from inline
 
 section('7. byte-exact undo and mutation-sensitive negative controls');
 const MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-manual-import.js'), 'utf8');
+const CANDLE_CHART_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8');
 const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
@@ -300,7 +303,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The portfolio alignment + row traffic light pair is now the NEWEST layer of
 // all, sitting on top of manual expiry: peel it FIRST so every undo below
 // still sees the exact document it was cut against.
-const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(INDEX, TRAFFIC_LIGHT_MODULE);
+// The backend-candle-store chart pair is now the NEWEST layer of all, sitting
+// on top of the traffic light: peel it FIRST so every undo below still sees
+// the exact document it was cut against.
+const preCandleChart = CANDLE_CHART_U.undoBackendCandleStoreChart(INDEX, CANDLE_CHART_MODULE);
+const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(preCandleChart, TRAFFIC_LIGHT_MODULE);
 const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
 const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
 const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);

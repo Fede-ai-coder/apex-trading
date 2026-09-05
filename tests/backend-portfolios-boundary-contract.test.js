@@ -155,6 +155,7 @@ function isWriteAt(text, at, name) {
 }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
@@ -164,10 +165,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The alignment + traffic light pair was cut AFTER manual expiry, so peel it
 // FIRST; each helper re-verifies its own output by length and SHA-256, so both
 // hops are proved rather than assumed.
-const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
-  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
+// The candle-store chart pair was cut AFTER this layer; peel it FIRST. Each
+// helper re-verifies its own output by length and SHA-256, so every hop is
+// proved rather than assumed.
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
+      PRE_CANDLE_CHART, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
+  : PRE_CANDLE_CHART;
 const INDEX = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
   ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(
       PRE_TRAFFIC_LIGHT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8'))

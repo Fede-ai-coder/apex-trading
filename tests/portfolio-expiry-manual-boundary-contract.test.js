@@ -126,10 +126,15 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // document is no longer the one this contract shipped. Peel it first; its
 // helper re-verifies its own output by length and SHA-256.
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
-const INDEX = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
-  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
+      PRE_CANDLE_CHART, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
+  : PRE_CANDLE_CHART;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 
 console.log('MANUAL EXPIRY RESOLUTION — PERMANENT BOUNDARY CONTRACT');

@@ -173,9 +173,11 @@ const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade
 // The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved.
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const CANDLE_CHART_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8');
 const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
@@ -186,9 +188,15 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 // The portfolio alignment + row traffic light pair is now the NEWEST layer of
 // all, sitting on top of manual expiry: peel it FIRST so every undo below
 // still sees the exact document it was cut against.
-const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
-  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(LIVE_INDEX, TRAFFIC_LIGHT_MODULE)
+// The backend-candle-store chart pair is now the NEWEST layer of all, sitting
+// on top of the traffic light: peel it FIRST so every undo below still sees
+// the exact document it was cut against.
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(LIVE_INDEX, CANDLE_CHART_MODULE)
   : LIVE_INDEX;
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(PRE_CANDLE_CHART, TRAFFIC_LIGHT_MODULE)
+  : PRE_CANDLE_CHART;
 const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
   ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(PRE_TRAFFIC_LIGHT, EXPIRY_MANUAL_MODULE)
   : PRE_TRAFFIC_LIGHT;
@@ -598,15 +606,15 @@ eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
 eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
 eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
-eq(LIVE_INDEX.length, 1643350, 'current shipped index UTF-16 length is the post-traffic-light value');
-eq(sha256(LIVE_INDEX), '63dbe633ddb5edaa2a2343c161120b78275eac20a0bfc41b1f1fa1bd6127206f',
-  'current shipped index SHA-256 is the post-traffic-light value');
+eq(LIVE_INDEX.length, 1618149, 'current shipped index UTF-16 length is the post-candle-chart value');
+eq(sha256(LIVE_INDEX), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
+  'current shipped index SHA-256 is the post-candle-chart value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 63,
-  'the current shipped index carries exactly 63 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 64,
+  'the current shipped index carries exactly 64 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -1159,7 +1167,7 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
@@ -1172,7 +1180,7 @@ section('10. Exact prompt construction and success transcript');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
     rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
-    rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+    rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 
   const contractsToAdvance = [

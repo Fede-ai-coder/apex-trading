@@ -131,7 +131,7 @@ const DEPENDANTS = {
   './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
 };
 const MODULE_POSITION = 58;
-const PARTS_TOTAL = 64;
+const PARTS_TOTAL = 65;
 const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -253,9 +253,11 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The Portfolio data-fetch owner is a LATER layer sitting on top of this one, so
 // the live document is no longer the one this layer shipped. Peel it first.
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const CANDLE_CHART_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8');
 const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
@@ -266,9 +268,15 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 // The portfolio alignment + row traffic light pair is now the NEWEST layer of
 // all, sitting on top of manual expiry: peel it FIRST so every undo below
 // still sees the exact document it was cut against.
-const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
-  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(LIVE_INDEX, TRAFFIC_LIGHT_MODULE)
+// The backend-candle-store chart pair is now the NEWEST layer of all, sitting
+// on top of the traffic light: peel it FIRST so every undo below still sees
+// the exact document it was cut against.
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(LIVE_INDEX, CANDLE_CHART_MODULE)
   : LIVE_INDEX;
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(PRE_CANDLE_CHART, TRAFFIC_LIGHT_MODULE)
+  : PRE_CANDLE_CHART;
 const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
   ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(PRE_TRAFFIC_LIGHT, EXPIRY_MANUAL_MODULE)
   : PRE_TRAFFIC_LIGHT;
@@ -445,10 +453,10 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order: a module defined AFTER three of its callers');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 63 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 64 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 5,
-  '…five positions before the inline monolith: portfolio data-fetch,\n' +
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 6,
+  '…six positions before the inline monolith: portfolio data-fetch,\n' +
   '   backend-portfolios and manual expiry were all cut after this one');
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
@@ -551,7 +559,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', MODULE_REL],
+  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
   'production footprint is exactly index.html plus the one new module');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -564,7 +572,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

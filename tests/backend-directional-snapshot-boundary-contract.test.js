@@ -247,6 +247,7 @@ const PORTFOLIO_EXTRACTION_SCRIPTS = [
   './js/portfolio/backend-portfolios.js',
   './js/portfolio/portfolio-expiry-manual.js',
   './js/portfolio/portfolio-traffic-light.js',
+  './js/ui/backend-candle-store-chart.js',
 ];
 const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-detail.js',
@@ -2757,8 +2758,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 63,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios, manual expiry, traffic light and Journal Close Legs extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 64,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios, manual expiry, traffic light, candle-store chart and Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2949,7 +2950,7 @@ function topLevelDeclarations(code) {
     ['./js/config/backend-config.js'].concat(STRESS_COMPANION_SCRIPTS).concat([
       './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
       './js/services/journal-backend-write-through.js', './js/ui/mcx-charts.js',
-      './js/portfolio/backend-portfolios.js',
+      './js/portfolio/backend-portfolios.js', './js/ui/backend-candle-store-chart.js',
     ]),
     'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners and the backend-portfolios re-exports');
 
@@ -3850,10 +3851,14 @@ eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308
   //
   // W1 is therefore no longer unprecedented, but the precedent is a RELOCATION
   // of exposures that already existed — not a decision to expose something new,
-  // which is what W1 would be. Pinned by name AND by content: a second module,
-  // or an eleventh assignment here, still fails.
-  deepEq(modulesTouchingWindow, ['./js/portfolio/backend-portfolios.js'],
-    'exactly ONE shipped module assigns to window at evaluation time, and only by relocation');
+  // which is what W1 would be. The candle-store chart pair (#430) is the second
+  // such relocation and makes exactly ONE assignment, of a function it declares
+  // itself; audit #429 measured that it reads no monolith-owned name at load.
+  // Pinned by name AND by content: a THIRD module, an eleventh assignment in
+  // backend-portfolios, or a second one in the chart module, still fails.
+  deepEq(modulesTouchingWindow,
+    ['./js/portfolio/backend-portfolios.js', './js/ui/backend-candle-store-chart.js'],
+    'exactly TWO shipped modules assign to window at evaluation time, and only by relocation');
   {
     const part = localParts.find(function (p) { return p.src === './js/portfolio/backend-portfolios.js'; });
     const topLevel = stripFunctions(maskSource(part.code));
@@ -3871,8 +3876,8 @@ eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308
     .map(function (p) { return p.src; });
   deepEq(modulesAssigningWindowAtAll,
     ['./js/ui/pretrade-risk-modal.js', './js/services/mcx-vix-market-context.js',
-     './js/portfolio/backend-portfolios.js'],
-    'exactly THREE shipped modules assign to window anywhere — the PRETRADE risk modal and the MCX VIX owner from function bodies only, and backend-portfolios from top level as pinned above');
+     './js/portfolio/backend-portfolios.js', './js/ui/backend-candle-store-chart.js'],
+    'exactly FOUR shipped modules assign to window anywhere — the PRETRADE risk modal and the MCX VIX owner from function bodies only, and backend-portfolios from top level as pinned above');
   {
     const modal = localParts.filter(function (p) { return p.src === './js/ui/pretrade-risk-modal.js'; })[0];
     ok(!!modal, 'the PRETRADE risk-modal module is part of the measured local set');

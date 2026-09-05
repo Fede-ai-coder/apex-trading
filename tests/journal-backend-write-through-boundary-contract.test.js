@@ -17,6 +17,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/journal-backend-write-through-undo.js');
 const REMOTE_U = require('./lib/journal-remote-persistence-undo.js');
 const MIGRATION_U = require('./lib/journal-migration-undo.js');
+const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
@@ -402,6 +403,7 @@ const expectedIndex = baseWithoutCandidate.replace(
   REMOTE_TAG + '\n<script>',
   REMOTE_TAG + '\n' + MODULE_TAG + '\n<script>'
 );
+const CANDLE_CHART_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8');
 const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
@@ -443,7 +445,11 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The portfolio alignment + row traffic light pair is now the NEWEST layer of
 // all, sitting on top of manual expiry: peel it FIRST so every undo below
 // still sees the exact document it was cut against.
-const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(INDEX, TRAFFIC_LIGHT_MODULE);
+// The backend-candle-store chart pair is now the NEWEST layer of all, sitting
+// on top of the traffic light: peel it FIRST so every undo below still sees
+// the exact document it was cut against.
+const preCandleChart = CANDLE_CHART_U.undoBackendCandleStoreChart(INDEX, CANDLE_CHART_MODULE);
+const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(preCandleChart, TRAFFIC_LIGHT_MODULE);
 const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
 const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
 const prePortfolio = PORTFOLIO_U.undoPortfolioDataFetch(preBackendPortfolios, PORTFOLIO_MODULE);
@@ -500,9 +506,9 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1643350, 'current shipped index UTF-16 length is the post-traffic-light value');
-eq(sha256(INDEX), '63dbe633ddb5edaa2a2343c161120b78275eac20a0bfc41b1f1fa1bd6127206f',
-  'current shipped index SHA-256 is the post-traffic-light value');
+eq(INDEX.length, 1618149, 'current shipped index UTF-16 length is the post-candle-chart value');
+eq(sha256(INDEX), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
+  'current shipped index SHA-256 is the post-candle-chart value');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -785,7 +791,7 @@ const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untrac
 const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 eq(changedProduction, [
-  'index.html', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-migration.js',
+  'index.html', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',
   'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'
