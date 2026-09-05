@@ -78,7 +78,7 @@ const BASE_INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a6
 const BASE_LOCAL_SCRIPTS = 59;
 // Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
 // count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 146;
+const TEST_FILE_COUNT = 147;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 196604;
