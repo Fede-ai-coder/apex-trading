@@ -293,17 +293,25 @@ const TRADE_DETAIL_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-trade
 // The Portfolio data-fetch owner is the newest layer of all: peel it FIRST so
 // every undo below still sees the exact document it was cut against. Its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved.
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS_U = require('./lib/backend-portfolios-undo.js');
+const TRAFFIC_LIGHT_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8');
 const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8');
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
 // Backend portfolios is now the NEWEST layer of all: peel it first so every
 // undo below still sees the exact document it was cut against.
-const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(LIVE_INDEX)
-  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(LIVE_INDEX, EXPIRY_MANUAL_MODULE)
+// The portfolio alignment + row traffic light pair is now the NEWEST layer of
+// all, sitting on top of manual expiry: peel it FIRST so every undo below
+// still sees the exact document it was cut against.
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(LIVE_INDEX, TRAFFIC_LIGHT_MODULE)
   : LIVE_INDEX;
+const PRE_EXPIRY_MANUAL = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
+  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(PRE_TRAFFIC_LIGHT, EXPIRY_MANUAL_MODULE)
+  : PRE_TRAFFIC_LIGHT;
 const PRE_BACKEND_PORTFOLIOS = BACKEND_PORTFOLIOS_U.isApplied(PRE_EXPIRY_MANUAL)
   ? BACKEND_PORTFOLIOS_U.undoBackendPortfolios(PRE_EXPIRY_MANUAL, BACKEND_PORTFOLIOS_MODULE)
   : PRE_EXPIRY_MANUAL;
@@ -573,7 +581,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
   'production footprint is exactly index.html plus this owner and the later trade-detail owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -584,7 +592,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
   'no documentation changed, except the repository working notes');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')), 'no configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
+  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');

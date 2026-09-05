@@ -246,6 +246,7 @@ const PORTFOLIO_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-data-fetch.js',
   './js/portfolio/backend-portfolios.js',
   './js/portfolio/portfolio-expiry-manual.js',
+  './js/portfolio/portfolio-traffic-light.js',
 ];
 const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-detail.js',
@@ -2756,8 +2757,8 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 62,
-   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios, manual expiry and Journal Close Legs extraction modules before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 63,
+   'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios, manual expiry, traffic light and Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3552,11 +3553,21 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   // recorded but cannot feed back into the historical DSB ceiling. Its rejected
   // list/view split carried 15 external writes, so the whole-owner decision is
   // not evidence that DSB option A should be re-ranked retroactively.
-  eq(SHIPPED_MODULES[0].name, './js/ui/journal-ui.js',
-     'the later Journal UI owner is now the largest shipped module overall');
-  eq(SHIPPED_MODULES[0].declBytes, 52971, 'Journal UI declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[0].fileBytes, 54514, 'Journal UI complete file bytes are recorded separately');
+  // The portfolio alignment + row traffic light pair (audit #427) enters the
+  // ranking at the TOP, displacing Journal UI. Like every later layer here it is
+  // RECORDED but excluded by name from AUDIT_TIME_MODULES, so the historical DSB
+  // ceiling is untouched and options A-E keep their original ranking.
+  eq(SHIPPED_MODULES[0].name, './js/portfolio/portfolio-traffic-light.js',
+     'the later traffic-light pair is now the largest shipped module overall');
+  eq(SHIPPED_MODULES[0].declBytes, 67659, 'traffic-light declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[0].fileBytes, 71811, 'traffic-light complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[0].declBytes > SIZE_CEILING,
+     'the later whole-owner traffic-light pair intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[1].name, './js/ui/journal-ui.js',
+     'the Journal UI owner is now the SECOND-largest shipped module overall');
+  eq(SHIPPED_MODULES[1].declBytes, 52971, 'Journal UI declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[1].fileBytes, 54514, 'Journal UI complete file bytes are recorded separately');
+  ok(SHIPPED_MODULES[1].declBytes > SIZE_CEILING,
      'the later whole-owner Journal UI intentionally does not rewrite the historical DSB ceiling');
   // The MCX charts/lifecycle owner is a later, independently audited relocation
   // (owner-cohesive candidate C). Like Journal UI it is RECORDED here but must
@@ -3570,30 +3581,32 @@ eq(SIZE_CEILING, 35609, 'size ceiling = 1.5 × the largest shipped module, in ow
   // relocation (audit #416 candidate G). It enters the ranking ABOVE trade
   // forms and, like every later layer here, is RECORDED but excluded by name
   // from AUDIT_TIME_MODULES so the historical DSB ceiling is untouched.
-  eq(SHIPPED_MODULES[1].name, './js/ui/journal-trade-detail.js',
-     'the later Journal trade-detail owner is now the second-largest shipped module');
-  eq(SHIPPED_MODULES[1].declBytes, 48734, 'Journal trade-detail declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[1].fileBytes, 49103, 'Journal trade-detail complete file bytes are recorded separately');
-  ok(SHIPPED_MODULES[1].declBytes > SIZE_CEILING,
-     'the later whole-owner Journal trade-detail module intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[2].name, './js/ui/journal-trade-forms.js',
-     'the later Journal trade-forms owner is now the third-largest shipped module');
-  eq(SHIPPED_MODULES[2].declBytes, 47527, 'Journal trade-forms declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[2].fileBytes, 48160, 'Journal trade-forms complete file bytes are recorded separately');
+  eq(SHIPPED_MODULES[2].name, './js/ui/journal-trade-detail.js',
+     'the later Journal trade-detail owner is now the third-largest shipped module');
+  eq(SHIPPED_MODULES[2].declBytes, 48734, 'Journal trade-detail declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[2].fileBytes, 49103, 'Journal trade-detail complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[2].declBytes > SIZE_CEILING,
-     'the later whole-owner Journal trade-forms module intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[3].name, './js/ui/mcx-charts.js',
-     'the later MCX charts owner is now the fourth-largest shipped module');
-  eq(SHIPPED_MODULES[3].declBytes, 40962, 'MCX charts declaration bytes are measured with the same metric');
-  eq(SHIPPED_MODULES[3].fileBytes, 44506, 'MCX charts complete file bytes are recorded separately');
+     'the later whole-owner Journal trade-detail module intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[3].name, './js/ui/journal-trade-forms.js',
+     'the later Journal trade-forms owner is now the fourth-largest shipped module');
+  eq(SHIPPED_MODULES[3].declBytes, 47527, 'Journal trade-forms declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[3].fileBytes, 48160, 'Journal trade-forms complete file bytes are recorded separately');
   ok(SHIPPED_MODULES[3].declBytes > SIZE_CEILING,
+     'the later whole-owner Journal trade-forms module intentionally does not rewrite the historical DSB ceiling');
+  eq(SHIPPED_MODULES[4].name, './js/ui/mcx-charts.js',
+     'the later MCX charts owner is now the fifth-largest shipped module');
+  eq(SHIPPED_MODULES[4].declBytes, 40962, 'MCX charts declaration bytes are measured with the same metric');
+  eq(SHIPPED_MODULES[4].fileBytes, 44506, 'MCX charts complete file bytes are recorded separately');
+  ok(SHIPPED_MODULES[4].declBytes > SIZE_CEILING,
      'the later whole-owner MCX charts module intentionally does not rewrite the historical DSB ceiling');
-  eq(SHIPPED_MODULES[4].name, './js/ui/sfs-panel.js',
-     'the SFS UI panel is now the fifth-largest shipped module');
-  ok(SHIPPED_MODULES[4].declBytes <= SIZE_CEILING,
+  eq(SHIPPED_MODULES[5].name, './js/ui/sfs-panel.js',
+     'the SFS UI panel is now the sixth-largest shipped module');
+  ok(SHIPPED_MODULES[5].declBytes <= SIZE_CEILING,
      'the SFS UI panel remains under the unchanged historical ceiling');
-  eq(SHIPPED_MODULES[5].name, SERVICE_SRC,
-     'the DSB service is now the fifth-largest shipped module');
+  // The slot below said "fifth" while sitting at index 5, which is the sixth.
+  // Corrected with the shift rather than carried forward.
+  eq(SHIPPED_MODULES[6].name, SERVICE_SRC,
+     'the DSB service is now the seventh-largest shipped module');
 }
 note('secondary metric only — largest complete file: ' + LARGEST_SHIPPED.fileBytes +
      ' B; the ceiling above deliberately does NOT mix the two units');

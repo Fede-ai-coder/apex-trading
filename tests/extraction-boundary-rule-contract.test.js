@@ -11,7 +11,7 @@
 //
 // WHAT IS ACTUALLY TRUE, and what this file pins:
 //
-//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the seven
+//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the eight
 //     boundaries the undo helpers still record and shows that no rule over
 //     banners or headers reproduces them: two are followed immediately by
 //     another feature's code with no header between, and one SPANS a `// ── `
@@ -22,11 +22,11 @@
 //   • Four seam INVARIANTS hold at every recorded boundary. §3 verifies them
 //     against real historical offsets — recorded when those regions were cut,
 //     so they cannot have been fitted to this file — and §4 against the
-//     eighteen shipped modules.
+//     nineteen shipped modules.
 //
 //   • §6 pins the two dead rules against the case that killed them, so neither
 //     can be reintroduced by someone who finds the old comment. Two of the
-//     eighteen layers end on trailing top-level code — one on an IIFE, one on
+//     nineteen layers end on trailing top-level code — one on an IIFE, one on
 //     a bare statement — but only ONE of the sixteen that predate this cycle,
 //     which is why fifteen-of-sixteen read like a law.
 //
@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const TRAFFIC_LIGHT = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL = require('./lib/portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS = require('./lib/backend-portfolios-undo.js');
 const PORTFOLIO = require('./lib/portfolio-data-fetch-undo.js');
@@ -60,7 +61,7 @@ const CLOSE_LEGS = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH = require('./lib/apex-post-auth-init-undo.js');
 
-// The eighteen shipped layers, oldest first.
+// The nineteen shipped layers, oldest first.
 const CHAIN = [
   'js/services/journal-core.js',
   'js/services/mcx-regime-policy.js',
@@ -80,8 +81,9 @@ const CHAIN = [
   'js/portfolio/portfolio-data-fetch.js',
   'js/portfolio/backend-portfolios.js',
   'js/portfolio/portfolio-expiry-manual.js',
+  'js/portfolio/portfolio-traffic-light.js',
 ];
-const CHAIN_LENGTH = 18;
+const CHAIN_LENGTH = 19;
 
 // The one layer that already ended on trailing top-level code, and by how much.
 const TRAILING_CODE_LAYER = 'js/services/journal-backend-write-through.js';
@@ -146,13 +148,15 @@ section('2. snapBodyEnd — the mechanical half');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('3. The four invariants, at seven REAL historical boundaries');
+section('3. The four invariants, at eight REAL historical boundaries');
 // ─────────────────────────────────────────────────────────────────────────────
 // Peel the onion newest-first. Each helper reconstructs byte-exactly or throws,
 // so reaching a layer's base at all is already a proof of identity.
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = TRAFFIC_LIGHT.undoPortfolioTrafficLight(doc, read('js/portfolio/portfolio-traffic-light.js'));
+  HISTORY.push({ name: 'portfolio-traffic-light', H: TRAFFIC_LIGHT, doc });
   doc = EXPIRY_MANUAL.undoPortfolioExpiryManual(doc, read('js/portfolio/portfolio-expiry-manual.js'));
   HISTORY.push({ name: 'portfolio-expiry-manual', H: EXPIRY_MANUAL, doc });
   doc = BACKEND_PORTFOLIOS.undoBackendPortfolios(doc, read('js/portfolio/backend-portfolios.js'));
@@ -169,7 +173,7 @@ const HISTORY = [];
   doc = APEX_POST_AUTH.undoApexPostAuthInit(doc, read('js/services/apex-post-auth-init.js'));
   HISTORY.push({ name: 'apex-post-auth-init', H: APEX_POST_AUTH, doc });
 }
-eq(HISTORY.length, 7, 'seven layers still record their own raw offsets');
+eq(HISTORY.length, 8, 'eight layers still record their own raw offsets');
 
 for (const { name, H, doc } of HISTORY) {
   const at = H.RAW_AT;
@@ -201,9 +205,9 @@ for (const { name, H, doc } of HISTORY) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The eighteen shipped modules');
+section('4. The nineteen shipped modules');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the eighteen shipped layers');
+eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the nineteen shipped layers');
 for (const rel of CHAIN) {
   const src = read(rel);
   ok(src.length > 0, rel + ': exists and is non-empty');
@@ -229,7 +233,7 @@ section('5. WHERE a region ends is a judgement, not a rule');
     if (!isBlankOrComment(firstLine)) followedByCode.push(name);
   }
   eq(followedByCode, ['tt-reconnect', 'apex-post-auth-init'],
-    'two of the seven are followed directly by unrelated code, with no header between');
+    'two of the eight are followed directly by unrelated code, with no header between');
   ok(followedByCode.length > 0,
     '…so "extend to the next feature header" is not the rule, and never was');
 
@@ -296,9 +300,9 @@ section('6. The two dead rules, pinned against the case that killed them');
     if (tail.split('\n').some((l) => !isBlankOrComment(l))) withTrailingCode.push(rel);
   }
   eq(withTrailingCode, [TRAILING_CODE_LAYER, 'js/portfolio/backend-portfolios.js'],
-    'TWO of the eighteen end on trailing top-level code');
-  eq(CHAIN.length - withTrailingCode.length, 16,
-    '…and sixteen end at their last declaration');
+    'TWO of the nineteen end on trailing top-level code');
+  eq(CHAIN.length - withTrailingCode.length, 17,
+    '…and seventeen end at their last declaration');
   // The distinction that matters: of the SIXTEEN layers that predate the cycle
   // which uncovered this, exactly one did — which is why fifteen-of-sixteen felt
   // like a law. The newest layer is the second case, and it is a statement
@@ -460,7 +464,7 @@ section('9. The four superlatives, measured over the whole set');
 
   // (a) "the first layer with async owners", published of portfolio-data-fetch.
   const withAsync = CHAIN.filter(hasAsyncOwner);
-  eq(withAsync.length, 11, 'eleven of the eighteen layers own an async declaration');
+  eq(withAsync.length, 11, 'eleven of the nineteen layers own an async declaration');
   const earlier = CHAIN.slice(0, CHAIN.indexOf(FETCH_LAYER));
   eq(earlier.length, 15, 'fifteen layers predate the one the claim was made about');
   eq(earlier.filter(hasAsyncOwner).length, 9, '…and NINE of them already had async owners');
@@ -499,8 +503,8 @@ section('9. The four superlatives, measured over the whole set');
      '…and one that reaches for a host does not');
   const needHost = CHAIN.filter((rel) => !loadsBare(read(rel), rel));
   eq(needHost, [TRAILING_CODE_LAYER, NEWEST_TRAILING],
-     'exactly TWO of the eighteen need a host to load');
-  eq(CHAIN.length - needHost.length, 16, '…so sixteen load bare, not two');
+     'exactly TWO of the nineteen need a host to load');
+  eq(CHAIN.length - needHost.length, 17, '…so seventeen load bare, not two');
 
   // WHICH LAYER REFUTES WHICH CLAIM. Two of the four share a refuter; the other
   // two do not, and asserting otherwise is the mistake this section exists for.

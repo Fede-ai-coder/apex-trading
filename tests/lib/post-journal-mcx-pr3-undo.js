@@ -1,12 +1,14 @@
 'use strict';
-// Current-app reconstruction bridge after Manual expiry + Backend portfolios + Portfolio data
+// Current-app reconstruction bridge after Traffic light + Manual expiry + Backend
+// portfolios + Portfolio data
 // fetch + Journal trade
 // detail + Journal trade forms + Journal Close Legs + TT reconnect UI + Apex
 // post-auth init + MCX charts + MCX macro check + Backup/Restore + Manual
 // Import + Journal Migration + Write-through + Journal Remote + Journal UI +
 // Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Manual-expiry relocation first, then Backend portfolios, then
+// newest Traffic-light relocation first, then Manual expiry, then Backend
+// portfolios, then
 // Portfolio data fetch,
 // then Journal trade detail,
 // Journal trade forms, Journal Close Legs, TT reconnect, Apex post-auth, MCX
@@ -79,6 +81,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_TRAFFIC_LIGHT = require('./portfolio-traffic-light-undo.js');
 const PORTFOLIO_EXPIRY_MANUAL = require('./portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS = require('./backend-portfolios-undo.js');
 const PORTFOLIO_DATA_FETCH = require('./portfolio-data-fetch-undo.js');
@@ -99,6 +102,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_TRAFFIC_LIGHT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-traffic-light.js'),
+  'utf8'
+);
 const PORTFOLIO_EXPIRY_MANUAL_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-expiry-manual.js'),
   'utf8'
@@ -173,9 +180,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preExpiryManual = PORTFOLIO_EXPIRY_MANUAL.isApplied(html)
-    ? PORTFOLIO_EXPIRY_MANUAL.undoPortfolioExpiryManual(html, PORTFOLIO_EXPIRY_MANUAL_SOURCE)
+  const preTrafficLight = PORTFOLIO_TRAFFIC_LIGHT.isApplied(html)
+    ? PORTFOLIO_TRAFFIC_LIGHT.undoPortfolioTrafficLight(html, PORTFOLIO_TRAFFIC_LIGHT_SOURCE)
     : html;
+  const preExpiryManual = PORTFOLIO_EXPIRY_MANUAL.isApplied(preTrafficLight)
+    ? PORTFOLIO_EXPIRY_MANUAL.undoPortfolioExpiryManual(preTrafficLight, PORTFOLIO_EXPIRY_MANUAL_SOURCE)
+    : preTrafficLight;
   const preBackendPortfolios = BACKEND_PORTFOLIOS.isApplied(preExpiryManual)
     ? BACKEND_PORTFOLIOS.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_SOURCE)
     : preExpiryManual;

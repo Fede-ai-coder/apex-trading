@@ -155,15 +155,23 @@ function isWriteAt(text, at, name) {
 }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
+const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // Manual expiry was cut AFTER this layer, so the live document is no longer the
 // one this contract shipped. Peel it first; its helper re-verifies its own
 // output by length and SHA-256, so the hop is proved rather than assumed.
-const INDEX = EXPIRY_MANUAL_U.isApplied(LIVE_INDEX)
-  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8'))
+// The alignment + traffic light pair was cut AFTER manual expiry, so peel it
+// FIRST; each helper re-verifies its own output by length and SHA-256, so both
+// hops are proved rather than assumed.
+const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(LIVE_INDEX)
+  ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = EXPIRY_MANUAL_U.isApplied(PRE_TRAFFIC_LIGHT)
+  ? EXPIRY_MANUAL_U.undoPortfolioExpiryManual(
+      PRE_TRAFFIC_LIGHT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-expiry-manual.js'), 'utf8'))
+  : PRE_TRAFFIC_LIGHT;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 
 console.log('BACKEND-BACKED PORTFOLIOS — PERMANENT BOUNDARY CONTRACT');
@@ -535,8 +543,8 @@ section('10. Production footprint');
   ok(tracked.includes(MODULE_REL), 'the module is tracked');
   eq(tracked.filter((f) => f.startsWith('js/portfolio/')).sort(),
     ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js',
-     'js/portfolio/portfolio-expiry-manual.js'],
-    'js/portfolio holds exactly the three portfolio modules');
+     'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js'],
+    'js/portfolio holds exactly the four portfolio modules');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
