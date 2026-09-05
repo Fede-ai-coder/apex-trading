@@ -457,9 +457,14 @@ const CHART_FNS = ['_etDateStr', '_etMinutes', 'getUsEquityMarketSession',
 vm.createContext(chartSandbox);
 vm.runInContext('var _swingCandleInflight = {}; var _swingKeyListenerAttached = false; var _swingChartCacheSeq = {}; var _swingChartCacheAuthorizedSeq = {};', chartSandbox); // top-level vars in index.html
 vm.runInContext("var SWING_CANDLE_SOURCE = { BACKEND:'TASTYTRADE_DXLINK', CACHE:'DXLINK_CACHE', STALE:'DXLINK_STALE_CACHE', NONE:'NONE', ERROR:'ERROR' }; var SWING_CANDLE_REASON = { BACKEND_DOWN:'DXLINK_BACKEND_UNAVAILABLE', STALE_CACHE:'DXLINK_CANONICAL_CACHE_STALE', NO_CANONICAL:'NO_CANONICAL_CANDLES', LEGACY_REJECTED:'LEGACY_PROVIDER_REJECTED' };", chartSandbox);
-vm.runInContext(CHART_FNS.map(n => extractFn(HTML, n)).join('\n'), chartSandbox);
-vm.runInContext(extractAsyncFn(HTML, '_swingGetChartCandles'), chartSandbox);
-vm.runInContext(extractAsyncFn(HTML, '_swingOpenCharts'), chartSandbox);
+// Read these by name from APP_SRC, not from the raw document: this block needs
+// _backendCandleStoreChartNormTime, which moved to
+// js/ui/backend-candle-store-chart.js. That is exactly the case this file's
+// header describes — name-based extraction keeps working across a physical move
+// only when it reads the reconstructed application source.
+vm.runInContext(CHART_FNS.map(n => extractFn(APP_SRC, n)).join('\n'), chartSandbox);
+vm.runInContext(extractAsyncFn(APP_SRC, '_swingGetChartCandles'), chartSandbox);
+vm.runInContext(extractAsyncFn(APP_SRC, '_swingOpenCharts'), chartSandbox);
 vm.runInContext(extractAsyncFn(HTML, '_swingRenderCharts'), chartSandbox);
 const runC = code => vm.runInContext(code, chartSandbox);
 const tick = () => new Promise(r => setImmediate(r));
@@ -616,7 +621,9 @@ sandbox.S.swing.status.startedAt = 111;
   ok(/_sfsFetchBackendCandles/.test(block), 'chart candles reuse the existing backend reader (_sfsFetchBackendCandles)');
   // 28. Chart code adds no timers / websockets / refresh loops
   const chartSrc = CHART_FNS.concat(['_swingOpenCharts', '_swingRenderCharts']).map(n => {
-    try { return extractFn(HTML, n); } catch (e) { return extractAsyncFn(HTML, n); }
+    // APP_SRC for the same reason as the chart sandbox above: one of these names
+    // now lives in an external module, not in the inline document.
+    try { return extractFn(APP_SRC, n); } catch (e) { return extractAsyncFn(APP_SRC, n); }
   }).join('\n').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   ok(!/setInterval\s*\(|new WebSocket/.test(chartSrc), 'chart code adds no timers/websockets');
 

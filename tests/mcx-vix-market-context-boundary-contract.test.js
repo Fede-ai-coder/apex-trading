@@ -330,8 +330,16 @@ ok(INDEX.indexOf(expiryManualTag) > INDEX.indexOf(backendPortfoliosTag) && after
   'the manual-expiry owner loads immediately before the traffic-light owner');
 // Re-terminated with the chain: without this the last tag would be checked by
 // nothing, which is how this family lost coverage once before.
-ok(INDEX.indexOf(trafficLightTag) > INDEX.indexOf(expiryManualTag) && !/\bsrc\s*=/i.test(afterTlTag),
-  'the traffic-light owner loads immediately before the residual inline application script');
+const candleChartOpen = '<script src="./js/ui/backend-candle-store-chart.js">';
+const candleChartTag = candleChartOpen + '</script>';
+const afterCcAt = INDEX.indexOf('<script', INDEX.indexOf(candleChartTag) + candleChartTag.length);
+const afterCcEnd = INDEX.indexOf('>', afterCcAt);
+const afterCcTag = afterCcEnd >= 0 ? INDEX.slice(afterCcAt, afterCcEnd + 1) : '';
+ok(INDEX.indexOf(trafficLightTag) > INDEX.indexOf(expiryManualTag) && afterTlTag === candleChartOpen,
+  'the traffic-light owner loads immediately before the candle-store-chart owner');
+// Re-terminated with the chain again: the last tag must stay pinned by something.
+ok(INDEX.indexOf(candleChartTag) > INDEX.indexOf(trafficLightTag) && !/\bsrc\s*=/i.test(afterCcTag),
+  'the candle-store-chart owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

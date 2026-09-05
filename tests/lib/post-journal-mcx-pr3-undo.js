@@ -1,5 +1,6 @@
 'use strict';
-// Current-app reconstruction bridge after Traffic light + Manual expiry + Backend
+// Current-app reconstruction bridge after Candle-store chart + Traffic light +
+// Manual expiry + Backend
 // portfolios + Portfolio data
 // fetch + Journal trade
 // detail + Journal trade forms + Journal Close Legs + TT reconnect UI + Apex
@@ -7,7 +8,8 @@
 // Import + Journal Migration + Write-through + Journal Remote + Journal UI +
 // Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Traffic-light relocation first, then Manual expiry, then Backend
+// newest Candle-store-chart relocation first, then Traffic light, then Manual
+// expiry, then Backend
 // portfolios, then
 // Portfolio data fetch,
 // then Journal trade detail,
@@ -81,6 +83,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const BACKEND_CANDLE_STORE_CHART = require('./backend-candle-store-chart-undo.js');
 const PORTFOLIO_TRAFFIC_LIGHT = require('./portfolio-traffic-light-undo.js');
 const PORTFOLIO_EXPIRY_MANUAL = require('./portfolio-expiry-manual-undo.js');
 const BACKEND_PORTFOLIOS = require('./backend-portfolios-undo.js');
@@ -102,6 +105,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const BACKEND_CANDLE_STORE_CHART_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'backend-candle-store-chart.js'),
+  'utf8'
+);
 const PORTFOLIO_TRAFFIC_LIGHT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-traffic-light.js'),
   'utf8'
@@ -180,9 +187,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preTrafficLight = PORTFOLIO_TRAFFIC_LIGHT.isApplied(html)
-    ? PORTFOLIO_TRAFFIC_LIGHT.undoPortfolioTrafficLight(html, PORTFOLIO_TRAFFIC_LIGHT_SOURCE)
+  const preChart = BACKEND_CANDLE_STORE_CHART.isApplied(html)
+    ? BACKEND_CANDLE_STORE_CHART.undoBackendCandleStoreChart(html, BACKEND_CANDLE_STORE_CHART_SOURCE)
     : html;
+  const preTrafficLight = PORTFOLIO_TRAFFIC_LIGHT.isApplied(preChart)
+    ? PORTFOLIO_TRAFFIC_LIGHT.undoPortfolioTrafficLight(preChart, PORTFOLIO_TRAFFIC_LIGHT_SOURCE)
+    : preChart;
   const preExpiryManual = PORTFOLIO_EXPIRY_MANUAL.isApplied(preTrafficLight)
     ? PORTFOLIO_EXPIRY_MANUAL.undoPortfolioExpiryManual(preTrafficLight, PORTFOLIO_EXPIRY_MANUAL_SOURCE)
     : preTrafficLight;
