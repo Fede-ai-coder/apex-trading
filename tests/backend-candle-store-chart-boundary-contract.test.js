@@ -146,7 +146,15 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('BACKEND CANDLE STORE CHART + MAIN CHART — PERMANENT BOUNDARY CONTRACT');
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The rich async snapshot was cut AFTER this layer, so the live document is no
+// longer the one this contract shipped. Peel it first and assert against the
+// document as it was when this layer landed.
+const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
+const INDEX = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

@@ -152,9 +152,16 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 // The backend-candle-store chart pair is now the NEWEST layer of all, sitting
 // on top of the traffic light: peel it FIRST so every undo below still sees
 // the exact document it was cut against.
-const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
-  ? CANDLE_CHART_U.undoBackendCandleStoreChart(LIVE_INDEX, CANDLE_CHART_MODULE)
+// The rich async snapshot was cut AFTER the candle-store chart, so it is the
+// newest layer of all: peel it FIRST, before the chart.
+const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(PRE_RICH_SNAPSHOT, CANDLE_CHART_MODULE)
+  : PRE_RICH_SNAPSHOT;
 const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
   ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(PRE_CANDLE_CHART, TRAFFIC_LIGHT_MODULE)
   : PRE_CANDLE_CHART;
@@ -526,9 +533,16 @@ eq(INDEX.length, 1933458, 'extracted index UTF-16 length is exact');
 eq(Buffer.byteLength(INDEX, 'utf8'), 1968899, 'extracted index UTF-8 byte length is exact');
 eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'extracted index SHA-256 is the audited prediction');
-eq(LIVE_INDEX.length, 1618149, 'current shipped index UTF-16 length is the post-candle-chart value');
-eq(sha256(LIVE_INDEX), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
-  'current shipped index SHA-256 is the post-candle-chart value');
+eq(LIVE_INDEX.length, 1602259, 'current shipped index UTF-16 length is the post-rich-snapshot value');
+eq(sha256(LIVE_INDEX), '6db6f8fd99da797003ca89e022ead159524bfbd4febbe0b54b0523f4fd001fa1',
+  'current shipped index SHA-256 is the post-rich-snapshot value');
+// Re-terminate the chain: the post-candle-chart document those two lines
+// used to pin is now one layer down, so it is pinned explicitly here rather
+// than only by the rich-snapshot helper's internal guard.
+eq(PRE_RICH_SNAPSHOT.length, 1618149,
+  'peeling the rich snapshot reaches the post-candle-chart length');
+eq(sha256(PRE_RICH_SNAPSHOT), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
+  '…and the post-candle-chart hash');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -608,8 +622,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
   'index carried exactly 52 local application scripts when this extraction landed');
 eq(APP_LOADER.parseScriptTags(PRE_MCX_CHARTS).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 53,
   'peeling MCX charts restores the 53 local application scripts of the post-macro-check index');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 64,
-  'the current shipped index carries exactly 64 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 65,
+  'the current shipped index carries exactly 65 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -952,7 +966,7 @@ section('8. Panel open/close and list rendering behavior');
   section('14. Exact production scope');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Backup/Restore contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Backup/Restore undo helper is part of the change');
