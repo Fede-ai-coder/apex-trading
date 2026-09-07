@@ -151,10 +151,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // longer the one this contract shipped. Peel it first and assert against the
 // document as it was when this layer landed.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-const INDEX = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
-  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
+// it is the newest layer of all: peel it FIRST, before the snapshot.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : PRE_BACKEND_CANDLES;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

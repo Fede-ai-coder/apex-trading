@@ -1,12 +1,14 @@
 'use strict';
-// Current-app reconstruction bridge after Rich async snapshot + Candle-store
+// Current-app reconstruction bridge after Portfolio backend candles + Rich
+// async snapshot + Candle-store
 // chart + Traffic light + Manual expiry + Backend portfolios + Portfolio data
 // fetch + Journal trade detail + Journal trade forms + Journal Close Legs + TT
 // reconnect UI + Apex post-auth init + MCX charts + MCX macro check +
 // Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
 // Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Rich-async-snapshot relocation first, then Candle-store chart, then
+// newest Portfolio-backend-candles relocation first, then Rich async snapshot,
+// then Candle-store chart, then
 // Traffic light, then Manual expiry, then Backend portfolios, then Portfolio
 // data fetch, then Journal trade detail, Journal trade forms, Journal Close
 // Legs, TT reconnect, Apex post-auth, MCX charts, MCX macro check,
@@ -22,25 +24,33 @@
 // owners at evaluation time; that is proved in its own contract, not here.
 //
 // Portfolio data fetch has three async owners of four, which is unremarkable
-// here — THIRTEEN of these twenty-one layers ship async owners,
+// here — FOURTEEN of these twenty-two layers ship async owners,
 // journal-remote-persistence six of eight — and in every case it is not a
 // load-time property: each contract proves its block has no top-level call, no
 // top-level await, and no evaluation-time dependency read.
 //
 // Backend portfolios has a seam that is not a closing brace: the region ends on
 // a top-level statement, `window.viewLinkedTradesInJournal = …;`, so its body
-// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-one layers,
+// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-two layers,
 // NINETEEN end `}\n` and TWO do not — backend portfolios, and
 // journal-backend-write-through, which ends `})();`. Backend portfolios also
 // carries twelve top-level statements, all `window.X = X` re-exports and their
 // `try` wrappers, which its contract proves read nothing the region does not
 // own.
 //
-// Rich async snapshot is the newest layer and sits on top of all of them. It is
-// the second single-owner layer in this chain, after apex-post-auth-init, and
-// the larger of the two; over every local script — a strictly larger set —
-// seven have one owner and two of those are larger still, so no superlative is
-// claimed here. Its own contract measures both sets.
+// Rich async snapshot is the second single-owner layer in this chain, after
+// apex-post-auth-init. Its own contract measures the two sets that claim
+// quantifies over, because they disagree.
+//
+// Portfolio backend candles is the newest layer and sits on top of all of
+// them, making THREE single-owner layers here. It is also the layer where the
+// SCREEN and the BOUNDARY disagreed: the banner-to-banner region it was cut
+// from scored the best crossings of all 41 regions audit #433 screened and is
+// UNEXTRACTABLE, because its last 1,060 units are a dev-only block whose
+// top-level `if` CALLS two monolith functions at load. The cut stops before
+// that block, which is why its seam is not a banner — one of THREE such seams
+// among the eleven layers that record a single raw range, with tt-reconnect
+// and apex-post-auth-init. Its own contract measures all of that.
 //
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
@@ -56,35 +66,38 @@
 //     backup/restore — have no separator concept at all. The module IS the
 //     whole removed block, and each undo re-inserts `moduleSource` alone.
 //
-//     THE THIRTEEN FROM #406 ONWARD — macro check, #408 charts, #410
+//     THE FOURTEEN FROM #406 ONWARD — macro check, #408 charts, #410
 //     post-auth, #411 TT reconnect, #413 close legs, #415 trade forms, #417
 //     trade detail, #421 portfolio data fetch, #423 backend portfolios, #425
-//     manual expiry, #428 traffic light, #430 candle-store chart, and the rich
-//     async snapshot — treat the block as `body + one structural LF`. BOTH
-//     leave index.html, only the body is written to the module file, and the
-//     undo re-inserts the body followed by SEPARATOR.
+//     manual expiry, #428 traffic light, #430 candle-store chart, the rich
+//     async snapshot and the portfolio backend-candle fetch — treat the block
+//     as `body + one structural LF`. BOTH leave index.html, only the body is
+//     written to the module file, and the undo re-inserts the body followed by
+//     SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the thirteen newest have it, the eight
+// `const SEPARATOR = '\n'` declaration: the fourteen newest have it, the eight
 // oldest do not.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only TEN of the
-// thirteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only ELEVEN of the
+// fourteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
 // post-auth, TT reconnect, close legs, trade detail, portfolio data fetch,
-// backend portfolios, manual expiry, traffic light, candle-store chart and rich
-// async snapshot. The multi-fragment layers pin their fragments individually
-// instead (charts weaves three, trade forms joins two), and macro check pins
-// neither constant. A future layer that reasons about "the" convention must ask
-// which era it means, and must not infer the era from those constants.
+// backend portfolios, manual expiry, traffic light, candle-store chart, rich
+// async snapshot and portfolio backend candles. The multi-fragment layers pin
+// their fragments individually instead (charts weaves three, trade forms joins
+// two), and macro check pins neither constant. A future layer that reasons
+// about "the" convention must ask which era it means, and must not infer the
+// era from those constants.
 //
 // Layer shapes, measured against the shipped modules rather than assumed, and
-// scoped to what was actually measured: of the TWENTY-ONE layers this bridge
+// scoped to what was actually measured: of the TWENTY-TWO layers this bridge
 // peels, every one is a single contiguous fragment except #408 (three) and
 // #415 (two). That is not a statement about the repository at large — the MCX3
 // delegate below this chain is itself two fragments, and the older EIC, PESS
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_BACKEND_CANDLES = require('./portfolio-backend-candles-undo.js');
 const JOURNAL_RICH_SNAPSHOT = require('./journal-rich-snapshot-undo.js');
 const BACKEND_CANDLE_STORE_CHART = require('./backend-candle-store-chart-undo.js');
 const PORTFOLIO_TRAFFIC_LIGHT = require('./portfolio-traffic-light-undo.js');
@@ -108,6 +121,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_BACKEND_CANDLES_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-backend-candles.js'),
+  'utf8'
+);
 const JOURNAL_RICH_SNAPSHOT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-rich-snapshot.js'),
   'utf8'
@@ -194,9 +211,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preRichSnapshot = JOURNAL_RICH_SNAPSHOT.isApplied(html)
-    ? JOURNAL_RICH_SNAPSHOT.undoJournalRichSnapshot(html, JOURNAL_RICH_SNAPSHOT_SOURCE)
+  const preBackendCandles = PORTFOLIO_BACKEND_CANDLES.isApplied(html)
+    ? PORTFOLIO_BACKEND_CANDLES.undoPortfolioBackendCandles(html, PORTFOLIO_BACKEND_CANDLES_SOURCE)
     : html;
+  const preRichSnapshot = JOURNAL_RICH_SNAPSHOT.isApplied(preBackendCandles)
+    ? JOURNAL_RICH_SNAPSHOT.undoJournalRichSnapshot(preBackendCandles, JOURNAL_RICH_SNAPSHOT_SOURCE)
+    : preBackendCandles;
   const preChart = BACKEND_CANDLE_STORE_CHART.isApplied(preRichSnapshot)
     ? BACKEND_CANDLE_STORE_CHART.undoBackendCandleStoreChart(preRichSnapshot, BACKEND_CANDLE_STORE_CHART_SOURCE)
     : preRichSnapshot;

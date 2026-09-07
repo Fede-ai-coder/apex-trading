@@ -616,6 +616,9 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
     const DX_SRC = fs.existsSync(DX_PATH) ? fs.readFileSync(DX_PATH, 'utf8') : '';
     const MCX3_PATH = path.resolve(__dirname, '..', 'js', 'services', 'mcx-backend-candles.js');
     const MCX3_SRC = fs.existsSync(MCX3_PATH) ? fs.readFileSync(MCX3_PATH, 'utf8') : '';
+    const PBC_PATH = path.resolve(__dirname, '..', 'js', 'portfolio', 'portfolio-backend-candles.js');
+    const PBC_SRC = fs.existsSync(PBC_PATH) ? fs.readFileSync(PBC_PATH, 'utf8') : '';
+    ok(fs.existsSync(PBC_PATH), '0: js/portfolio/portfolio-backend-candles.js exists');
 
     // (2) exactly one <script src> tag for it in index.html.
     const dxTags = rawIndex.match(/<script\b[^>]*\bsrc\s*=\s*["']\.\/js\/services\/candle-dxlink-client\.js["'][^>]*>/gi) || [];
@@ -1442,6 +1445,12 @@ function authReady(sb) { sb.S.backendKey = 'KEY'; sb.S.ttConnected = true; sb.S.
         const reDef = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
         if (name === '_mcxFetchBackendCandlesForChart') {
           ok(reDef.test(MCX3_SRC), '0: [FEATURE_ADAPTER] is owned by js/services/mcx-backend-candles.js: ' + name);
+          ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);
+        } else if (name === '_portfolioFetchBackendCandlesForChart') {
+          // Relocated verbatim to js/portfolio/portfolio-backend-candles.js. Asserted
+          // TWO-SIDED, like the MCX adapter above: declared in its owner AND absent from
+          // the residual monolith, which is stronger than the membership check below.
+          ok(reDef.test(PBC_SRC), '0: [FEATURE_ADAPTER] is owned by js/portfolio/portfolio-backend-candles.js: ' + name);
           ok(!reDef.test(inlineMonolith), '0: [FEATURE_ADAPTER] has zero residual inline declaration: ' + name);
         } else {
           ok(reDef.test(inlineMonolith), '0: [' + cat + '] stays defined in the residual inline monolith: ' + name);

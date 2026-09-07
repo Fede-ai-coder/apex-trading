@@ -346,8 +346,17 @@ ok(INDEX.indexOf(candleChartTag) > INDEX.indexOf(trafficLightTag) && afterCcTag 
   'the candle-store-chart owner loads immediately before the rich-snapshot owner');
 // Re-terminated with the chain again: the last tag must stay pinned by something,
 // and shifting the clauses above without adding this one would leave it bare.
-ok(INDEX.indexOf(richSnapshotTag) > INDEX.indexOf(candleChartTag) && !/\bsrc\s*=/i.test(afterRsTag),
-  'the rich-snapshot owner loads immediately before the residual inline application script');
+const backendCandlesOpen = '<script src="./js/portfolio/portfolio-backend-candles.js">';
+const backendCandlesTag = backendCandlesOpen + '</script>';
+const afterBcAt = INDEX.indexOf('<script', INDEX.indexOf(backendCandlesTag) + backendCandlesTag.length);
+const afterBcEnd = INDEX.indexOf('>', afterBcAt);
+const afterBcTag = afterBcEnd >= 0 ? INDEX.slice(afterBcAt, afterBcEnd + 1) : '';
+ok(INDEX.indexOf(richSnapshotTag) > INDEX.indexOf(candleChartTag) && afterRsTag === backendCandlesOpen,
+  'the rich-snapshot owner loads immediately before the portfolio backend-candles owner');
+// Re-terminated with the chain again: shifting the clauses above without adding
+// this one would leave the last tag pinned by nothing.
+ok(INDEX.indexOf(backendCandlesTag) > INDEX.indexOf(richSnapshotTag) && !/\bsrc\s*=/i.test(afterBcTag),
+  'the portfolio backend-candles owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

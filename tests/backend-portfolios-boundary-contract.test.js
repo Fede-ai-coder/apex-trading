@@ -171,10 +171,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The rich async snapshot was cut AFTER the candle-store chart, so it is the
 // newest layer of all: peel it FIRST, before the chart.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
-  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
+// it is the newest layer of all: peel it FIRST, before the snapshot.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : PRE_BACKEND_CANDLES;
 const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
   ? CANDLE_CHART_U.undoBackendCandleStoreChart(
       PRE_RICH_SNAPSHOT, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
@@ -557,9 +564,10 @@ section('10. Production footprint');
   const tracked = git(['ls-files', 'js/']).trim().split('\n').filter(Boolean);
   ok(tracked.includes(MODULE_REL), 'the module is tracked');
   eq(tracked.filter((f) => f.startsWith('js/portfolio/')).sort(),
-    ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js',
+    ['js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js',
+     'js/portfolio/portfolio-data-fetch.js',
      'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js'],
-    'js/portfolio holds exactly the four portfolio modules');
+    'js/portfolio holds exactly the five portfolio modules');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
