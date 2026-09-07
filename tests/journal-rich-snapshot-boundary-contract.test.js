@@ -200,10 +200,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // document is no longer the one this contract shipped. Peel it first and assert
 // against the document as it was when this layer landed.
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
-const INDEX = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
-  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+// The journal snapshot prefetch was cut AFTER the portfolio backend-candle
+// fetch, so it is the newest layer of all: peel it FIRST.
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : PRE_SNAPSHOT_PREFETCH;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

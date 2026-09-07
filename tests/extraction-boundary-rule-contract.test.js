@@ -11,7 +11,7 @@
 //
 // WHAT IS ACTUALLY TRUE, and what this file pins:
 //
-//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the eleven
+//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the twelve
 //     boundaries the undo helpers still record and shows that no rule over
 //     banners or headers reproduces them: two are followed immediately by
 //     another feature's code with no header between, and one SPANS a `// ── `
@@ -22,13 +22,13 @@
 //   • Four seam INVARIANTS hold at every recorded boundary. §3 verifies them
 //     against real historical offsets — recorded when those regions were cut,
 //     so they cannot have been fitted to this file — and §4 against the
-//     twenty shipped modules.
+//     twenty-three shipped modules.
 //
 //   • §6 pins the two dead rules against the case that killed them, so neither
 //     can be reintroduced by someone who finds the old comment. Two of the
-//     twenty layers end on trailing top-level code — one on an IIFE, one on
-//     a bare statement — but only ONE of the sixteen that predate this cycle,
-//     which is why fifteen-of-sixteen read like a law.
+//     twenty-three layers end on trailing top-level code — one on an IIFE, one
+//     on a bare statement — but only ONE of the sixteen that predate the
+//     backend-portfolios cut, which is why fifteen-of-sixteen read like a law.
 //
 //   • §9 pins the four "firsts" that were published and were false, over the
 //     whole chain rather than the neighbours each was inferred from. It also
@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const SNAPSHOT_PREFETCH = require('./lib/journal-snapshot-prefetch-undo.js');
 const BACKEND_CANDLES = require('./lib/portfolio-backend-candles-undo.js');
 const RICH_SNAPSHOT = require('./lib/journal-rich-snapshot-undo.js');
 const CANDLE_CHART = require('./lib/backend-candle-store-chart-undo.js');
@@ -64,7 +65,7 @@ const CLOSE_LEGS = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT = require('./lib/tt-reconnect-undo.js');
 const APEX_POST_AUTH = require('./lib/apex-post-auth-init-undo.js');
 
-// The twenty-two shipped layers, oldest first.
+// The twenty-three shipped layers, oldest first.
 const CHAIN = [
   'js/services/journal-core.js',
   'js/services/mcx-regime-policy.js',
@@ -88,8 +89,9 @@ const CHAIN = [
   'js/ui/backend-candle-store-chart.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-prefetch.js',
 ];
-const CHAIN_LENGTH = 22;
+const CHAIN_LENGTH = 23;
 
 // The one layer that already ended on trailing top-level code, and by how much.
 const TRAILING_CODE_LAYER = 'js/services/journal-backend-write-through.js';
@@ -154,13 +156,15 @@ section('2. snapBodyEnd — the mechanical half');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('3. The four invariants, at eleven REAL historical boundaries');
+section('3. The four invariants, at twelve REAL historical boundaries');
 // ─────────────────────────────────────────────────────────────────────────────
 // Peel the onion newest-first. Each helper reconstructs byte-exactly or throws,
 // so reaching a layer's base at all is already a proof of identity.
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = SNAPSHOT_PREFETCH.undoJournalSnapshotPrefetch(doc, read('js/services/journal-snapshot-prefetch.js'));
+  HISTORY.push({ name: 'journal-snapshot-prefetch', H: SNAPSHOT_PREFETCH, doc });
   doc = BACKEND_CANDLES.undoPortfolioBackendCandles(doc, read('js/portfolio/portfolio-backend-candles.js'));
   HISTORY.push({ name: 'portfolio-backend-candles', H: BACKEND_CANDLES, doc });
   doc = RICH_SNAPSHOT.undoJournalRichSnapshot(doc, read('js/services/journal-rich-snapshot.js'));
@@ -185,7 +189,7 @@ const HISTORY = [];
   doc = APEX_POST_AUTH.undoApexPostAuthInit(doc, read('js/services/apex-post-auth-init.js'));
   HISTORY.push({ name: 'apex-post-auth-init', H: APEX_POST_AUTH, doc });
 }
-eq(HISTORY.length, 11, 'eleven layers still record their own raw offsets');
+eq(HISTORY.length, 12, 'twelve layers still record their own raw offsets');
 
 for (const { name, H, doc } of HISTORY) {
   const at = H.RAW_AT;
@@ -217,9 +221,9 @@ for (const { name, H, doc } of HISTORY) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The twenty shipped modules');
+section('4. The twenty-three shipped modules');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-two shipped layers');
+eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-three shipped layers');
 for (const rel of CHAIN) {
   const src = read(rel);
   ok(src.length > 0, rel + ': exists and is non-empty');
@@ -245,7 +249,7 @@ section('5. WHERE a region ends is a judgement, not a rule');
     if (!isBlankOrComment(firstLine)) followedByCode.push(name);
   }
   eq(followedByCode, ['tt-reconnect', 'apex-post-auth-init'],
-    'two of the eleven are followed directly by unrelated code, with no header between');
+    'two of the twelve are followed directly by unrelated code, with no header between');
   ok(followedByCode.length > 0,
     '…so "extend to the next feature header" is not the rule, and never was');
 
@@ -312,13 +316,15 @@ section('6. The two dead rules, pinned against the case that killed them');
     if (tail.split('\n').some((l) => !isBlankOrComment(l))) withTrailingCode.push(rel);
   }
   eq(withTrailingCode, [TRAILING_CODE_LAYER, 'js/portfolio/backend-portfolios.js'],
-    'TWO of the twenty-two end on trailing top-level code');
-  eq(CHAIN.length - withTrailingCode.length, 20,
-    '…and twenty end at their last declaration');
-  // The distinction that matters: of the SIXTEEN layers that predate the cycle
-  // which uncovered this, exactly one did — which is why fifteen-of-sixteen felt
-  // like a law. The newest layer is the second case, and it is a statement
-  // rather than an IIFE, so the two are not even the same shape.
+    'TWO of the twenty-three end on trailing top-level code');
+  eq(CHAIN.length - withTrailingCode.length, 21,
+    '…and twenty-one end at their last declaration');
+  // The distinction that matters: of the SIXTEEN layers that predate the
+  // backend-portfolios cut, which uncovered this, exactly one did — which is why
+  // fifteen-of-sixteen felt like a law. Backend portfolios is the second case,
+  // and it is a statement rather than an IIFE, so the two are not even the same
+  // shape. It is no longer the newest layer; three have been cut since, and the
+  // eq over the whole CHAIN above is what keeps that from mattering.
   eq(withTrailingCode.filter((f) => f !== 'js/portfolio/backend-portfolios.js'),
     [TRAILING_CODE_LAYER], 'exactly one of the sixteen EARLIER layers did');
   eq(read(TRAILING_CODE_LAYER).trimEnd().slice(-5), '})();',
@@ -456,8 +462,10 @@ section('9. The four superlatives, measured over the whole set');
 // same mistake and the reason these are assertions now. Measured: TWO of the
 // four are falsified by the same layer, journal-backend-write-through, and the
 // other two are not falsified by it at all. The async claim is falsified by
-// nine layers scattered through the chain; the empty-VM claim by the layer two
-// places back, which loads bare.
+// nine layers scattered through the chain; the empty-VM claim, published of
+// js/portfolio/portfolio-expiry-manual.js, by js/portfolio/portfolio-data-fetch.js,
+// which loads bare. Layers are NAMED here rather than counted back from the
+// head of the chain: the head moves every cycle, the names do not.
 //
 // So the mechanism is not "watch that one file". It is that each claim was
 // inferred from the layers NEAREST TO HAND, and which layer refutes a claim
@@ -476,7 +484,7 @@ section('9. The four superlatives, measured over the whole set');
 
   // (a) "the first layer with async owners", published of portfolio-data-fetch.
   const withAsync = CHAIN.filter(hasAsyncOwner);
-  eq(withAsync.length, 14, 'fourteen of the twenty-two layers own an async declaration');
+  eq(withAsync.length, 15, 'fifteen of the twenty-three layers own an async declaration');
   const earlier = CHAIN.slice(0, CHAIN.indexOf(FETCH_LAYER));
   eq(earlier.length, 15, 'fifteen layers predate the one the claim was made about');
   eq(earlier.filter(hasAsyncOwner).length, 9, '…and NINE of them already had async owners');
@@ -518,8 +526,8 @@ section('9. The four superlatives, measured over the whole set');
   // top level, by relocation, so it needs a host for the same reason
   // backend-portfolios does. Named, not counted, so a fourth still fails.
   eq(needHost, [TRAILING_CODE_LAYER, NEWEST_TRAILING, 'js/ui/backend-candle-store-chart.js'],
-     'exactly THREE of the twenty-two need a host to load');
-  eq(CHAIN.length - needHost.length, 19, '…so nineteen load bare, not two');
+     'exactly THREE of the twenty-three need a host to load');
+  eq(CHAIN.length - needHost.length, 20, '…so twenty load bare, not two');
 
   // WHICH LAYER REFUTES WHICH CLAIM. Two of the four share a refuter; the other
   // two do not, and asserting otherwise is the mistake this section exists for.
@@ -532,11 +540,19 @@ section('9. The four superlatives, measured over the whole set');
   eq(loadsBare(read(TRAILING_CODE_LAYER), TRAILING_CODE_LAYER), false,
      '…and it does not load bare, so it does not refute the empty-VM claim either');
   // Those two are refuted elsewhere, and not in one place: nine layers for the
-  // async claim, and for the empty-VM claim the layer two places back — which
-  // was one of "the two before it" the claim said had needed a stub.
+  // async claim, and for the empty-VM claim js/portfolio/portfolio-data-fetch.js
+  // — one of "the two before it" that the claim, published of
+  // js/portfolio/portfolio-expiry-manual.js, said had needed a stub.
   eq(loadsBare(read(FETCH_LAYER), FETCH_LAYER), true,
-     'the layer two places back loads bare, which is what refuted the empty-VM claim');
-  eq(loadsBare(read(NEWEST_TRAILING), NEWEST_TRAILING), false, '…while the one before it did not');
+     'portfolio-data-fetch loads bare, which is what refuted the empty-VM claim');
+  eq(loadsBare(read(NEWEST_TRAILING), NEWEST_TRAILING), false,
+     '…while backend-portfolios, the other of "the two before it", did not');
+  // CHAIN is OLDEST-FIRST here (§9's `earlier` slice above depends on that), so
+  // "before" is a smaller index.
+  eq(CHAIN.indexOf(NEWEST_TRAILING), CHAIN.indexOf('js/portfolio/portfolio-expiry-manual.js') - 1,
+     'and those two really are the pair immediately before the claiming layer');
+  eq(CHAIN.indexOf(FETCH_LAYER), CHAIN.indexOf('js/portfolio/portfolio-expiry-manual.js') - 2,
+     '…so the claim quantified over exactly them');
 }
 
 console.log('\n' + pass + ' assertions passed.');

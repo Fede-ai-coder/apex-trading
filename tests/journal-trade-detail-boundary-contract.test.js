@@ -131,7 +131,7 @@ const DEPENDANTS = {
   './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
 };
 const MODULE_POSITION = 58;
-const PARTS_TOTAL = 67;
+const PARTS_TOTAL = 68;
 const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -248,11 +248,12 @@ console.log('JOURNAL TRADE DETAIL — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited Candidate G (#416) · base=' + BASE_SHA);
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
+// EIGHT layers were cut AFTER this one, so the live document is no longer the
+// one this layer shipped. Peel them all, NEWEST FIRST, before any assertion
+// touches INDEX; each helper re-verifies its own output by length and SHA-256,
+// so every hop is proved rather than assumed. §12 asserts the hop count against
+// the production footprint, so a layer added here and forgotten there fails.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// The Portfolio data-fetch owner is a LATER layer sitting on top of this one, so
-// the live document is no longer the one this layer shipped. Peel it first.
 const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');
@@ -263,24 +264,18 @@ const EXPIRY_MANUAL_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portf
 const BACKEND_PORTFOLIOS_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-portfolios.js'), 'utf8');
 const PORTFOLIO_U = require('./lib/portfolio-data-fetch-undo.js');
 const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-data-fetch.js'), 'utf8');
-// Backend portfolios is now the newest layer of all; peel it before the
-// portfolio data fetch, or that undo sees a document it was not cut against.
-// The portfolio alignment + row traffic light pair is now the NEWEST layer of
-// all, sitting on top of manual expiry: peel it FIRST so every undo below
-// still sees the exact document it was cut against.
-// The backend-candle-store chart pair is now the NEWEST layer of all, sitting
-// on top of the traffic light: peel it FIRST so every undo below still sees
-// the exact document it was cut against.
-// The rich async snapshot was cut AFTER the candle-store chart, so it is the
-// newest layer of all: peel it FIRST, before the chart.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
-// it is the newest layer of all: peel it FIRST, before the snapshot.
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
-const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
-  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+// Newest of the eight, so it is peeled FIRST below.
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : PRE_SNAPSHOT_PREFETCH;
 const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
   ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
       PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
@@ -467,10 +462,10 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order: a module defined AFTER three of its callers');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 66 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 67 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 8,
-  '…eight positions before the inline monolith: portfolio data-fetch,\n' +
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 9,
+  '…nine positions before the inline monolith: portfolio data-fetch,\n' +
   '   backend-portfolios and manual expiry were all cut after this one');
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
@@ -572,9 +567,20 @@ const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEA
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
-eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
-  'production footprint is exactly index.html plus the one new module');
+// Measured from THIS layer's base, so it carries every layer cut afterwards as
+// well. One module per later layer, so the list is index.html + this module +
+// one entry per peel hop above — and that count is asserted, not narrated,
+// because the narrated one was two cycles stale before it was noticed.
+const LATER_LAYERS = [SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+  TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U, PORTFOLIO_U];
+const production = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
+eq(production,
+  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
+  'production footprint is index.html, this module, and the modules of the layers cut after it');
+eq(production.length, 2 + LATER_LAYERS.length,
+  'that list is exactly index.html + this module + one module per later peel hop');
+eq(new Set(LATER_LAYERS.map((m) => m.TAG)).size, LATER_LAYERS.length,
+  '…and the hops are distinct layers, so the count cannot be padded by a repeat');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
 ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -586,7 +592,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

@@ -454,10 +454,17 @@ const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 // The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
 // it is the newest layer of all: peel it FIRST, before the snapshot.
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
-const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(INDEX)
-  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+// The journal snapshot prefetch was cut AFTER the portfolio backend-candle
+// fetch, so it is the newest layer of all: peel it FIRST.
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(INDEX)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
   : INDEX;
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : PRE_SNAPSHOT_PREFETCH;
 const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
   ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
       PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
@@ -520,9 +527,15 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1594508, 'current shipped index UTF-16 length is the post-backend-candles value');
-eq(sha256(INDEX), '37703d19026490a5d830caa20f6afa9e08f859b5db749acc378c51bfa4865d00',
-  'current shipped index SHA-256 is the post-backend-candles value');
+eq(INDEX.length, 1583906, 'current shipped index UTF-16 length is the post-snapshot-prefetch value');
+eq(sha256(INDEX), '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29158e6',
+  'current shipped index SHA-256 is the post-snapshot-prefetch value');
+// Re-terminate the chain: the post-backend-candles document those two lines
+// used to pin is now one layer down, so it is pinned explicitly here.
+eq(PRE_SNAPSHOT_PREFETCH.length, 1594508,
+  'peeling the snapshot prefetch reaches the post-backend-candles length');
+eq(sha256(PRE_SNAPSHOT_PREFETCH), '37703d19026490a5d830caa20f6afa9e08f859b5db749acc378c51bfa4865d00',
+  '…and the post-backend-candles hash');
 // Re-terminate the chain: the post-rich-snapshot document those two lines used
 // to pin is now one layer down, so it is pinned explicitly here.
 eq(PRE_BACKEND_CANDLES.length, 1602259,
@@ -822,6 +835,7 @@ eq(changedProduction, [
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-prefetch.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',
   'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'
 ].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');

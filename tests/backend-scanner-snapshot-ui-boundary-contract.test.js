@@ -1139,35 +1139,36 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
      'the MCX charts owner is immediately before the Apex shared post-auth owner');
   eq(idx(APEX_POST_AUTH_REL), idx(TT_RECONNECT_REL) - 1,
      'the Apex shared post-auth owner is immediately before the TT reconnect owner');
-  eq(idx(TT_RECONNECT_REL), SCRIPT_ORDER.length - 12,
+  eq(idx(TT_RECONNECT_REL), SCRIPT_ORDER.length - 13,
      'the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail, portfolio and traffic-light owners');
-  eq(idx(CLOSE_LEGS_REL), SCRIPT_ORDER.length - 11,
+  eq(idx(CLOSE_LEGS_REL), SCRIPT_ORDER.length - 12,
      'the Journal Close Legs owner is immediately before the Journal trade-forms owner');
-  eq(idx(TRADE_FORMS_REL), SCRIPT_ORDER.length - 10,
+  eq(idx(TRADE_FORMS_REL), SCRIPT_ORDER.length - 11,
      'the Journal trade-forms owner is immediately before the Journal trade-detail owner');
-  eq(idx('./js/ui/journal-trade-detail.js'), SCRIPT_ORDER.length - 9,
+  eq(idx('./js/ui/journal-trade-detail.js'), SCRIPT_ORDER.length - 10,
      'the Journal trade-detail owner is immediately before the portfolio data-fetch owner');
-  eq(idx('./js/portfolio/portfolio-data-fetch.js'), SCRIPT_ORDER.length - 8,
+  eq(idx('./js/portfolio/portfolio-data-fetch.js'), SCRIPT_ORDER.length - 9,
      'the portfolio data-fetch owner is immediately before the backend-portfolios owner');
   // The chain shifted, so its END is re-pinned rather than left to the bump.
   // The old message here claimed data-fetch was "the last external script",
   // which two later layers had already made false.
-  eq(idx('./js/portfolio/backend-portfolios.js'), SCRIPT_ORDER.length - 7,
+  eq(idx('./js/portfolio/backend-portfolios.js'), SCRIPT_ORDER.length - 8,
      'the backend-portfolios owner is immediately before the manual-expiry owner');
-  eq(idx('./js/portfolio/portfolio-expiry-manual.js'), SCRIPT_ORDER.length - 6,
+  eq(idx('./js/portfolio/portfolio-expiry-manual.js'), SCRIPT_ORDER.length - 7,
      'the manual-expiry owner is immediately before the traffic-light owner');
-  eq(idx('./js/portfolio/portfolio-traffic-light.js'), SCRIPT_ORDER.length - 5,
+  eq(idx('./js/portfolio/portfolio-traffic-light.js'), SCRIPT_ORDER.length - 6,
      'the traffic-light owner is immediately before the candle-store-chart owner');
-  // Re-terminated with the chain rather than only shifted: every clause above
-  // moved up one slot, so the last slot needs a NEW clause of its own.
-  eq(idx('./js/ui/backend-candle-store-chart.js'), SCRIPT_ORDER.length - 4,
+  eq(idx('./js/ui/backend-candle-store-chart.js'), SCRIPT_ORDER.length - 5,
      'the candle-store-chart owner is immediately before the rich-snapshot owner');
-  eq(idx('./js/services/journal-rich-snapshot.js'), SCRIPT_ORDER.length - 3,
+  eq(idx('./js/services/journal-rich-snapshot.js'), SCRIPT_ORDER.length - 4,
      'the rich-snapshot owner is immediately before the portfolio backend-candles owner');
-  // Re-terminated again: every clause above moved up one slot, so the last slot
-  // needs a NEW clause of its own.
-  eq(idx('./js/portfolio/portfolio-backend-candles.js'), SCRIPT_ORDER.length - 2,
-     'the portfolio backend-candles owner is the LAST external script before the monolith');
+  eq(idx('./js/portfolio/portfolio-backend-candles.js'), SCRIPT_ORDER.length - 3,
+     'the portfolio backend-candles owner is immediately before the snapshot-prefetch owner');
+  // Re-terminated with the chain rather than only shifted: every clause above
+  // moved up one slot, so the last slot needs a NEW clause of its own. Without
+  // it the endpoint would be pinned by nothing at all.
+  eq(idx('./js/services/journal-snapshot-prefetch.js'), SCRIPT_ORDER.length - 2,
+     'the snapshot-prefetch owner is the LAST external script before the monolith');
   eq(idx(DSB_SERVICE_REL), idx(DSB_PANEL_REL) - 1, 'the DSB service is the external script immediately before the DSB panel');
   eq(idx(DSB_ADAPTER_REL), idx(DSB_SERVICE_REL) - 1, 'the DSB pure adapter is the external script immediately before the DSB service');
   eq(idx(PREVIEW_REL), idx(DSB_ADAPTER_REL) - 1, 'the BDSP preview is the external script immediately before the DSB pure adapter');
@@ -1178,7 +1179,7 @@ const SCRIPT_ORDER = PART_RANGES.map(function (r) { return r.src; });
   ok(idx(PANEL_REL) < idx(PREVIEW_REL), 'ORDER 1 (7): the panel loads BEFORE the BDSP preview');
   ok(idx(PANEL_REL) < SCRIPT_ORDER.length - 1, 'ORDER 1 (8): the panel loads BEFORE the inline monolith');
   deepEq(SCRIPT_ORDER.slice(idx(SERVICE_REL)),
-         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, MCX_CHARTS_REL, APEX_POST_AUTH_REL, TT_RECONNECT_REL, CLOSE_LEGS_REL, TRADE_FORMS_REL, './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', '(inline)'],
+         [SERVICE_REL, PANEL_REL, ADAPTER_REL, PREVIEW_REL, DSB_ADAPTER_REL, DSB_SERVICE_REL, DSB_PANEL_REL, PRETRADE_REL, PRETRADE_TECH_REL, PRETRADE_MODAL_REL, MCX_REL, MCX_VIX_REL, MCX_BACKEND_REL, JOURNAL_CORE_REL, REGIME_POLICY_REL, JOURNAL_UI_REL, JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, JOURNAL_BACKUP_RESTORE_REL, MCX_MACRO_CHECK_REL, MCX_CHARTS_REL, APEX_POST_AUTH_REL, TT_RECONNECT_REL, CLOSE_LEGS_REL, TRADE_FORMS_REL, './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', '(inline)'],
          'ORDER 1 (9), EXACT: historical chain remains contiguous through PRETRADE, MCX, all Journal owners and the MCX macro-check, MCX charts, Apex post-auth, TT reconnect, Journal Close Legs, trade forms and trade detail owners before inline');
   eq(idx(PANEL_REL), idx(SERVICE_REL) + 1, 'the panel is the script immediately after the service');
   // (49) none of the four rejected alternative modules entered the load order.
@@ -3447,7 +3448,7 @@ section('29. script order');
     './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js',
     './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js',
     './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js',
-    './js/portfolio/portfolio-backend-candles.js'];
+    './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js'];
   const DECLARED_BEYOND = STRESS_COMPANION_SCRIPTS
     .concat(PESS_EXTRACTION_SCRIPTS)
     .concat(EIC_EXTRACTION_SCRIPTS)
