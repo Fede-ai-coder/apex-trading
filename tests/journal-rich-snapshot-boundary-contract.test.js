@@ -195,7 +195,15 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('RICH ASYNC SNAPSHOT — PERMANENT BOUNDARY CONTRACT');
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The portfolio backend-candle fetch was cut AFTER this layer, so the live
+// document is no longer the one this contract shipped. Peel it first and assert
+// against the document as it was when this layer landed.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const INDEX = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

@@ -125,10 +125,17 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The rich async snapshot was cut AFTER the candle-store chart, so it is the
 // newest layer of all: peel it FIRST, before the chart.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(INDEX)
-  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
+// it is the newest layer of all: peel it FIRST, before the snapshot.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
   : INDEX;
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : PRE_BACKEND_CANDLES;
 const preCandleChart = CANDLE_CHART_U.undoBackendCandleStoreChart(PRE_RICH_SNAPSHOT, CANDLE_CHART_MODULE);
 const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(preCandleChart, TRAFFIC_LIGHT_MODULE);
 const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
@@ -499,9 +506,15 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1602259, 'current shipped index UTF-16 length is the post-rich-snapshot value');
-eq(sha256(INDEX), '6db6f8fd99da797003ca89e022ead159524bfbd4febbe0b54b0523f4fd001fa1',
-  'current shipped index SHA-256 is the post-rich-snapshot value');
+eq(INDEX.length, 1594508, 'current shipped index UTF-16 length is the post-backend-candles value');
+eq(sha256(INDEX), '37703d19026490a5d830caa20f6afa9e08f859b5db749acc378c51bfa4865d00',
+  'current shipped index SHA-256 is the post-backend-candles value');
+// Re-terminate the chain: the post-rich-snapshot document those two lines used
+// to pin is now one layer down, so it is pinned explicitly here.
+eq(PRE_BACKEND_CANDLES.length, 1602259,
+  'peeling the backend-candle fetch reaches the post-rich-snapshot length');
+eq(sha256(PRE_BACKEND_CANDLES), '6db6f8fd99da797003ca89e022ead159524bfbd4febbe0b54b0523f4fd001fa1',
+  '…and the post-rich-snapshot hash');
 // Re-terminate the chain: the post-candle-chart document those two lines
 // used to pin is now one layer down, so it is pinned explicitly here rather
 // than only by the rich-snapshot helper's internal guard.
@@ -596,8 +609,9 @@ const EXPIRY_MANUAL_TAG2 = '<script src="./js/portfolio/portfolio-expiry-manual.
 const TRAFFIC_LIGHT_TAG2 = '<script src="./js/portfolio/portfolio-traffic-light.js"></script>';
 const CANDLE_CHART_TAG2 = '<script src="./js/ui/backend-candle-store-chart.js"></script>';
 const RICH_SNAPSHOT_TAG2 = '<script src="./js/services/journal-rich-snapshot.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n<script>'), 1,
-  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the inline monolith');
+const BACKEND_CANDLES_TAG2 = '<script src="./js/portfolio/portfolio-backend-candles.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n<script>'), 1,
+  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the portfolio backend candles, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
 eq(countLiteral(preMcxMacroCheck, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n<script>'), 1,
@@ -832,7 +846,7 @@ eq(identifierCountMasked(maskLiterals(
 section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js',
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js',
   'js/services/journal-manual-import.js', MODULE_REL, 'js/services/journal-rich-snapshot.js',
   'js/ui/backend-candle-store-chart.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
   'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],

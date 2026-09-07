@@ -265,10 +265,17 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 // The rich async snapshot was cut AFTER the candle-store chart, so it is the
 // newest layer of all: peel it FIRST, before the chart.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
-  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
+// it is the newest layer of all: peel it FIRST, before the snapshot.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : PRE_BACKEND_CANDLES;
 const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
   ? CANDLE_CHART_U.undoBackendCandleStoreChart(PRE_RICH_SNAPSHOT, CANDLE_CHART_MODULE)
   : PRE_RICH_SNAPSHOT;
@@ -546,8 +553,13 @@ eq(PRE_TT_RECONNECT.length, TT_RECONNECT_U.BASE_CHARS,
 eq(sha256(PRE_TT_RECONNECT), TT_RECONNECT_U.BASE_SHA256,
   'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
 eq(APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT), true, 'the post-#410 document carries the later Apex post-auth layer');
-eq(LIVE_INDEX.length, RICH_SNAPSHOT_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), RICH_SNAPSHOT_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(LIVE_INDEX.length, BACKEND_CANDLES_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), BACKEND_CANDLES_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+// Re-terminate the chain: the rich-snapshot document these two lines used to
+// pin is now one layer down, so it is pinned explicitly here.
+eq(PRE_BACKEND_CANDLES.length, RICH_SNAPSHOT_U.EXTRACTED_CHARS,
+  'peeling the backend-candle fetch reaches the rich-snapshot extracted length');
+eq(sha256(PRE_BACKEND_CANDLES), RICH_SNAPSHOT_U.EXTRACTED_SHA256, '…and its hash');
 // Re-terminate the chain: the candle-store-chart document these two lines
 // used to pin is now one layer down, so it is pinned explicitly here rather
 // than only by the rich-snapshot helper's internal guard.
@@ -556,7 +568,7 @@ eq(PRE_RICH_SNAPSHOT.length, CANDLE_CHART_U.EXTRACTED_CHARS,
 eq(sha256(PRE_RICH_SNAPSHOT), CANDLE_CHART_U.EXTRACTED_SHA256,
   '…and its hash');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
-  65, 'the live shipped index carries 65 local application scripts');
+  66, 'the live shipped index carries 66 local application scripts');
 eq(PRE_TT_RECONNECT.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, '…peeling TT reconnect returns it to the post-Apex length');
 eq(sha256(PRE_TT_RECONNECT), APEX_POST_AUTH_U.EXTRACTED_SHA256, '…and to the post-Apex hash');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
@@ -821,8 +833,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
 // module is second-to-last rather than last. The invariant this line protects —
 // the charts owner evaluates before the inline monolith that consumes it — is
 // unchanged and asserted in its stronger, current form.
-eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-13),
-  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', '(inline)'],
+eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-14),
+  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', '(inline)'],
   'in execution order the module runs immediately before the Apex post-auth owner, which precedes the TT reconnect and Journal Close Legs owners and then the inline monolith');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1020,7 +1032,7 @@ function changedPaths() {
 }
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the MCX charts owner and the later Apex post-auth, TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent charts contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact charts undo helper is part of the change');
@@ -1035,7 +1047,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
   rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
-  rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+  rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 
 const contractsToAdvance = [

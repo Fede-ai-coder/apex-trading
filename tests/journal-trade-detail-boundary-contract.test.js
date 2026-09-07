@@ -131,7 +131,7 @@ const DEPENDANTS = {
   './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
 };
 const MODULE_POSITION = 58;
-const PARTS_TOTAL = 66;
+const PARTS_TOTAL = 67;
 const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -274,10 +274,17 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 // The rich async snapshot was cut AFTER the candle-store chart, so it is the
 // newest layer of all: peel it FIRST, before the chart.
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
-const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
-  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+// The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
+// it is the newest layer of all: peel it FIRST, before the snapshot.
+const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : PRE_BACKEND_CANDLES;
 const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
   ? CANDLE_CHART_U.undoBackendCandleStoreChart(PRE_RICH_SNAPSHOT, CANDLE_CHART_MODULE)
   : PRE_RICH_SNAPSHOT;
@@ -460,10 +467,10 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order: a module defined AFTER three of its callers');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 65 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 66 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 7,
-  '…seven positions before the inline monolith: portfolio data-fetch,\n' +
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 8,
+  '…eight positions before the inline monolith: portfolio data-fetch,\n' +
   '   backend-portfolios and manual expiry were all cut after this one');
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
@@ -566,7 +573,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
+  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
   'production footprint is exactly index.html plus the one new module');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -579,7 +586,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
