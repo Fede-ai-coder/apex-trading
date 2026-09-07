@@ -122,7 +122,14 @@ const BACKUP_RESTORE_MODULE = fs.readFileSync(path.join(ROOT, 'js/ui/journal-bac
 // The backend-candle-store chart pair is now the NEWEST layer of all, sitting
 // on top of the traffic light: peel it FIRST so every undo below still sees
 // the exact document it was cut against.
-const preCandleChart = CANDLE_CHART_U.undoBackendCandleStoreChart(INDEX, CANDLE_CHART_MODULE);
+// The rich async snapshot was cut AFTER the candle-store chart, so it is the
+// newest layer of all: peel it FIRST, before the chart.
+const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(INDEX)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
+  : INDEX;
+const preCandleChart = CANDLE_CHART_U.undoBackendCandleStoreChart(PRE_RICH_SNAPSHOT, CANDLE_CHART_MODULE);
 const preTrafficLight = TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(preCandleChart, TRAFFIC_LIGHT_MODULE);
 const preExpiryManual = EXPIRY_MANUAL_U.undoPortfolioExpiryManual(preTrafficLight, EXPIRY_MANUAL_MODULE);
 const preBackendPortfolios = BACKEND_PORTFOLIOS_U.undoBackendPortfolios(preExpiryManual, BACKEND_PORTFOLIOS_MODULE);
@@ -492,9 +499,16 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1618149, 'current shipped index UTF-16 length is the post-candle-chart value');
-eq(sha256(INDEX), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
-  'current shipped index SHA-256 is the post-candle-chart value');
+eq(INDEX.length, 1602259, 'current shipped index UTF-16 length is the post-rich-snapshot value');
+eq(sha256(INDEX), '6db6f8fd99da797003ca89e022ead159524bfbd4febbe0b54b0523f4fd001fa1',
+  'current shipped index SHA-256 is the post-rich-snapshot value');
+// Re-terminate the chain: the post-candle-chart document those two lines
+// used to pin is now one layer down, so it is pinned explicitly here rather
+// than only by the rich-snapshot helper's internal guard.
+eq(PRE_RICH_SNAPSHOT.length, 1618149,
+  'peeling the rich snapshot reaches the post-candle-chart length');
+eq(sha256(PRE_RICH_SNAPSHOT), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01efce21b9f05bb9e',
+  '…and the post-candle-chart hash');
 // The post-Apex-post-auth document those two lines used to pin is still
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
@@ -581,8 +595,9 @@ const BACKEND_PORTFOLIOS_TAG2 = '<script src="./js/portfolio/backend-portfolios.
 const EXPIRY_MANUAL_TAG2 = '<script src="./js/portfolio/portfolio-expiry-manual.js"></script>';
 const TRAFFIC_LIGHT_TAG2 = '<script src="./js/portfolio/portfolio-traffic-light.js"></script>';
 const CANDLE_CHART_TAG2 = '<script src="./js/ui/backend-candle-store-chart.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n<script>'), 1,
-  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the inline monolith');
+const RICH_SNAPSHOT_TAG2 = '<script src="./js/services/journal-rich-snapshot.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n<script>'), 1,
+  'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
 eq(countLiteral(preMcxMacroCheck, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n<script>'), 1,
@@ -818,7 +833,7 @@ section('8. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js',
-  'js/services/journal-manual-import.js', MODULE_REL,
+  'js/services/journal-manual-import.js', MODULE_REL, 'js/services/journal-rich-snapshot.js',
   'js/ui/backend-candle-store-chart.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
   'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
   'production footprint includes index.html plus Migration and the later Manual Import, Backup/Restore, MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');

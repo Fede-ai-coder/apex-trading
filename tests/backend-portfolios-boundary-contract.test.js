@@ -168,10 +168,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The candle-store chart pair was cut AFTER this layer; peel it FIRST. Each
 // helper re-verifies its own output by length and SHA-256, so every hop is
 // proved rather than assumed.
-const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
-  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
+// The rich async snapshot was cut AFTER the candle-store chart, so it is the
+// newest layer of all: peel it FIRST, before the chart.
+const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
+      PRE_RICH_SNAPSHOT, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
+  : PRE_RICH_SNAPSHOT;
 const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
   ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
       PRE_CANDLE_CHART, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))

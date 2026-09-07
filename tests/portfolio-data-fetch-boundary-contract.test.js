@@ -126,7 +126,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 65;
+const PARTS_TOTAL = 66;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -253,10 +253,17 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The candle-store chart pair was cut AFTER this layer; peel it FIRST. Each
 // helper re-verifies its own output by length and SHA-256, so every hop is
 // proved rather than assumed.
-const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(LIVE_INDEX)
-  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
+// The rich async snapshot was cut AFTER the candle-store chart, so it is the
+// newest layer of all: peel it FIRST, before the chart.
+const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
+const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(LIVE_INDEX)
+  ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_CANDLE_CHART = CANDLE_CHART_U.isApplied(PRE_RICH_SNAPSHOT)
+  ? CANDLE_CHART_U.undoBackendCandleStoreChart(
+      PRE_RICH_SNAPSHOT, fs.readFileSync(path.join(ROOT, 'js/ui/backend-candle-store-chart.js'), 'utf8'))
+  : PRE_RICH_SNAPSHOT;
 const PRE_TRAFFIC_LIGHT = TRAFFIC_LIGHT_U.isApplied(PRE_CANDLE_CHART)
   ? TRAFFIC_LIGHT_U.undoPortfolioTrafficLight(
       PRE_CANDLE_CHART, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-traffic-light.js'), 'utf8'))
@@ -445,15 +452,15 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 64 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 65 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 59');
 // This section reads the LIVE load order, not the peeled document, so it states
 // what is true now: backend-portfolios was cut after this layer and sits between
 // this module and the inline monolith.
 eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
   '…followed by the backend-portfolios module, which was cut later');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 5,
-  '…and the inline monolith is five positions on');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 6,
+  '…and the inline monolith is six positions on');
 {
   // The referencing set is DERIVED, not assumed.
   const referencing = PARTS
@@ -532,7 +539,7 @@ const changed = Array.from(new Set(committed.concat(status))).sort();
 eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
   ['index.html', 'js/portfolio/backend-portfolios.js', MODULE_REL,
    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js',
-   'js/ui/backend-candle-store-chart.js'],
+   'js/services/journal-rich-snapshot.js', 'js/ui/backend-candle-store-chart.js'],
   'production footprint since this base is index.html, this module, and the four layers cut after it');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -545,7 +552,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/portfolio/backend-portfolios.js' ||
+  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/backend-portfolios.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact or the later backend-portfolios module');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

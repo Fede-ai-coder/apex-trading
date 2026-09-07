@@ -252,6 +252,9 @@ const PORTFOLIO_EXTRACTION_SCRIPTS = [
 const TRADE_DETAIL_EXTRACTION_SCRIPTS = [
   './js/ui/journal-trade-detail.js',
 ];
+const RICH_SNAPSHOT_EXTRACTION_SCRIPTS = [
+  './js/services/journal-rich-snapshot.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -263,7 +266,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(CLOSE_LEGS_EXTRACTION_SCRIPTS)
   .concat(TRADE_FORMS_EXTRACTION_SCRIPTS)
   .concat(TRADE_DETAIL_EXTRACTION_SCRIPTS)
-  .concat(PORTFOLIO_EXTRACTION_SCRIPTS);
+  .concat(PORTFOLIO_EXTRACTION_SCRIPTS)
+  .concat(RICH_SNAPSHOT_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2758,7 +2762,7 @@ deepEq(LOCAL_SCRIPTS, [
 ], 'measured current local script order in index.html, excluding the explicitly declared non-DSB modules');
 eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.length,
    'the DSB fixture plus the declared non-DSB modules account for EVERY local script — an undeclared one fails here');
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 64,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 65,
    'index.html loads 26 local application scripts plus the named Stress, PESS, EIC, PRETRADE, six MCX, seven Journal, Apex post-auth, TT reconnect, Journal trade-forms and Journal trade-detail, portfolio data fetch, backend portfolios, manual expiry, traffic light, candle-store chart and Journal Close Legs extraction modules before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
@@ -3537,7 +3541,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && CLOSE_LEGS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && TRADE_FORMS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && TRADE_DETAIL_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && PORTFOLIO_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && PORTFOLIO_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && RICH_SNAPSHOT_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
