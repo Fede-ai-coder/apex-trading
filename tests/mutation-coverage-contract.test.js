@@ -22,8 +22,11 @@
 // that stops being caught fails the build — which is the difference between a
 // check that is enforced and a check that is remembered.
 //
-// THE COST GROWS, AND IS PINNED SO IT CANNOT GROW QUIETLY. Each mutant costs
-// roughly a second, and each cycle adds a spec. §1 asserts the exact total
+// THE COST GROWS, AND IS PINNED SO IT CANNOT GROW QUIETLY. A mutant costs one
+// run of its target, so the price depends on the target and not on the mutant:
+// audit #442's spec measured 2.46 s each, because its target screens all 98
+// monolith regions and reads all sixty-nine shipped modules. "Roughly a second"
+// stood here until that was timed. Each cycle adds a spec. §1 asserts the exact total
 // against DECLARED_MUTANTS — the same ratchet idiom the suite already uses for
 // its file count — and asserts that total stays under MUTANT_BUDGET. When a
 // cycle pushes past the budget the build fails and someone decides, in a diff,
@@ -76,8 +79,8 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // number may not cross. Each costs about a second of CI. The exact count makes
 // every addition a deliberate line in a diff; the budget makes the aggregate a
 // deliberate decision rather than a slow slide.
-const DECLARED_MUTANTS = 107;
-const MUTANT_BUDGET = 120;
+const DECLARED_MUTANTS = 181;
+const MUTANT_BUDGET = 200;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -258,6 +261,35 @@ section('4. The harness discriminates — one mutant must die, one must survive'
     'said "caught" would make the expensive pass a formality');
   eq(sha256(fs.readFileSync(path.join(ROOT, FIXTURE), 'utf8')), digest,
     'and the fixture is byte-identical afterwards');
+
+  // A RED TARGET MAKES EVERY MUTANT LOOK CAUGHT, so runSpec refuses to start
+  // against one. Audit #442 read "72 mutants, 0 survivors" from a pass whose
+  // target was already failing; the survivor hiding in it was found by the prose
+  // check instead. Without this guard the expensive pass can report a clean
+  // sweep while proving nothing at all.
+  {
+    const spec = {
+      target: FIXTURE,
+      runs: [FIXTURE],
+      mutants: [{ id: 'never-runs', find: 'const CHECKED_PIN = 7;', replace: 'const CHECKED_PIN = 8;' }],
+    };
+    // Baseline GREEN: the pass runs and the mutant is caught, as §4 just showed.
+    eq(HARNESS.runSpec(spec, {}).survivors.length, 0, 'against a green target the pass runs normally');
+    // Baseline RED: break the fixture, and the pass must refuse rather than
+    // report a sweep. Restored by SHA in the finally, like every other mutation.
+    const abs = path.join(ROOT, FIXTURE);
+    const original = fs.readFileSync(abs, 'utf8');
+    try {
+      fs.writeFileSync(abs, original + '\nthrow new Error("fixture deliberately red");\n');
+      assert.throws(() => HARNESS.runSpec(spec, { allowDirty: true }),
+        (e) => e instanceof Error && /^MUTATION_BASELINE_RED: /.test(e.message),
+        'a pass against an already-failing target throws instead of reporting a sweep');
+      pass++;
+    } finally {
+      fs.writeFileSync(abs, original);
+    }
+    eq(sha256(fs.readFileSync(abs, 'utf8')), digest, '…and the fixture is restored byte for byte');
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

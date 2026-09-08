@@ -138,6 +138,23 @@ function runSpec(spec, opts) {
   // pass inside a full pass.
   if (spec.runArgs && !options.runArgs) options = Object.assign({}, options, { runArgs: spec.runArgs });
 
+  // THE BASELINE. A mutant is "caught" when the run FAILS — so if the target is
+  // already failing, every mutant is caught and the pass reports a clean sweep
+  // while proving nothing. Audit #442 hit exactly that: it ran a 72-mutant pass
+  // against a target that was red for an unrelated reason, read "0 survivors",
+  // and only found the dead pin hiding in it when the prose check noticed the
+  // constant was never used. The pass now refuses to start unless the target
+  // passes clean.
+  if (!options.skipBaseline) {
+    const baseline = spawnSync(process.execPath,
+      [path.join(ROOT, target)].concat(options.runArgs || []),
+      { cwd: ROOT, encoding: 'utf8', timeout: options.timeout || 600000, maxBuffer: 64 * 1024 * 1024 });
+    if (baseline.status !== 0) {
+      throw new Error('MUTATION_BASELINE_RED: ' + target + ' fails before any mutant is applied' +
+        ' (exit ' + baseline.status + '); every mutant would report as caught');
+    }
+  }
+
   const wanted = options.only
     ? spec.mutants.filter((m) => options.only.indexOf(m.id) >= 0)
     : spec.mutants;
