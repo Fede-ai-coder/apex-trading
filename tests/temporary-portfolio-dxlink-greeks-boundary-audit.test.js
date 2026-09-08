@@ -102,8 +102,10 @@ const BASE_SHA256 = '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29
 const CODE_AT = 113840;
 const CODE_CHARS = 1470040;
 const LOCAL_SCRIPT_COUNT = 67;
-// This audit is the 151st file. Phase 2 replaces it one for one.
-const TEST_FILE_COUNT = 151;
+// The suite size at this audit's BASE, and now. #437 added this audit (150 ->
+// 151) and the mutation tooling added its contract (151 -> 152).
+const BASE_TEST_FILE_COUNT = 150;
+const TEST_FILE_COUNT = 152;
 
 // ── The region, in MONOLITH coordinates ──────────────────────────────────────
 const RAW_AT = 68843;
@@ -181,6 +183,17 @@ const VM_GLOBALS = 2;
 
 // ── The modelled extraction ──────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-dxlink-greeks-boundary-audit.test.js';
+// Everything added since the base, sorted. #437 added only the audit; the
+// mutation tooling that followed added the other four.
+const ADDED_FILES = [
+  'tests/lib/fixtures/mutation-fixture-target.js',
+  'tests/lib/mutation-harness.js',
+  'tests/lib/mutation-spec.js',
+  'tests/mutation-coverage-contract.test.js',
+  'tests/mutation-specs/mutation-coverage-contract.spec.js',
+  'tests/mutation-specs/portfolio-dxlink-greeks-audit.spec.js',
+  'tests/temporary-portfolio-dxlink-greeks-boundary-audit.test.js',
+];
 const RATCHETED_CONTRACTS = 13;
 const MODULE_REL = 'js/portfolio/portfolio-dxlink-greeks.js';
 const TAG = '<script src="./js/portfolio/portfolio-dxlink-greeks.js"></script>\n';
@@ -290,9 +303,15 @@ eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f))
   const committedAdds = git(['diff', '--name-only', '--diff-filter=A', BASE_SHA]).split('\n').filter(Boolean);
   const untracked = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter((l) => /^(\?\?|A )/.test(l)).map((l) => l.slice(3));
-  eq(Array.from(new Set(committedAdds.concat(untracked))).sort(),
-    ['tests/temporary-portfolio-dxlink-greeks-boundary-audit.test.js'],
-    '…and it is the ONLY file this PR adds, whether or not it is committed yet');
+  // This audit shipped in #437 adding exactly itself. The mutation tooling that
+  // followed adds four more files, all of them test infrastructure, and widens
+  // this list rather than loosening it — the point of the assertion is that the
+  // set is EXACT, not that it has one element. Phase 2 deletes this file and
+  // the question goes away.
+  eq(Array.from(new Set(committedAdds.concat(untracked))).sort(), ADDED_FILES,
+    '…and these are exactly the files added since the base, committed or not');
+  eq(ADDED_FILES.filter((rel) => !rel.startsWith('tests/')), [],
+    '…every one of them under tests/, so production is untouched by the addition');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -495,6 +514,11 @@ section('5. Coupling in BOTH directions — and which zero is vacuous');
 section('6. The split rule, measured at every extent');
 // ─────────────────────────────────────────────────────────────────────────────
 {
+  // The two halves are DERIVED from the region and its inner banner, not typed
+  // out again: a hand-written pair here would survive a one-unit shift, which
+  // is the survivor shape this cycle already had to close twice below.
+  eq(SPLIT_A1, [RAW_AT, INNER_BANNER], 'the first half runs from the region start to the inner banner');
+  eq(SPLIT_A2, [INNER_BANNER, RAW_END], '…and the second from the inner banner to the seam');
   eq(crossings(RAW_AT, RAW_END).total, CROSSINGS_JOINED, 'the union costs ZERO crossings');
   eq(crossings(SPLIT_A1[0], SPLIT_A1[1]).total, CROSSINGS_A1, '…the symbol extractor alone, zero');
   eq(crossings(SPLIT_A2[0], SPLIT_A2[1]).total, CROSSINGS_A2, '…the DXLink fetch alone, zero');
@@ -649,7 +673,7 @@ section('10. Production is untouched');
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), [],
     'NO production file changed — index.html and every module are byte-identical');
-  eq(changed.filter((rel) => !/\.test\.js$/.test(rel)), [],
+  eq(changed.filter((rel) => !rel.startsWith('tests/')), [],
     '…and nothing outside tests/ changed at all');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'this audit is in the change set');
   // The rest of the change set is the suite-count ratchet, and this audit
@@ -657,7 +681,7 @@ section('10. Production is untouched');
   // mechanical edit across a family must be compared against the base, because
   // a weakened assertion still passes CI. So: each of these files must differ
   // from the base by exactly ONE line, and that line must be the ratchet.
-  const ratcheted = changed.filter((rel) => rel !== AUDIT_REL);
+  const ratcheted = changed.filter((rel) => ADDED_FILES.indexOf(rel) < 0);
   eq(ratcheted.length, RATCHETED_CONTRACTS,
     'thirteen contracts carry the suite-count ratchet');
   for (const rel of ratcheted) {
@@ -669,8 +693,14 @@ section('10. Production is untouched');
     const differing = [];
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) differing.push(i);
     eq(differing.length, 1, rel + ': exactly one line differs from the base');
-    eq(b[differing[0]], 'const TEST_FILE_COUNT = ' + (TEST_FILE_COUNT - 1) + ';',
-      rel + ': …and the old line was the count');
+    // Pinned against the BASE's value, not against TEST_FILE_COUNT - 1: the
+    // increment is not always one. #437 took these files 150 -> 151 and the
+    // mutation tooling took them 151 -> 152, so measured from this audit's base
+    // the step is two. Assuming a step of one would have made this check pass
+    // only in the cycles where nothing else shipped.
+    eq(b[differing[0]], 'const TEST_FILE_COUNT = ' + BASE_TEST_FILE_COUNT + ';',
+      rel + ': …and the old line was the count this audit\u2019s base carried');
+    ok(BASE_TEST_FILE_COUNT < TEST_FILE_COUNT, rel + ': …which the ratchet only ever raises');
     eq(a[differing[0]], 'const TEST_FILE_COUNT = ' + TEST_FILE_COUNT + ';',
       rel + ': …replaced by the incremented count, and nothing else');
     // A dropped assertion is what this check exists to catch, so count them.
