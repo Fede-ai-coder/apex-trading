@@ -1,15 +1,16 @@
 'use strict';
-// Current-app reconstruction bridge after Journal snapshot prefetch +
-// Portfolio backend candles + Rich
-// async snapshot + Candle-store
+// Current-app reconstruction bridge after Portfolio DXLink greeks + Journal
+// snapshot prefetch + Portfolio backend candles + Rich async snapshot +
+// Candle-store
 // chart + Traffic light + Manual expiry + Backend portfolios + Portfolio data
 // fetch + Journal trade detail + Journal trade forms + Journal Close Legs + TT
 // reconnect UI + Apex post-auth init + MCX charts + MCX macro check +
 // Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
 // Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Journal-snapshot-prefetch relocation first, then Portfolio backend
-// candles, then Rich async snapshot, then Candle-store chart, then
+// newest Portfolio-DXLink-greeks relocation first, then Journal snapshot
+// prefetch, then Portfolio backend candles, then Rich async snapshot, then
+// Candle-store chart, then
 // Traffic light, then Manual expiry, then Backend portfolios, then Portfolio
 // data fetch, then Journal trade detail, Journal trade forms, Journal Close
 // Legs, TT reconnect, Apex post-auth, MCX charts, MCX macro check,
@@ -25,15 +26,15 @@
 // owners at evaluation time; that is proved in its own contract, not here.
 //
 // Portfolio data fetch has three async owners of four, which is unremarkable
-// here — FIFTEEN of these twenty-three layers ship async owners,
+// here — SIXTEEN of these twenty-four layers ship async owners,
 // journal-remote-persistence six of eight — and in every case it is not a
 // load-time property: each contract proves its block has no top-level call, no
 // top-level await, and no evaluation-time dependency read.
 //
 // Backend portfolios has a seam that is not a closing brace: the region ends on
 // a top-level statement, `window.viewLinkedTradesInJournal = …;`, so its body
-// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-three layers,
-// TWENTY-ONE end `}\n` and TWO do not — backend portfolios, and
+// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-four layers,
+// TWENTY-TWO end `}\n` and TWO do not — backend portfolios, and
 // journal-backend-write-through, which ends `})();`. Backend portfolios also
 // carries twelve top-level statements, all `window.X = X` re-exports and their
 // `try` wrappers, which its contract proves read nothing the region does not
@@ -50,18 +51,27 @@
 // UNEXTRACTABLE, because its last 1,060 units are a dev-only block whose
 // top-level `if` CALLS two monolith functions at load. The cut stops before
 // that block, which is why its seam is not a banner — one of THREE such seams
-// among the TWELVE layers that record a single raw range, with tt-reconnect
-// and apex-post-auth-init; the other NINE end on a banner. Its own contract
+// among the THIRTEEN layers that record a single raw range, with tt-reconnect
+// and apex-post-auth-init; the other TEN end on a banner. Its own contract
 // measures all of that.
 //
-// Journal snapshot prefetch is the newest layer and sits on top of all of
-// them. Its outbound shape differs from the two layers below it, which is
-// why its own contract measures it rather than inheriting the phrasing: the
-// rich async snapshot writes two keys and nothing else, so "all by key" was
-// true there; this one performs THREE property writes on `S`, two keyed and
-// one a GUARDED lazy init. Its contract pins the guard by its whole line,
-// because a substring match on the guarded string also passes the unguarded
-// form — the mutation survivor audit #435 found and closed.
+// Journal snapshot prefetch performs THREE property writes on `S`, two keyed
+// and one a GUARDED lazy init, where the rich async snapshot below it writes
+// two keys and nothing else — so "all by key" was true there and false here.
+// Its contract pins the guard by its whole line, because a substring match on
+// the guarded string also passes the unguarded form: the mutation survivor
+// audit #435 found and closed.
+//
+// PORTFOLIO DXLINK GREEKS is the newest layer and sits on top of all of them.
+// It is the only layer in this chain whose region scored ZERO on both coupling
+// axes at its base — nothing in the monolith named either owner, and nothing it
+// writes lands on a binding the monolith owns. Its contract keeps the two
+// zeroes apart: the inbound one is VACUOUS (the region owns no binding), the
+// outbound one is a MEASUREMENT over fifteen property writes whose every base
+// the body introduces itself. It also SPANS a `// ── ` section banner, joining
+// two banner-to-banner regions that the split rule could not separate — both
+// cost zero alone and zero joined — so the boundary is a judgement its contract
+// publishes the numbers for rather than a rule's output.
 //
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
@@ -77,24 +87,26 @@
 //     backup/restore — have no separator concept at all. The module IS the
 //     whole removed block, and each undo re-inserts `moduleSource` alone.
 //
-//     THE FIFTEEN FROM #406 ONWARD — macro check, #408 charts, #410
+//     THE SIXTEEN FROM #406 ONWARD — macro check, #408 charts, #410
 //     post-auth, #411 TT reconnect, #413 close legs, #415 trade forms, #417
 //     trade detail, #421 portfolio data fetch, #423 backend portfolios, #425
 //     manual expiry, #428 traffic light, #430 candle-store chart, the rich
-//     async snapshot, the portfolio backend-candle fetch and the journal
-//     snapshot prefetch — treat the block as `body + one structural LF`. BOTH
+//     async snapshot, the portfolio backend-candle fetch, the journal snapshot
+//     prefetch and the DXLink greeks pair — treat the block as `body + one
+//     structural LF`. BOTH
 //     leave index.html, only the body is written to the module file, and the
 //     undo re-inserts the body followed by SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the fifteen newest have it, the eight
+// `const SEPARATOR = '\n'` declaration: the sixteen newest have it, the eight
 // oldest do not.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only TWELVE of the
-// fifteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only THIRTEEN of the
+// sixteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
 // post-auth, TT reconnect, close legs, trade detail, portfolio data fetch,
 // backend portfolios, manual expiry, traffic light, candle-store chart, rich
-// async snapshot, portfolio backend candles and journal snapshot prefetch. The
+// async snapshot, portfolio backend candles, journal snapshot prefetch and the
+// portfolio DXLink greeks pair. The
 // multi-fragment layers pin
 // their fragments individually instead (charts weaves three, trade forms joins
 // two), and macro check pins neither constant. A future layer that reasons
@@ -102,13 +114,14 @@
 // era from those constants.
 //
 // Layer shapes, measured against the shipped modules rather than assumed, and
-// scoped to what was actually measured: of the TWENTY-THREE layers this bridge
+// scoped to what was actually measured: of the TWENTY-FOUR layers this bridge
 // peels, every one is a single contiguous fragment except #408 (three) and
 // #415 (two). That is not a statement about the repository at large — the MCX3
 // delegate below this chain is itself two fragments, and the older EIC, PESS
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_DXLINK_GREEKS = require('./portfolio-dxlink-greeks-undo.js');
 const JOURNAL_SNAPSHOT_PREFETCH = require('./journal-snapshot-prefetch-undo.js');
 const PORTFOLIO_BACKEND_CANDLES = require('./portfolio-backend-candles-undo.js');
 const JOURNAL_RICH_SNAPSHOT = require('./journal-rich-snapshot-undo.js');
@@ -134,6 +147,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_DXLINK_GREEKS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-dxlink-greeks.js'),
+  'utf8'
+);
 const JOURNAL_SNAPSHOT_PREFETCH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-snapshot-prefetch.js'),
   'utf8'
@@ -228,9 +245,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preSnapshotPrefetch = JOURNAL_SNAPSHOT_PREFETCH.isApplied(html)
-    ? JOURNAL_SNAPSHOT_PREFETCH.undoJournalSnapshotPrefetch(html, JOURNAL_SNAPSHOT_PREFETCH_SOURCE)
+  const preDxlinkGreeks = PORTFOLIO_DXLINK_GREEKS.isApplied(html)
+    ? PORTFOLIO_DXLINK_GREEKS.undoPortfolioDxlinkGreeks(html, PORTFOLIO_DXLINK_GREEKS_SOURCE)
     : html;
+  const preSnapshotPrefetch = JOURNAL_SNAPSHOT_PREFETCH.isApplied(preDxlinkGreeks)
+    ? JOURNAL_SNAPSHOT_PREFETCH.undoJournalSnapshotPrefetch(preDxlinkGreeks, JOURNAL_SNAPSHOT_PREFETCH_SOURCE)
+    : preDxlinkGreeks;
   const preBackendCandles = PORTFOLIO_BACKEND_CANDLES.isApplied(preSnapshotPrefetch)
     ? PORTFOLIO_BACKEND_CANDLES.undoPortfolioBackendCandles(preSnapshotPrefetch, PORTFOLIO_BACKEND_CANDLES_SOURCE)
     : preSnapshotPrefetch;

@@ -76,7 +76,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // number may not cross. Each costs about a second of CI. The exact count makes
 // every addition a deliberate line in a diff; the budget makes the aggregate a
 // deliberate decision rather than a slow slide.
-const DECLARED_MUTANTS = 77;
+const DECLARED_MUTANTS = 55;
 const MUTANT_BUDGET = 120;
 
 let pass = 0;
@@ -115,6 +115,19 @@ for (const { file, spec } of loaded) {
   ok(Array.isArray(spec.mutants) && spec.mutants.length > 0, file + ': carries mutants');
   const runs = spec.runs && spec.runs.length ? spec.runs : [spec.target];
   for (const r of runs) ok(fs.existsSync(path.join(ROOT, r)), file + ': the run target exists — ' + r);
+  // THE MUTATED FILE MUST BE ONE THE RUNS ACTUALLY EXERCISE. A spec that
+  // mutates file A while running file B reports "survived" for every mutant
+  // and means nothing by it. That is not hypothetical: it happened in #432 and
+  // again in #439, both times mutating the reconstruction bridge while running
+  // a contract that builds its own peel chain — a false survivor that cost an
+  // investigation each time. A spec whose target is not among its runs must say
+  // which run reaches it, in writing.
+  if (runs.indexOf(spec.target) < 0) {
+    ok(typeof spec.indirect === 'string' && spec.indirect.trim().length >= 12,
+      file + ': its target is not among its runs, so it must argue which run reaches it');
+  } else {
+    ok(true, file + ': its target is among the files it runs');
+  }
   const ids = spec.mutants.map((m) => m.id);
   eq(ids.length, new Set(ids).size, file + ': mutant ids are unique');
   for (const m of spec.mutants) {
@@ -200,6 +213,25 @@ for (const { file, spec } of loaded) {
   eq(SPECS.coverage({ target: FIXTURE, mutants: [
     { id: 'z', covers: ['NO_SUCH_PIN'], find: 'assert', replace: 'assert ' }] }, src).phantom,
     ['z:NO_SUCH_PIN'], 'control — …but a `covers` entry naming a non-pin is reported, not believed');
+  // The target-in-runs rule, driven on the shape that actually went wrong: a
+  // mutant applied to one file and verified by running a different one.
+  {
+    const stray = HARNESS.runMutant(
+      { id: 'stray', find: 'const CHECKED_PIN = 7;', replace: 'const CHECKED_PIN = 8;' },
+      FIXTURE, ['tests/lib/fixtures/mutation-fixture-target.js'], {});
+    eq(stray.status, 'caught', 'control — mutating the fixture and running the fixture catches it');
+    const decoy = path.join(ROOT, 'tests/lib/fixtures/mutation-decoy-target.js');
+    fs.writeFileSync(decoy, "'use strict';\nconsole.log('decoy');\n");
+    try {
+      const missed = HARNESS.runMutant(
+        { id: 'stray2', find: 'const CHECKED_PIN = 7;', replace: 'const CHECKED_PIN = 8;' },
+        FIXTURE, ['tests/lib/fixtures/mutation-decoy-target.js'], {});
+      eq(missed.status, 'survived',
+        '…and running an UNRELATED file reports a false survivor — which is why §1 requires the target to be among the runs');
+    } finally {
+      fs.unlinkSync(decoy);
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

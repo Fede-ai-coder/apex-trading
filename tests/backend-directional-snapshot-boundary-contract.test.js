@@ -261,6 +261,9 @@ const PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS = [
 const JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS = [
   './js/services/journal-snapshot-prefetch.js',
 ];
+const PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS = [
+  './js/portfolio/portfolio-dxlink-greeks.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -275,7 +278,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PORTFOLIO_EXTRACTION_SCRIPTS)
   .concat(RICH_SNAPSHOT_EXTRACTION_SCRIPTS)
   .concat(PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS)
-  .concat(JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS);
+  .concat(JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS)
+  .concat(PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -1184,7 +1188,14 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   // The portfolio data-fetch block (#421) was removed from ABOVE both
   // declarations, so it shifts them by its full raw size, separator included.
   const PORTFOLIO_RELOCATED_ABOVE = 19550;
-  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE;
+  // The portfolio DXLink greeks pair (#439) was cut at monolith offset 68,843 —
+  // ABOVE both declarations — so it shifts them by its full raw size, separator
+  // included. Every layer cut since #421 and before it sat BELOW these two and
+  // contributed nothing, which is why this is the first new term in three
+  // cycles rather than one per cycle.
+  const DXLINK_GREEKS_RELOCATED_ABOVE = 6522;
+  const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE +
+    DXLINK_GREEKS_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2775,8 +2786,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 67,
-   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 67 in all, before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 68,
+   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 68 in all, before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3557,7 +3568,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && PORTFOLIO_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && RICH_SNAPSHOT_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];
