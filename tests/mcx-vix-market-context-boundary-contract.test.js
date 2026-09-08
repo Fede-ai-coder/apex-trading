@@ -353,10 +353,17 @@ const afterBcEnd = INDEX.indexOf('>', afterBcAt);
 const afterBcTag = afterBcEnd >= 0 ? INDEX.slice(afterBcAt, afterBcEnd + 1) : '';
 ok(INDEX.indexOf(richSnapshotTag) > INDEX.indexOf(candleChartTag) && afterRsTag === backendCandlesOpen,
   'the rich-snapshot owner loads immediately before the portfolio backend-candles owner');
+const snapshotPrefetchOpen = '<script src="./js/services/journal-snapshot-prefetch.js">';
+const snapshotPrefetchTag = snapshotPrefetchOpen + '</script>';
+const afterSpAt = INDEX.indexOf('<script', INDEX.indexOf(snapshotPrefetchTag) + snapshotPrefetchTag.length);
+const afterSpEnd = INDEX.indexOf('>', afterSpAt);
+const afterSpTag = afterSpEnd >= 0 ? INDEX.slice(afterSpAt, afterSpEnd + 1) : '';
+ok(INDEX.indexOf(backendCandlesTag) > INDEX.indexOf(richSnapshotTag) && afterBcTag === snapshotPrefetchOpen,
+  'the portfolio backend-candles owner loads immediately before the snapshot-prefetch owner');
 // Re-terminated with the chain again: shifting the clauses above without adding
 // this one would leave the last tag pinned by nothing.
-ok(INDEX.indexOf(backendCandlesTag) > INDEX.indexOf(richSnapshotTag) && !/\bsrc\s*=/i.test(afterBcTag),
-  'the portfolio backend-candles owner loads immediately before the residual inline application script');
+ok(INDEX.indexOf(snapshotPrefetchTag) > INDEX.indexOf(backendCandlesTag) && !/\bsrc\s*=/i.test(afterSpTag),
+  'the snapshot-prefetch owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

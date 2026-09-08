@@ -94,6 +94,7 @@ const TRAFFIC_LIGHT_TAG = '<script src="./js/portfolio/portfolio-traffic-light.j
 const CANDLE_CHART_TAG = '<script src="./js/ui/backend-candle-store-chart.js"></script>';
 const RICH_SNAPSHOT_TAG = '<script src="./js/services/journal-rich-snapshot.js"></script>';
 const BACKEND_CANDLES_TAG = '<script src="./js/portfolio/portfolio-backend-candles.js"></script>';
+const SNAPSHOT_PREFETCH_TAG = '<script src="./js/services/journal-snapshot-prefetch.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -154,8 +155,8 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n',
-  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> Rich async snapshot -> Portfolio backend candles -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n',
+  'service tail ends Core -> Regime -> UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> Rich async snapshot -> Portfolio backend candles -> Journal snapshot prefetch -> inline');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
 ok(!/\b(?:async|defer|type)\s*=/.test(JOURNAL_TAG), 'Journal Core tag is classic synchronous src-only form');
@@ -314,10 +315,17 @@ const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 // The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
 // it is the newest layer of all: peel it FIRST, before the snapshot.
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
-const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(INDEX)
-  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+// The journal snapshot prefetch was cut AFTER the portfolio backend-candle
+// fetch, so it is the newest layer of all: peel it FIRST.
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(INDEX)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
   : INDEX;
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : PRE_SNAPSHOT_PREFETCH;
 const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
   ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
       PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))

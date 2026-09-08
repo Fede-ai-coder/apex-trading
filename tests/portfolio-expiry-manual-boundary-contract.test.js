@@ -133,10 +133,17 @@ const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 // The portfolio backend-candle fetch was cut AFTER the rich async snapshot, so
 // it is the newest layer of all: peel it FIRST, before the snapshot.
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
-const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(LIVE_INDEX)
-  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+// The journal snapshot prefetch was cut AFTER the portfolio backend-candle
+// fetch, so it is the newest layer of all: peel it FIRST.
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
+  ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
+      PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
+  : PRE_SNAPSHOT_PREFETCH;
 const PRE_RICH_SNAPSHOT = RICH_SNAPSHOT_U.isApplied(PRE_BACKEND_CANDLES)
   ? RICH_SNAPSHOT_U.undoJournalRichSnapshot(
       PRE_BACKEND_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-rich-snapshot.js'), 'utf8'))
