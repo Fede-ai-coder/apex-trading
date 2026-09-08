@@ -458,11 +458,18 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // fetch, so it is the newest layer of all: peel it FIRST.
 // The portfolio DXLink greeks pair was cut AFTER the journal snapshot
 // prefetch, so it is the newest layer of all: peel it FIRST.
+// The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
+// they are the newest layer of all: peel them FIRST.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(INDEX)
-  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
   : INDEX;
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+  : PRE_STRATEGY_TEMPLATES;
 const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
 const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
   ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
@@ -534,13 +541,18 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1577450, 'current shipped index UTF-16 length is the post-DXLink-greeks value');
-eq(sha256(INDEX), '572a03e9f80c0f93c0dafb626b45cc1c3388703d531d14a72e5956853de34928',
-  'current shipped index SHA-256 is the post-DXLink-greeks value');
-// Re-terminated with the chain: these two lines used to pin the live document
-// against the snapshot-prefetch layer, which is now one layer down. The live
-// pin moves up to the newest layer and the OLD value is asserted explicitly on
-// the peeled document, so shifting the chain does not leave it unpinned.
+eq(INDEX.length, 1569879, 'current shipped index UTF-16 length is the post-strategy-templates value');
+eq(sha256(INDEX), 'e12a8cb5a771a484b2bdfba2cc63fba5647299af433a770b83cd9aad8a6aa817',
+  'current shipped index SHA-256 is the post-strategy-templates value');
+// Re-terminated with the chain, again: the live pin moves up to the strategy
+// templates, and the post-DXLink-greeks document it used to name is asserted
+// here on the peeled state, so shifting the chain never leaves a slot pinned by
+// nothing.
+eq(PRE_STRATEGY_TEMPLATES.length, 1577450,
+  'peeling the strategy templates reaches the post-DXLink-greeks length');
+eq(sha256(PRE_STRATEGY_TEMPLATES), '572a03e9f80c0f93c0dafb626b45cc1c3388703d531d14a72e5956853de34928',
+  '…and the post-DXLink-greeks hash');
+// The same re-termination one cycle earlier, for the snapshot-prefetch document.
 eq(PRE_DXLINK_GREEKS.length, 1583906, 'peeling the DXLink greeks layer reaches the post-snapshot-prefetch length');
 eq(sha256(PRE_DXLINK_GREEKS), '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29158e6',
   '…and the post-snapshot-prefetch hash');
@@ -845,7 +857,7 @@ const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untrac
 const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 eq(changedProduction, [
-  'index.html', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-migration.js',
+  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',

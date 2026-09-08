@@ -157,12 +157,19 @@ console.log('JOURNAL SNAPSHOT PREFETCH — PERMANENT BOUNDARY CONTRACT');
 // document is no longer the one this contract shipped. Peel it first; its helper
 // re-verifies its own output by length and SHA-256, so the hop is proved rather
 // than assumed.
+// The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
+// they are the newest layer of all: peel them FIRST.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-const INDEX = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
-  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+  : PRE_STRATEGY_TEMPLATES;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

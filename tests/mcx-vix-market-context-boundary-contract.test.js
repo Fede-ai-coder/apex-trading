@@ -367,10 +367,17 @@ const afterDgEnd = INDEX.indexOf('>', afterDgAt);
 const afterDgTag = afterDgEnd >= 0 ? INDEX.slice(afterDgAt, afterDgEnd + 1) : '';
 ok(INDEX.indexOf(snapshotPrefetchTag) > INDEX.indexOf(backendCandlesTag) && afterSpTag === dxlinkGreeksOpen,
   'the snapshot-prefetch owner loads immediately before the DXLink greeks owner');
+const strategyTemplatesOpen = '<script src="./js/config/strategy-templates.js">';
+const strategyTemplatesTag = strategyTemplatesOpen + '</script>';
+const afterStAt = INDEX.indexOf('<script', INDEX.indexOf(strategyTemplatesTag) + strategyTemplatesTag.length);
+const afterStEnd = INDEX.indexOf('>', afterStAt);
+const afterStTag = afterStEnd >= 0 ? INDEX.slice(afterStAt, afterStEnd + 1) : '';
+ok(INDEX.indexOf(dxlinkGreeksTag) > INDEX.indexOf(snapshotPrefetchTag) && afterDgTag === strategyTemplatesOpen,
+  'the DXLink greeks owner loads immediately before the strategy-templates owner');
 // Re-terminated with the chain again: shifting the clauses above without adding
 // this one would leave the last tag pinned by nothing.
-ok(INDEX.indexOf(dxlinkGreeksTag) > INDEX.indexOf(snapshotPrefetchTag) && !/\bsrc\s*=/i.test(afterDgTag),
-  'the DXLink greeks owner loads immediately before the residual inline application script');
+ok(INDEX.indexOf(strategyTemplatesTag) > INDEX.indexOf(dxlinkGreeksTag) && !/\bsrc\s*=/i.test(afterStTag),
+  'the strategy-templates owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

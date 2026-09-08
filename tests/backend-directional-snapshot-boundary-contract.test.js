@@ -264,6 +264,9 @@ const JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS = [
 const PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-dxlink-greeks.js',
 ];
+const STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS = [
+  './js/config/strategy-templates.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -279,7 +282,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(RICH_SNAPSHOT_EXTRACTION_SCRIPTS)
   .concat(PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS)
   .concat(JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS)
-  .concat(PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS);
+  .concat(PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS)
+  .concat(STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -1194,8 +1198,16 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   // contributed nothing, which is why this is the first new term in three
   // cycles rather than one per cycle.
   const DXLINK_GREEKS_RELOCATED_ABOVE = 6522;
+  // The strategy templates (#441) were cut at monolith offset 924 — the very TOP
+  // of the monolith, so they sit above these two and above EVERYTHING else. That
+  // is a first for this chain: every earlier layer left some prefix untouched, so
+  // a monolith-relative offset could survive a cycle. This one moves all of them.
+  // Derived from that layer's own undo helper rather than restated here.
+  const STRATEGY_TEMPLATES_RELOCATED_ABOVE = require('./lib/strategy-templates-undo.js').RAW_CHARS;
+  eq(STRATEGY_TEMPLATES_RELOCATED_ABOVE, 7629,
+     'the strategy-templates relocation removed exactly 7,629 chars from the monolith');
   const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE +
-    DXLINK_GREEKS_RELOCATED_ABOVE;
+    DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2786,8 +2798,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 68,
-   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 68 in all, before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 69,
+   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 69 in all, before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -2979,6 +2991,11 @@ function topLevelDeclarations(code) {
       './js/services/mcx-regime-policy.js', './js/ui/journal-ui.js',
       './js/services/journal-backend-write-through.js', './js/ui/mcx-charts.js',
       './js/portfolio/backend-portfolios.js', './js/ui/backend-candle-store-chart.js',
+      // The strategy templates are a DATA module: one top-level `var` bound to
+      // an object literal. It is visible top-level residue by construction, and
+      // inert by the test above it — no call, no DOM, no assignment to an
+      // existing binding.
+      './js/config/strategy-templates.js',
     ]),
     'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners and the backend-portfolios re-exports');
 
@@ -3054,7 +3071,27 @@ function topLevelDeclarations(code) {
   ok(withTopLevel[0].effectChars < 200,
      'backend-config.js top-level code is tiny (' + withTopLevel[0].effectChars + ' chars: `const BACKEND = resolveBackendUrl();`)');
   const inline = profile.find(function (p) { return p.name === 'INLINE'; });
-  ok(inline.effectChars > 20000, 'the inline monolith executes ' + inline.effectChars + ' chars at load time — that is what pins it LAST');
+  // MEASURED AGAINST THE MODULES, not against a standing number. This was
+  // `> 20000` until the strategy-templates extraction (#441) moved a 7,382-unit
+  // top-level `var` out of the monolith and the count fell to 16,422 — a floor
+  // the programme is supposed to keep lowering, so an absolute one turns its own
+  // progress into a failure. What the assertion means is that the monolith still
+  // executes far more at load than any single module, and that is now what it
+  // says.
+  const heaviestModule = profile
+    .filter(function (p) { return p.name !== 'INLINE'; })
+    .reduce(function (a, b) { return b.effectChars > a.effectChars ? b : a; });
+  // The claim is an ORDERING, so that is what is asserted. A multiplier would be
+  // a number chosen to pass today: the margin is 16,422 against 4,189 as this
+  // ships, and it narrows every time a load-time block leaves the monolith.
+  ok(inline.effectChars > heaviestModule.effectChars,
+     'the inline monolith executes ' + inline.effectChars + ' chars at load time, more than the '
+     + heaviestModule.effectChars + ' of ' + heaviestModule.name + ' — that is what pins it LAST');
+  // The heaviest MODULE is now the strategy templates, because a pure-data module
+  // is nothing but load-time initialiser. Named rather than counted, so the day
+  // something else takes the position this line says so.
+  eq(heaviestModule.name, './js/config/strategy-templates.js',
+     'the heaviest load-time module is the data module the newest layer extracted');
   // The DSB adapter matches the convention: its ONLY load-time code is the eight
   // inert `var DSB_* = <number>;` initialisers the plan explicitly permits.
   const dsbAdapter = profile.find(function (p) { return p.name === ADAPTER_SRC; });
@@ -3569,7 +3606,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && RICH_SNAPSHOT_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

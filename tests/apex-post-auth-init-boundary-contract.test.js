@@ -325,11 +325,18 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // fetch, so it is the newest layer of all: peel it FIRST.
 // The portfolio DXLink greeks pair was cut AFTER the journal snapshot
 // prefetch, so it is the newest layer of all: peel it FIRST.
+// The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
+// they are the newest layer of all: peel them FIRST.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
-  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+  : PRE_STRATEGY_TEMPLATES;
 const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
 const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
   ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
@@ -438,12 +445,16 @@ eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries ex
 // reconnect undo is proved to return the document to this contract's EXACT #410
 // state — the guarantee this file has always owned, now reached through a peel.
 eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
-eq(LIVE_INDEX.length, DXLINK_GREEKS_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), DXLINK_GREEKS_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
-// Re-terminated with the chain: these two lines used to pin the live document
-// against the snapshot-prefetch layer, which is now one layer down. The live
-// pin moves up to the newest layer and the OLD value is asserted explicitly on
-// the peeled document, so shifting the chain does not leave it unpinned.
+eq(LIVE_INDEX.length, STRATEGY_TEMPLATES_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), STRATEGY_TEMPLATES_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+// Re-terminated with the chain, again: the live pin moves up to the strategy
+// templates and the DXLink-greeks document it used to name is asserted here, on
+// the peeled state, so shifting the chain never leaves a slot pinned by nothing.
+eq(PRE_STRATEGY_TEMPLATES.length, DXLINK_GREEKS_U.EXTRACTED_CHARS,
+  'peeling the strategy templates reaches the DXLink-greeks extracted length');
+eq(sha256(PRE_STRATEGY_TEMPLATES), DXLINK_GREEKS_U.EXTRACTED_SHA256, '…and its hash');
+// The same re-termination, one cycle earlier: this pins the post-snapshot-prefetch
+// document that the DXLink-greeks lines above used to reach.
 eq(PRE_DXLINK_GREEKS.length, 1583906, 'peeling the DXLink greeks layer reaches the post-snapshot-prefetch length');
 eq(sha256(PRE_DXLINK_GREEKS), '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29158e6',
   '…and the post-snapshot-prefetch hash');
@@ -464,7 +475,7 @@ eq(PRE_RICH_SNAPSHOT.length, CANDLE_CHART_U.EXTRACTED_CHARS,
   'peeling the rich snapshot reaches the candle-store-chart extracted length');
 eq(sha256(PRE_RICH_SNAPSHOT), CANDLE_CHART_U.EXTRACTED_SHA256,
   '…and its hash');
-eq(localScripts(LIVE_INDEX).length, 68, 'the live shipped index carries 68 local application scripts');
+eq(localScripts(LIVE_INDEX).length, 69, 'the live shipped index carries 69 local application scripts');
 eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
 eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
 eq(localScripts(INDEX).length, TT_RECONNECT_U.BASE_LOCAL_SCRIPTS, '…with exactly 55 local application scripts');
@@ -559,8 +570,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // module is second-to-last rather than last. The invariant this line protects —
 // the module evaluates before the inline monolith that calls it — is unchanged
 // and asserted in its stronger, current form.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-15),
-  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-16),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', '(inline)'],
   'in execution order the module runs immediately before the TT reconnect owner, which precedes the Journal Close Legs owner and then the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -780,7 +791,7 @@ const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
 ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
   'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
-ok(ttIdx === LIVE_PARTS.length - 14,
+ok(ttIdx === LIVE_PARTS.length - 15,
   '…and immediately before the Journal Close Legs owner, then trade forms, trade detail,\n' +
   '   portfolio data fetch, backend portfolios and manual expiry');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
@@ -977,7 +988,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js'],
   'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -991,6 +1002,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
+  rel === 'js/config/strategy-templates.js' ||
   rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
