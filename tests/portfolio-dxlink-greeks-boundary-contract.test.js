@@ -189,9 +189,15 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('PORTFOLIO DXLINK GREEKS — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited #437 · base=' + BASE_SHA.slice(0, 7));
 
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
-const INDEX = APP_LOADER.loadIndexHtml();
+// The strategy templates were cut AFTER this layer, so the live document is no
+// longer the one this contract shipped. Peel them first; the helper re-verifies
+// its own output by length and SHA-256, so the hop is proved, not assumed.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const INDEX = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -232,6 +238,15 @@ eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'sixty-eight local scripts');
 eq(LOCALS.indexOf(MODULE_REL), MODULE_POSITION, '…this module last, at position 67');
 eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
   '…immediately after the prefetch anchor and immediately before the inline monolith');
+// The LIVE document is one layer newer, and both states are pinned: the peel
+// above is proved to return this contract's EXACT shipped state, and the live
+// state is pinned against the layer that now owns it. Without the second pair
+// the live document would be checked by nothing here.
+eq(LIVE_INDEX.length, STRATEGY_TEMPLATES_U.EXTRACTED_CHARS,
+  'the live document is the strategy-templates extracted length');
+eq(sha256(LIVE_INDEX), STRATEGY_TEMPLATES_U.EXTRACTED_SHA256, '…and its digest');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
+  LOCAL_SCRIPT_COUNT + 1, '…carrying one more local script than this layer shipped');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -579,8 +594,8 @@ section('10. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', 'js/config/strategy-templates.js', MODULE_REL].sort(),
+    'production footprint is index.html, this module and the one cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -601,6 +616,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/config/strategy-templates.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

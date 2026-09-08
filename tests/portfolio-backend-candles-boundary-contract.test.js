@@ -180,11 +180,18 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // the document as it was when this layer landed.
 // The portfolio DXLink greeks pair was cut AFTER the journal snapshot
 // prefetch, so it is the newest layer of all: peel it FIRST.
+// The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
+// they are the newest layer of all: peel them FIRST.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
-  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+  : PRE_STRATEGY_TEMPLATES;
 const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
 const INDEX = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
   ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(

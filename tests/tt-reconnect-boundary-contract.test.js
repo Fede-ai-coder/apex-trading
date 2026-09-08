@@ -262,11 +262,18 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // fetch, so it is the newest layer of all: peel it FIRST.
 // The portfolio DXLink greeks pair was cut AFTER the journal snapshot
 // prefetch, so it is the newest layer of all: peel it FIRST.
+// The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
+// they are the newest layer of all: peel them FIRST.
+const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
-  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
+  : PRE_STRATEGY_TEMPLATES;
 const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
 const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
   ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
@@ -417,8 +424,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
   'the TT reconnect owner is the LAST local application script before the monolith');
 // APP_PARTS is read from the LIVE document, which now also carries the later
 // Journal Close Legs owner, so the live tail is one entry longer.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-14),
-  [MODULE_SRC, './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-15),
+  [MODULE_SRC, './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', '(inline)'],
   'in execution order the module runs immediately before the Journal Close Legs owner, which precedes the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -538,7 +545,7 @@ const ownerPartIdx = APP_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const apexPartIdx = APP_PARTS.findIndex((p) => p.src === './js/services/apex-post-auth-init.js');
 ok(apexPartIdx >= 0 && ownerPartIdx === apexPartIdx + 1,
   'the module evaluates immediately after apex-post-auth-init.js, so its call-time lookup resolves');
-ok(ownerPartIdx === APP_PARTS.length - 14,
+ok(ownerPartIdx === APP_PARTS.length - 15,
   '…and immediately before the later Journal Close Legs, trade-forms, trade-detail,\n' +
   '   portfolio data-fetch, backend-portfolios and manual-expiry owners, which precede the inline monolith');
 // The documentation-only mention is still a comment, not a consumer.
@@ -703,7 +710,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL],
   'production footprint is exactly index.html plus the TT reconnect owner and the later Journal Close Legs owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -714,6 +721,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
+  rel === 'js/config/strategy-templates.js' ||
   rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

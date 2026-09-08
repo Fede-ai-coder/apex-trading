@@ -76,7 +76,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // number may not cross. Each costs about a second of CI. The exact count makes
 // every addition a deliberate line in a diff; the budget makes the aggregate a
 // deliberate decision rather than a slow slide.
-const DECLARED_MUTANTS = 110;
+const DECLARED_MUTANTS = 107;
 const MUTANT_BUDGET = 120;
 
 let pass = 0;
