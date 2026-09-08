@@ -85,7 +85,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-contract
 // The audit is deleted and its contract added, so the suite size is unchanged;
 // only the mutation spec is renamed. That is the first cycle where the count
 // does NOT move, which is why it is pinned rather than ratcheted.
-const TEST_FILE_COUNT = 152;
+const TEST_FILE_COUNT = 153;
 const LOCAL_SCRIPT_COUNT = 68;
 const MODULE_POSITION = 67;
 
