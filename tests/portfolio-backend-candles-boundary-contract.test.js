@@ -178,11 +178,18 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // The journal snapshot prefetch was cut AFTER this layer, so the live document
 // is no longer the one this contract shipped. Peel it first and assert against
 // the document as it was when this layer landed.
-const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
-const INDEX = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
-  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+// The portfolio DXLink greeks pair was cut AFTER the journal snapshot
+// prefetch, so it is the newest layer of all: peel it FIRST.
+const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
   : LIVE_INDEX;
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const INDEX = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      PRE_DXLINK_GREEKS, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

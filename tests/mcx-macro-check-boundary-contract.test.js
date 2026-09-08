@@ -199,11 +199,18 @@ const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // The journal snapshot prefetch was cut AFTER the portfolio backend-candle
 // fetch, so it is the newest layer of all: peel it FIRST.
-const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
-const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
-  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+// The portfolio DXLink greeks pair was cut AFTER the journal snapshot
+// prefetch, so it is the newest layer of all: peel it FIRST.
+const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
   : LIVE_INDEX;
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      PRE_DXLINK_GREEKS, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS;
 const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
   ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
       PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
@@ -627,9 +634,16 @@ eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
 eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
 eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
-eq(LIVE_INDEX.length, 1583906, 'current shipped index UTF-16 length is the post-snapshot-prefetch value');
-eq(sha256(LIVE_INDEX), '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29158e6',
-  'current shipped index SHA-256 is the post-snapshot-prefetch value');
+eq(LIVE_INDEX.length, 1577450, 'current shipped index UTF-16 length is the post-DXLink-greeks value');
+eq(sha256(LIVE_INDEX), '572a03e9f80c0f93c0dafb626b45cc1c3388703d531d14a72e5956853de34928',
+  'current shipped index SHA-256 is the post-DXLink-greeks value');
+// Re-terminated with the chain: these two lines used to pin the live document
+// against the snapshot-prefetch layer, which is now one layer down. The live
+// pin moves up to the newest layer and the OLD value is asserted explicitly on
+// the peeled document, so shifting the chain does not leave it unpinned.
+eq(PRE_DXLINK_GREEKS.length, 1583906, 'peeling the DXLink greeks layer reaches the post-snapshot-prefetch length');
+eq(sha256(PRE_DXLINK_GREEKS), '77e3e862c6f4d496b9d90f0256ccf22ad9ed510868d704f2bfae5041d29158e6',
+  '…and the post-snapshot-prefetch hash');
 // Re-terminate the chain: the post-backend-candles document those two lines
 // used to pin is now one layer down, so it is pinned explicitly here.
 eq(PRE_SNAPSHOT_PREFETCH.length, 1594508,
@@ -653,7 +667,7 @@ eq(sha256(PRE_RICH_SNAPSHOT), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 67,
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 68,
   'the current shipped index carries exactly 67 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
@@ -1207,7 +1221,7 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent macro-check contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact macro-check undo helper is part of the change');
@@ -1220,7 +1234,7 @@ section('10. Exact prompt construction and success transcript');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
     rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
-    rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
+    rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 
   const contractsToAdvance = [

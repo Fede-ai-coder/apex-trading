@@ -319,11 +319,18 @@ const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // The journal snapshot prefetch was cut AFTER the portfolio backend-candle
 // fetch, so it is the newest layer of all: peel it FIRST.
-const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
-const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
-  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+// The portfolio DXLink greeks pair was cut AFTER the journal snapshot
+// prefetch, so it is the newest layer of all: peel it FIRST.
+const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
   : LIVE_INDEX;
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      PRE_DXLINK_GREEKS, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS;
 const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
   ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
       PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
@@ -610,7 +617,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
   'production footprint is exactly index.html plus this owner and the later trade-detail owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -621,7 +628,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
   'no documentation changed, except the repository working notes');
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')), 'no configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
-  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
+  rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
   'the suite is ' + TEST_FILE_COUNT + ' test files: the shipped contracts, plus the extraction-seam contract');

@@ -131,7 +131,7 @@ const DEPENDANTS = {
   './js/ui/journal-trade-forms.js': { owner: 'showTradeDetails', position: 57, callTime: 1 },
 };
 const MODULE_POSITION = 58;
-const PARTS_TOTAL = 68;
+const PARTS_TOTAL = 69;
 const TOTAL_CALLTIME = 18;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,11 +267,18 @@ const PORTFOLIO_MODULE = fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio
 const RICH_SNAPSHOT_U = require('./lib/journal-rich-snapshot-undo.js');
 const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // Newest of the eight, so it is peeled FIRST below.
-const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
-const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(LIVE_INDEX)
-  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+// The portfolio DXLink greeks pair was cut AFTER the journal snapshot
+// prefetch, so it is the newest layer of all: peel it FIRST.
+const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
+const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
   : LIVE_INDEX;
+const SNAPSHOT_PREFETCH_U = require('./lib/journal-snapshot-prefetch-undo.js');
+const PRE_SNAPSHOT_PREFETCH = SNAPSHOT_PREFETCH_U.isApplied(PRE_DXLINK_GREEKS)
+  ? SNAPSHOT_PREFETCH_U.undoJournalSnapshotPrefetch(
+      PRE_DXLINK_GREEKS, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-prefetch.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS;
 const PRE_BACKEND_CANDLES = BACKEND_CANDLES_U.isApplied(PRE_SNAPSHOT_PREFETCH)
   ? BACKEND_CANDLES_U.undoPortfolioBackendCandles(
       PRE_SNAPSHOT_PREFETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-candles.js'), 'utf8'))
@@ -462,10 +469,10 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order: a module defined AFTER three of its callers');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 67 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 68 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 58');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 9,
-  '…nine positions before the inline monolith: portfolio data-fetch,\n' +
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 10,
+  '…ten positions before the inline monolith: portfolio data-fetch,\n' +
   '   backend-portfolios and manual expiry were all cut after this one');
 let totalCallTime = 0;
 for (const [src, spec] of Object.entries(DEPENDANTS)) {
@@ -571,11 +578,11 @@ const changed = Array.from(new Set(committed.concat(status))).sort();
 // well. One module per later layer, so the list is index.html + this module +
 // one entry per peel hop above — and that count is asserted, not narrated,
 // because the narrated one was two cycles stale before it was noticed.
-const LATER_LAYERS = [SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U, PORTFOLIO_U];
 const production = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(production,
-  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
+  ['index.html', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL],
   'production footprint is index.html, this module, and the modules of the layers cut after it');
 eq(production.length, 2 + LATER_LAYERS.length,
   'that list is exactly index.html + this module + one module per later peel hop');
@@ -592,7 +599,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length, TEST_FILE_COUNT,

@@ -11,7 +11,7 @@
 //
 // WHAT IS ACTUALLY TRUE, and what this file pins:
 //
-//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the twelve
+//   • WHERE a region ends is a JUDGEMENT, not a rule. §5 measures the thirteen
 //     boundaries the undo helpers still record and shows that no rule over
 //     banners or headers reproduces them: two are followed immediately by
 //     another feature's code with no header between, and one SPANS a `// ── `
@@ -22,11 +22,11 @@
 //   • Four seam INVARIANTS hold at every recorded boundary. §3 verifies them
 //     against real historical offsets — recorded when those regions were cut,
 //     so they cannot have been fitted to this file — and §4 against the
-//     twenty-three shipped modules.
+//     twenty-four shipped modules.
 //
 //   • §6 pins the two dead rules against the case that killed them, so neither
 //     can be reintroduced by someone who finds the old comment. Two of the
-//     twenty-three layers end on trailing top-level code — one on an IIFE, one
+//     twenty-four layers end on trailing top-level code — one on an IIFE, one
 //     on a bare statement — but only ONE of the sixteen that predate the
 //     backend-portfolios cut, which is why fifteen-of-sixteen read like a law.
 //
@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const DXLINK_GREEKS = require('./lib/portfolio-dxlink-greeks-undo.js');
 const SNAPSHOT_PREFETCH = require('./lib/journal-snapshot-prefetch-undo.js');
 const BACKEND_CANDLES = require('./lib/portfolio-backend-candles-undo.js');
 const RICH_SNAPSHOT = require('./lib/journal-rich-snapshot-undo.js');
@@ -90,8 +91,13 @@ const CHAIN = [
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
   'js/services/journal-snapshot-prefetch.js',
+  // CHAIN is CHRONOLOGICAL, oldest first — §9's `earlier` slice depends on it.
+  // A mechanical insert that sorted this entry next to the other portfolio
+  // modules put the newest layer in the middle of the history; the four-
+  // invariant peel in §3 is what caught it.
+  'js/portfolio/portfolio-dxlink-greeks.js',
 ];
-const CHAIN_LENGTH = 23;
+const CHAIN_LENGTH = 24;
 
 // The one layer that already ended on trailing top-level code, and by how much.
 const TRAILING_CODE_LAYER = 'js/services/journal-backend-write-through.js';
@@ -156,13 +162,15 @@ section('2. snapBodyEnd — the mechanical half');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('3. The four invariants, at twelve REAL historical boundaries');
+section('3. The four invariants, at thirteen REAL historical boundaries');
 // ─────────────────────────────────────────────────────────────────────────────
 // Peel the onion newest-first. Each helper reconstructs byte-exactly or throws,
 // so reaching a layer's base at all is already a proof of identity.
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = DXLINK_GREEKS.undoPortfolioDxlinkGreeks(doc, read('js/portfolio/portfolio-dxlink-greeks.js'));
+  HISTORY.push({ name: 'portfolio-dxlink-greeks', H: DXLINK_GREEKS, doc });
   doc = SNAPSHOT_PREFETCH.undoJournalSnapshotPrefetch(doc, read('js/services/journal-snapshot-prefetch.js'));
   HISTORY.push({ name: 'journal-snapshot-prefetch', H: SNAPSHOT_PREFETCH, doc });
   doc = BACKEND_CANDLES.undoPortfolioBackendCandles(doc, read('js/portfolio/portfolio-backend-candles.js'));
@@ -189,7 +197,7 @@ const HISTORY = [];
   doc = APEX_POST_AUTH.undoApexPostAuthInit(doc, read('js/services/apex-post-auth-init.js'));
   HISTORY.push({ name: 'apex-post-auth-init', H: APEX_POST_AUTH, doc });
 }
-eq(HISTORY.length, 12, 'twelve layers still record their own raw offsets');
+eq(HISTORY.length, 13, 'thirteen layers still record their own raw offsets');
 
 for (const { name, H, doc } of HISTORY) {
   const at = H.RAW_AT;
@@ -221,9 +229,9 @@ for (const { name, H, doc } of HISTORY) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The twenty-three shipped modules');
+section('4. The twenty-four shipped modules');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-three shipped layers');
+eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-four shipped layers');
 for (const rel of CHAIN) {
   const src = read(rel);
   ok(src.length > 0, rel + ': exists and is non-empty');
@@ -316,9 +324,9 @@ section('6. The two dead rules, pinned against the case that killed them');
     if (tail.split('\n').some((l) => !isBlankOrComment(l))) withTrailingCode.push(rel);
   }
   eq(withTrailingCode, [TRAILING_CODE_LAYER, 'js/portfolio/backend-portfolios.js'],
-    'TWO of the twenty-three end on trailing top-level code');
-  eq(CHAIN.length - withTrailingCode.length, 21,
-    '…and twenty-one end at their last declaration');
+    'TWO of the twenty-four end on trailing top-level code');
+  eq(CHAIN.length - withTrailingCode.length, 22,
+    '…and twenty-two end at their last declaration');
   // The distinction that matters: of the SIXTEEN layers that predate the
   // backend-portfolios cut, which uncovered this, exactly one did — which is why
   // fifteen-of-sixteen felt like a law. Backend portfolios is the second case,
@@ -484,7 +492,7 @@ section('9. The four superlatives, measured over the whole set');
 
   // (a) "the first layer with async owners", published of portfolio-data-fetch.
   const withAsync = CHAIN.filter(hasAsyncOwner);
-  eq(withAsync.length, 15, 'fifteen of the twenty-three layers own an async declaration');
+  eq(withAsync.length, 16, 'sixteen of the twenty-four layers own an async declaration');
   const earlier = CHAIN.slice(0, CHAIN.indexOf(FETCH_LAYER));
   eq(earlier.length, 15, 'fifteen layers predate the one the claim was made about');
   eq(earlier.filter(hasAsyncOwner).length, 9, '…and NINE of them already had async owners');
@@ -526,8 +534,8 @@ section('9. The four superlatives, measured over the whole set');
   // top level, by relocation, so it needs a host for the same reason
   // backend-portfolios does. Named, not counted, so a fourth still fails.
   eq(needHost, [TRAILING_CODE_LAYER, NEWEST_TRAILING, 'js/ui/backend-candle-store-chart.js'],
-     'exactly THREE of the twenty-three need a host to load');
-  eq(CHAIN.length - needHost.length, 20, '…so twenty load bare, not two');
+     'exactly THREE of the twenty-four need a host to load');
+  eq(CHAIN.length - needHost.length, 21, '…so twenty-one load bare, not two');
 
   // WHICH LAYER REFUTES WHICH CLAIM. Two of the four share a refuter; the other
   // two do not, and asserting otherwise is the mistake this section exists for.
