@@ -462,13 +462,18 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(INDEX)
-  ? VEGA_MONITOR_U.undoVegaMonitor(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(INDEX)
+  ? SCANNER_IVR_U.undoScannerIvrThrottle(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
   : INDEX;
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(PRE_SCANNER_IVR)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      PRE_SCANNER_IVR, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+  : PRE_SCANNER_IVR;
 const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
   ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
       PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
@@ -548,8 +553,8 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1568182, 'current shipped index UTF-16 length is the post-vega-monitor value');
-eq(sha256(INDEX), '2ef534b3039ff7ec98cc46cbe54e01ccf48fd765ac07c3f583a4bd471e79a52a',
+eq(INDEX.length, 1564193, 'current shipped index UTF-16 length is the post-vega-monitor value');
+eq(sha256(INDEX), '4bed91411ec54f1b2e3314d890a552fc36b06c2c575a7ebe9fb40c32881967f0',
   'current shipped index SHA-256 is the post-vega-monitor value');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -864,7 +869,7 @@ const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untrac
 const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 eq(changedProduction, [
-  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-migration.js',
+  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',

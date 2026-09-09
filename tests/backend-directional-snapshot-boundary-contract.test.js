@@ -270,6 +270,9 @@ const STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS = [
 const VEGA_MONITOR_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-vega-monitor.js',
 ];
+const SCANNER_IVR_EXTRACTION_SCRIPTS = [
+  './js/services/scanner-ivr-throttle.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -287,7 +290,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS)
   .concat(PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS)
   .concat(STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS)
-  .concat(VEGA_MONITOR_EXTRACTION_SCRIPTS);
+  .concat(VEGA_MONITOR_EXTRACTION_SCRIPTS)
+  .concat(SCANNER_IVR_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -1210,8 +1214,14 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const STRATEGY_TEMPLATES_RELOCATED_ABOVE = require('./lib/strategy-templates-undo.js').RAW_CHARS;
   eq(STRATEGY_TEMPLATES_RELOCATED_ABOVE, 7629,
      'the strategy-templates relocation removed exactly 7,629 chars from the monolith');
+  // The scanner-IVR relocation sits above both declarations too, so it joins the
+  // sum rather than being absorbed into a re-pinned literal — which is why this
+  // assertion needed one line and not two new magic numbers.
+  const SCANNER_IVR_RELOCATED_ABOVE = require('./lib/scanner-ivr-throttle-undo.js').RAW_CHARS;
+  eq(SCANNER_IVR_RELOCATED_ABOVE, 4051,
+     'the scanner-IVR relocation removed exactly 4,051 chars from the monolith');
   const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE +
-    DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE;
+    DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE + SCANNER_IVR_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2802,8 +2812,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 70,
-   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 70 in all, before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 71,
+   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 71 in all, before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3000,8 +3010,14 @@ function topLevelDeclarations(code) {
       // inert by the test above it — no call, no DOM, no assignment to an
       // existing binding.
       './js/config/strategy-templates.js',
+      // The scanner IVR throttle carries NINE top-level `var`s — four tuning
+      // constants and five pieces of queue/cache state — every one initialised
+      // from a literal. Visible top-level residue by construction, and inert:
+      // its own contract proves it performs no fetch, starts no timer and
+      // touches no DOM at load.
+      './js/services/scanner-ivr-throttle.js',
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners and the backend-portfolios re-exports');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners, the backend-portfolios re-exports, the strategy-template data and the scanner-IVR throttle state');
 
   // The backend-portfolios module is the newest entry on that list and the only
   // one whose residue is assignments to `window`. It is NOT waved through on the
@@ -3612,7 +3628,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && VEGA_MONITOR_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && VEGA_MONITOR_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && SCANNER_IVR_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

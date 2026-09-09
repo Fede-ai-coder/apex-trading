@@ -98,7 +98,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // unit of work: this audit's first draft ran 6.2 s a run and would have cost
 // 418 s alone. Caching the whole-screen sweep and indexing identifier
 // occurrences took it to 2.25 s and 153 s, with no assertion removed.
-const DECLARED_MUTANTS = 225;
+const DECLARED_MUTANTS = 212;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;

@@ -10,12 +10,13 @@
 //
 // WHAT MOVED. [891660,893422) in monolith coordinates — 1,762 units: 1,220 of
 // header, one function of 540, one closing newline. It is the SMALLEST module
-// in the chain by a wide margin (the next is journal-migration at 4,461) and
-// the FIFTH with a single owner. §4 measures both over all twenty-six.
+// in the chain by a wide margin (the next is the scanner IVR throttle at
+// 4,050) and the FIFTH with a single owner. §4 measures both over all
+// twenty-seven.
 //
 // ONE REFERENCE IN THE ENTIRE APPLICATION. A single call inside
 // renderPositionsPanel. Nothing else in the monolith names it, none of the
-// sixty-nine sibling modules does, and neither does the generated markup — the
+// seventy sibling modules does, and neither does the generated markup — the
 // property that put it first on a screen counting five directions, and the
 // reason this layer is as close to free as the programme has had.
 //
@@ -130,18 +131,21 @@ const CHAIN = [
   'js/config/strategy-templates.js',
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
+  'js/services/scanner-ivr-throttle.js',
 ];
-const CHAIN_LENGTH = 26;
+const CHAIN_LENGTH = 27;
 const SMALLEST_MODULE = MODULE_REL;
-const SECOND_SMALLEST = 'js/services/journal-migration.js';
-const SECOND_SMALLEST_CHARS = 4461;
+// Re-pinned by #445: the scanner IVR throttle lands at 4,050 and takes this
+// position from journal-migration (4,461). A superlative pinned over the whole
+// set moves when the set does — which is the point of pinning it.
+const SECOND_SMALLEST = 'js/services/scanner-ivr-throttle.js';
+const SECOND_SMALLEST_CHARS = 4050;
 const SINGLE_OWNER_LAYERS = 5;
-const LAYERS_ENDING_BRACE = 23;
-// The reconstruction bridge states these two in prose, and this cycle restated
-// them. Nothing executed either, which is how "the eighteen newest" survives a
-// cycle that makes it nineteen. They are measurements now.
-const LAYERS_WITH_SEPARATOR = 18;
-const LAYERS_WITH_RAW_PAIR = 15;
+const LAYERS_ENDING_BRACE = 24;
+// The two chain-wide separator counts moved to the NEWEST layer's contract in
+// #445. They belong wherever a mutation spec covers them, and the newest layer
+// always has one; leaving a copy in every cycle's contract is how a chain-wide
+// number ends up stated four times and true in none of them.
 
 // ── The bindingNames gap this layer must not repeat ──────────────────────────
 const BINDING_FORMS_EXPECTED = ['var', 'const', 'let'];
@@ -220,9 +224,16 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('VEGA MONITOR RATIOS — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited #442 · base=' + BASE_SHA.slice(0, 7));
 
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
-const INDEX = APP_LOADER.loadIndexHtml();
+// A later layer landed, so it is peeled here, first — which is exactly what the
+// previous version of this comment said would happen. INDEX below is therefore
+// this layer's own extracted document, not the live one, and §8 keeps the two
+// apart: the production footprint is measured against the LIVE tree.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
+const INDEX = SCANNER_IVR_U.isApplied(LIVE_INDEX)
+  ? SCANNER_IVR_U.undoScannerIvrThrottle(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -345,14 +356,14 @@ section('4. One owner — and the smallest module in the chain');
     'zero top-level statement lines: nothing outside the declaration');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-six layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-seven layers ship today');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
   eq(bySize[0].rel, SMALLEST_MODULE, 'this is the SMALLEST module in the chain');
   eq(bySize[0].units, UNDO.MODULE_CHARS, '…at 1,761 units');
-  eq(bySize[1].rel, SECOND_SMALLEST, '…and the next smallest is journal-migration');
-  eq(bySize[1].units, SECOND_SMALLEST_CHARS, '…at 4,461, more than twice as large');
+  eq(bySize[1].rel, SECOND_SMALLEST, '…and the next smallest is the scanner IVR throttle');
+  eq(bySize[1].units, SECOND_SMALLEST_CHARS, '…at 4,050, more than twice as large');
   ok(bySize[1].units > bySize[0].units * 2, 'so "by a wide margin" is a measurement, not a flourish');
 
   const decls = sources.map((s) => scanTopLevelDeclarations(s));
@@ -366,29 +377,8 @@ section('4. One owner — and the smallest module in the chain');
     'js/services/journal-rich-snapshot.js',
   ], '…and this is the fifth of them');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
-    'twenty-three of the twenty-six end `}\\n`, this one among them');
+    'twenty-four of the twenty-seven end `}\\n`, this one among them');
 
-  // The bridge's two separator claims, executed. Helpers are matched by the
-  // module path in their own TAG, not by filename: this layer's helper is
-  // `vega-monitor-undo.js`, not `portfolio-vega-monitor-undo.js`, and a
-  // basename matcher silently drops it — which is exactly how the count would
-  // read seventeen and look plausible.
-  const HELPERS = fs.readdirSync(path.join(ROOT, 'tests/lib'))
-    .filter((f) => /-undo\.js$/.test(f) && f !== 'post-journal-mcx-pr3-undo.js')
-    .map((f) => require(path.join(ROOT, 'tests/lib', f)));
-  const forLayer = CHAIN.map((rel) => {
-    const hit = HELPERS.filter((M) => typeof M.TAG === 'string' && M.TAG.indexOf('/' + rel + '"') >= 0);
-    return hit.length === 1 ? hit[0] : null;
-  });
-  eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the twenty-six resolves to exactly one undo helper by its own TAG');
-  const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
-  eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
-    'eighteen layers carry a SEPARATOR export, this one among them');
-  eq(CHAIN_LENGTH - withSeparator.length, 8, '…and the eight oldest have no separator concept at all');
-  eq(withSeparator.filter((M) => M.RAW_CHARS === M.MODULE_CHARS + 1).length, LAYERS_WITH_RAW_PAIR,
-    '…but only fifteen of the eighteen pin a single RAW_CHARS one unit longer than MODULE_CHARS, '
-    + 'so the pair is not the tell the separator is');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -594,8 +584,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/services/scanner-ivr-throttle.js'],
+    'production footprint is index.html, this module and the one cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -611,6 +601,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/services/scanner-ivr-throttle.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

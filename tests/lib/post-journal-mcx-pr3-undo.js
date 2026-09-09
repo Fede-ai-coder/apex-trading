@@ -9,7 +9,7 @@
 // Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
 // Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Vega-monitor relocation first, then Strategy templates, then Portfolio
+// newest Scanner-IVR relocation first, then Vega monitor, then Strategy templates, then Portfolio
 // DXLink greeks,
 // then Journal snapshot
 // prefetch, then Portfolio backend candles, then Rich async snapshot, then
@@ -29,15 +29,15 @@
 // owners at evaluation time; that is proved in its own contract, not here.
 //
 // Portfolio data fetch has three async owners of four, which is unremarkable
-// here — SIXTEEN of these twenty-six layers ship async owners,
+// here — SIXTEEN of these twenty-seven layers ship async owners,
 // journal-remote-persistence six of eight — and in every case it is not a
 // load-time property: each contract proves its block has no top-level call, no
 // top-level await, and no evaluation-time dependency read.
 //
 // Backend portfolios has a seam that is not a closing brace: the region ends on
 // a top-level statement, `window.viewLinkedTradesInJournal = …;`, so its body
-// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-six layers,
-// TWENTY-THREE end `}\n` and THREE do not — backend portfolios,
+// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-seven layers,
+// TWENTY-FOUR end `}\n` and THREE do not — backend portfolios,
 // journal-backend-write-through, which ends `})();`, and the strategy
 // templates, whose object literal closes `};`. Backend portfolios also
 // carries twelve top-level statements, all `window.X = X` re-exports and their
@@ -79,7 +79,7 @@
 // is a judgement its contract publishes the numbers for rather than a rule's
 // output.
 //
-// Strategy templates is the only one of the twenty-six whose module declares NO function: one `var`
+// Strategy templates is the only one of the twenty-seven whose module declares NO function: one `var`
 // bound to an object literal, and nothing else. Two consequences for anyone
 // reading this chain for a convention:
 //
@@ -98,14 +98,22 @@
 // owner-carrying regions start on a closing rule, so this is a property of the
 // screen and not a slip — the contract measures it.
 //
-// VEGA MONITOR RATIOS is the newest layer and sits on top of all of them. It is
-// the SMALLEST module in this chain by a wide margin — 1,761 units against the
-// 4,461 of the next — and has ONE reference in the entire application: a single
-// call inside renderPositionsPanel. Nothing else in the monolith names it, no
+// VEGA MONITOR RATIOS was the newest layer until #445; the SCANNER IVR
+// THROTTLE now sits on top of it, peeled first above. The VEGA MONITOR is
+// still the SMALLEST module in this chain by a wide margin — 1,761 units
+// against the 4,050 of the next — and has ONE reference in the entire
+// application: a single call inside renderPositionsPanel. Nothing else in the monolith names it, no
 // sibling module does, and neither does the generated markup.
 //
-// Its contract is also the first here that does NOT call a function-only
-// region's inbound zero vacuous. `bindingNames` returns the empty list for it,
+// The scanner IVR throttle is the second-SMALLEST module in this chain at 4,050
+// units, taking that position from journal-migration (4,461), and it is the
+// layer that added the two directions no earlier screen could see: references
+// from markup the monolith GENERATES at runtime, and writes THROUGH a name the
+// region owns rather than TO it. Both live in tests/lib/extraction-boundary.js
+// as `literalView` and `isPropertyWriteAt`.
+//
+// The vega monitor's contract is also the first here that does NOT call a
+// function-only region's inbound zero vacuous. `bindingNames` returns the empty list for it,
 // because BINDING_FORMS is ['var','const','let'] — but audit #442 measured that
 // `function f(){}; f = 42;` leaves f === 42, so a function declaration is an
 // assignable binding and a write to it is legal. FOUR shipped contracts still
@@ -137,14 +145,15 @@
 //     undo re-inserts the body followed by SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the eighteen newest have it, the eight
+// `const SEPARATOR = '\n'` declaration: the nineteen newest have it, the eight
 // oldest do not. Both counts, and the fifteen below, are EXECUTED in §4 of
-// tests/vega-monitor-boundary-contract.test.js — they were prose through four
-// cycles, which is how "the eighteen newest" survives the cycle that makes it
-// nineteen. Change them there or they fail there.
+// tests/scanner-ivr-throttle-boundary-contract.test.js — they were prose through four
+// cycles, which is how "the eighteen newest" survived the cycle that made it
+// nineteen — as this line now records, having been that cycle. Change them
+// there or they fail there.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only FIFTEEN of the
-// eighteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only SIXTEEN of the
+// nineteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
 // post-auth, TT reconnect, close legs, trade detail, portfolio data fetch,
 // backend portfolios, manual expiry, traffic light, candle-store chart, rich
 // async snapshot, portfolio backend candles, journal snapshot prefetch, the
@@ -163,6 +172,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const SCANNER_IVR = require('./scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR = require('./vega-monitor-undo.js');
 const STRATEGY_TEMPLATES = require('./strategy-templates-undo.js');
 const PORTFOLIO_DXLINK_GREEKS = require('./portfolio-dxlink-greeks-undo.js');
@@ -191,6 +201,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const SCANNER_IVR_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'scanner-ivr-throttle.js'),
+  'utf8'
+);
 const VEGA_MONITOR_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-vega-monitor.js'),
   'utf8'
@@ -297,9 +311,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preVegaMonitor = VEGA_MONITOR.isApplied(html)
-    ? VEGA_MONITOR.undoVegaMonitor(html, VEGA_MONITOR_SOURCE)
+  const preScannerIvr = SCANNER_IVR.isApplied(html)
+    ? SCANNER_IVR.undoScannerIvrThrottle(html, SCANNER_IVR_SOURCE)
     : html;
+  const preVegaMonitor = VEGA_MONITOR.isApplied(preScannerIvr)
+    ? VEGA_MONITOR.undoVegaMonitor(preScannerIvr, VEGA_MONITOR_SOURCE)
+    : preScannerIvr;
   const preStrategyTemplates = STRATEGY_TEMPLATES.isApplied(preVegaMonitor)
     ? STRATEGY_TEMPLATES.undoStrategyTemplates(preVegaMonitor, STRATEGY_TEMPLATES_SOURCE)
     : preVegaMonitor;
