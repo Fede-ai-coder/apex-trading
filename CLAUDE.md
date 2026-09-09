@@ -13,10 +13,14 @@ audited region at a time, into classic `js/**` modules. Each cycle is two PRs:
    a `tests/lib/*-undo.js` helper reconstructs the pre-extraction document
    exactly.
 
-Fail-closed style differs by lineage, so check before assuming: the fifteen
+Fail-closed style differs by lineage, so check before assuming: the twenty-six
 layers the reconstruction bridge peels **throw** on any mismatch, while the
 five `eic-pr*-undo.js` helpers return and let their contracts assert instead.
-The bridge itself delegates and throws nothing of its own.
+The bridge itself delegates and throws nothing of its own. (This said "fifteen"
+from #419 until now, while the chain grew from fifteen layers to twenty-six —
+the count is the chain's, and the chain grows every cycle. It is executed as
+`CHAIN_LENGTH` in the newest layer's boundary contract; read it there rather
+than trusting the number here.)
 
 Targets are chosen on **coupling, not size**. The reconstruction bridge
 `tests/lib/post-journal-mcx-pr3-undo.js` peels every layer newest-first and is

@@ -376,8 +376,17 @@ ok(INDEX.indexOf(dxlinkGreeksTag) > INDEX.indexOf(snapshotPrefetchTag) && afterD
   'the DXLink greeks owner loads immediately before the strategy-templates owner');
 // Re-terminated with the chain again: shifting the clauses above without adding
 // this one would leave the last tag pinned by nothing.
-ok(INDEX.indexOf(strategyTemplatesTag) > INDEX.indexOf(dxlinkGreeksTag) && !/\bsrc\s*=/i.test(afterStTag),
-  'the strategy-templates owner loads immediately before the residual inline application script');
+const vegaMonitorOpen = '<script src="./js/portfolio/portfolio-vega-monitor.js">';
+const vegaMonitorTag = vegaMonitorOpen + '</script>';
+const afterVmAt = INDEX.indexOf('<script', INDEX.indexOf(vegaMonitorTag) + vegaMonitorTag.length);
+const afterVmEnd = INDEX.indexOf('>', afterVmAt);
+const afterVmTag = afterVmEnd >= 0 ? INDEX.slice(afterVmAt, afterVmEnd + 1) : '';
+ok(INDEX.indexOf(strategyTemplatesTag) > INDEX.indexOf(dxlinkGreeksTag) && afterStTag === vegaMonitorOpen,
+  'the strategy-templates owner loads immediately before the vega-monitor owner');
+// Re-terminated with the chain again: shifting the clauses above without adding
+// this one would leave the last tag pinned by nothing.
+ok(INDEX.indexOf(vegaMonitorTag) > INDEX.indexOf(strategyTemplatesTag) && !/\bsrc\s*=/i.test(afterVmTag),
+  'the vega-monitor owner loads immediately before the residual inline application script');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

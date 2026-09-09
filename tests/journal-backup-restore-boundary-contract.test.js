@@ -164,12 +164,19 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // prefetch, so it is the newest layer of all: peel it FIRST.
 // The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
 // they are the newest layer of all: peel them FIRST.
+// The vega monitor ratios were cut AFTER the strategy templates, so they are
+// the newest layer of all: peel them FIRST.
+const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
-  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+  : PRE_VEGA_MONITOR;
 const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
   ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
       PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
@@ -561,9 +568,9 @@ eq(INDEX.length, 1933458, 'extracted index UTF-16 length is exact');
 eq(Buffer.byteLength(INDEX, 'utf8'), 1968899, 'extracted index UTF-8 byte length is exact');
 eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'extracted index SHA-256 is the audited prediction');
-eq(LIVE_INDEX.length, 1569879, 'current shipped index UTF-16 length is the post-strategy-templates value');
-eq(sha256(LIVE_INDEX), 'e12a8cb5a771a484b2bdfba2cc63fba5647299af433a770b83cd9aad8a6aa817',
-  'current shipped index SHA-256 is the post-strategy-templates value');
+eq(LIVE_INDEX.length, 1568182, 'current shipped index UTF-16 length is the post-vega-monitor value');
+eq(sha256(LIVE_INDEX), '2ef534b3039ff7ec98cc46cbe54e01ccf48fd765ac07c3f583a4bd471e79a52a',
+  'current shipped index SHA-256 is the post-vega-monitor value');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
 // here on the peeled state, so shifting the chain never leaves a slot pinned by
@@ -674,8 +681,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
   'index carried exactly 52 local application scripts when this extraction landed');
 eq(APP_LOADER.parseScriptTags(PRE_MCX_CHARTS).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 53,
   'peeling MCX charts restores the 53 local application scripts of the post-macro-check index');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 69,
-  'the current shipped index carries exactly 69 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 70,
+  'the current shipped index carries exactly 70 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -1018,7 +1025,7 @@ section('8. Panel open/close and list rendering behavior');
   section('14. Exact production scope');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
     'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Backup/Restore contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Backup/Restore undo helper is part of the change');

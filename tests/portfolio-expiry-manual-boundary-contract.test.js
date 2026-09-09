@@ -139,12 +139,19 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // prefetch, so it is the newest layer of all: peel it FIRST.
 // The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
 // they are the newest layer of all: peel them FIRST.
+// The vega monitor ratios were cut AFTER the strategy templates, so they are
+// the newest layer of all: peel them FIRST.
+const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
-  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+  : PRE_VEGA_MONITOR;
 const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
   ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
       PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
@@ -462,8 +469,8 @@ section('11. Production footprint');
   eq(tracked.sort(), ['js/portfolio/backend-portfolios.js',
     'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js',
     'js/portfolio/portfolio-dxlink-greeks.js',
-    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js'],
-    'js/portfolio holds exactly the six portfolio modules');
+    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js'],
+    'js/portfolio holds exactly the seven portfolio modules');
 }
 
 console.log('\n' + pass + ' assertions passed.');

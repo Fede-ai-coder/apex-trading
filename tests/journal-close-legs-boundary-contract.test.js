@@ -329,12 +329,19 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // prefetch, so it is the newest layer of all: peel it FIRST.
 // The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
 // they are the newest layer of all: peel them FIRST.
+// The vega monitor ratios were cut AFTER the strategy templates, so they are
+// the newest layer of all: peel them FIRST.
+const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(LIVE_INDEX)
-  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+  : PRE_VEGA_MONITOR;
 const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
   ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
       PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
@@ -666,7 +673,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/ui/backend-candle-store-chart.js', MODULE_REL, 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'],
   'production footprint is exactly index.html plus the Close Legs owner and the later trade-forms owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -679,7 +686,7 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
   'no backend/model configuration changed');
 ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
-ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
+ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfolio-vega-monitor.js' || rel === MODULE_REL || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
