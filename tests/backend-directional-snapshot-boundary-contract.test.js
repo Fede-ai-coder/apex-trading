@@ -267,6 +267,9 @@ const PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS = [
 const STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS = [
   './js/config/strategy-templates.js',
 ];
+const VEGA_MONITOR_EXTRACTION_SCRIPTS = [
+  './js/portfolio/portfolio-vega-monitor.js',
+];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
   .concat(EIC_EXTRACTION_SCRIPTS)
@@ -283,7 +286,8 @@ const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS)
   .concat(JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS)
   .concat(PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS)
-  .concat(STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS);
+  .concat(STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS)
+  .concat(VEGA_MONITOR_EXTRACTION_SCRIPTS);
 // The integrity inventory above is what SECTION 29 and SECTION 30 re-hash. A
 // shipped DSB module that is missing from it would be excluded from every
 // "byte-identical on disk" claim in this file — the exact blind spot that would
@@ -2798,8 +2802,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 69,
-   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 69 in all, before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 70,
+   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 70 in all, before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3607,7 +3611,8 @@ const AUDIT_TIME_MODULES = SHIPPED_MODULES.filter(function (m) {
     && PORTFOLIO_BACKEND_CANDLES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && JOURNAL_SNAPSHOT_PREFETCH_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
     && PORTFOLIO_DXLINK_GREEKS_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
-    && STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
+    && STRATEGY_TEMPLATES_EXTRACTION_SCRIPTS.indexOf(m.name) < 0
+    && VEGA_MONITOR_EXTRACTION_SCRIPTS.indexOf(m.name) < 0;
 });
 eq(AUDIT_TIME_MODULES.length, 20, 'the audit-time baseline is the 20 modules that predate the DSB extraction plan');
 const LARGEST_SHIPPED = AUDIT_TIME_MODULES[0];

@@ -104,6 +104,7 @@ const BACKEND_CANDLES_TAG = '<script src="./js/portfolio/portfolio-backend-candl
 const SNAPSHOT_PREFETCH_TAG = '<script src="./js/services/journal-snapshot-prefetch.js"></script>';
 const DXLINK_GREEKS_TAG = '<script src="./js/portfolio/portfolio-dxlink-greeks.js"></script>';
 const STRATEGY_TEMPLATES_TAG = '<script src="./js/config/strategy-templates.js"></script>';
+const VEGA_MONITOR_TAG = '<script src="./js/portfolio/portfolio-vega-monitor.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -188,8 +189,8 @@ const writeTagAt = INDEX.indexOf(WRITE_TAG);
 const migrationTagAt = INDEX.indexOf(MIGRATION_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n',
-  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> Rich async snapshot -> Portfolio backend candles -> Journal snapshot prefetch -> Portfolio DXLink greeks -> Strategy templates -> inline');
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n',
+  'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> Rich async snapshot -> Portfolio backend candles -> Journal snapshot prefetch -> Portfolio DXLink greeks -> Strategy templates -> Vega monitor -> inline');
 ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt &&
   writeTagAt > remoteTagAt && migrationTagAt > writeTagAt && inlineAt > migrationTagAt,
   'Journal UI loads synchronously before later Remote + Write-through + Migration + inline consumers');
@@ -302,12 +303,19 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // prefetch, so it is the newest layer of all: peel it FIRST.
 // The strategy templates were cut AFTER the portfolio DXLink greeks pair, so
 // they are the newest layer of all: peel them FIRST.
+// The vega monitor ratios were cut AFTER the strategy templates, so they are
+// the newest layer of all: peel them FIRST.
+const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(INDEX)
-  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(INDEX)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
   : INDEX;
+const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
+  ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
+      PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
+  : PRE_VEGA_MONITOR;
 const PRE_DXLINK_GREEKS = DXLINK_GREEKS_U.isApplied(PRE_STRATEGY_TEMPLATES)
   ? DXLINK_GREEKS_U.undoPortfolioDxlinkGreeks(
       PRE_STRATEGY_TEMPLATES, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-dxlink-greeks.js'), 'utf8'))
@@ -400,7 +408,7 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
 same(changedProduction, [
-  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-remote-persistence.js',
+  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/ui/backend-candle-store-chart.js', 'js/services/journal-remote-persistence.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
   'js/services/journal-snapshot-prefetch.js',

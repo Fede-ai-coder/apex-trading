@@ -1,5 +1,5 @@
 'use strict';
-// Current-app reconstruction bridge after Strategy templates + Portfolio DXLink
+// Current-app reconstruction bridge after Vega monitor + Strategy templates + Portfolio DXLink
 // greeks + Journal
 // snapshot prefetch + Portfolio backend candles + Rich async snapshot +
 // Candle-store
@@ -9,7 +9,8 @@
 // Backup/Restore + Manual Import + Journal Migration + Write-through + Journal
 // Remote + Journal UI + Regime Policy + Journal Core.
 // Historical contracts that need to reach the pre-MCX3 tree must undo the
-// newest Strategy-templates relocation first, then Portfolio DXLink greeks,
+// newest Vega-monitor relocation first, then Strategy templates, then Portfolio
+// DXLink greeks,
 // then Journal snapshot
 // prefetch, then Portfolio backend candles, then Rich async snapshot, then
 // Candle-store chart, then
@@ -28,15 +29,15 @@
 // owners at evaluation time; that is proved in its own contract, not here.
 //
 // Portfolio data fetch has three async owners of four, which is unremarkable
-// here — SIXTEEN of these twenty-five layers ship async owners,
+// here — SIXTEEN of these twenty-six layers ship async owners,
 // journal-remote-persistence six of eight — and in every case it is not a
 // load-time property: each contract proves its block has no top-level call, no
 // top-level await, and no evaluation-time dependency read.
 //
 // Backend portfolios has a seam that is not a closing brace: the region ends on
 // a top-level statement, `window.viewLinkedTradesInJournal = …;`, so its body
-// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-five layers,
-// TWENTY-TWO end `}\n` and THREE do not — backend portfolios,
+// ends `;\n` and its raw fragment `;\n\n`. Measured over all twenty-six layers,
+// TWENTY-THREE end `}\n` and THREE do not — backend portfolios,
 // journal-backend-write-through, which ends `})();`, and the strategy
 // templates, whose object literal closes `};`. Backend portfolios also
 // carries twelve top-level statements, all `window.X = X` re-exports and their
@@ -49,15 +50,15 @@
 //
 // Portfolio backend candles is the third single-owner layer here, with
 // apex-post-auth-init and the rich async snapshot — a set the strategy
-// templates now make FOUR, and the only one of the four whose single owner is
-// not a function. It is also the layer where
+// templates and the vega monitor now make FIVE, the templates being the only one
+// of the five whose single owner is not a function. It is also the layer where
 // the SCREEN and the BOUNDARY disagreed: the banner-to-banner region it was cut
 // from scored the best crossings of all 41 regions audit #433 screened and is
 // UNEXTRACTABLE, because its last 1,060 units are a dev-only block whose
 // top-level `if` CALLS two monolith functions at load. The cut stops before
 // that block, which is why its seam is not a banner — one of THREE such seams
-// among the FOURTEEN layers that record a single raw range, with tt-reconnect
-// and apex-post-auth-init; the other ELEVEN end on a banner. Its own contract
+// among the FIFTEEN layers that record a single raw range, with tt-reconnect
+// and apex-post-auth-init; the other TWELVE end on a banner. Its own contract
 // measures all of that.
 //
 // Journal snapshot prefetch performs THREE property writes on `S`, two keyed
@@ -78,8 +79,7 @@
 // is a judgement its contract publishes the numbers for rather than a rule's
 // output.
 //
-// STRATEGY TEMPLATES is the newest layer and sits on top of all of them. It is
-// the only one of the twenty-five whose module declares NO function: one `var`
+// Strategy templates is the only one of the twenty-six whose module declares NO function: one `var`
 // bound to an object literal, and nothing else. Two consequences for anyone
 // reading this chain for a convention:
 //
@@ -98,6 +98,20 @@
 // owner-carrying regions start on a closing rule, so this is a property of the
 // screen and not a slip — the contract measures it.
 //
+// VEGA MONITOR RATIOS is the newest layer and sits on top of all of them. It is
+// the SMALLEST module in this chain by a wide margin — 1,761 units against the
+// 4,461 of the next — and has ONE reference in the entire application: a single
+// call inside renderPositionsPanel. Nothing else in the monolith names it, no
+// sibling module does, and neither does the generated markup.
+//
+// Its contract is also the first here that does NOT call a function-only
+// region's inbound zero vacuous. `bindingNames` returns the empty list for it,
+// because BINDING_FORMS is ['var','const','let'] — but audit #442 measured that
+// `function f(){}; f = 42;` leaves f === 42, so a function declaration is an
+// assignable binding and a write to it is legal. FOUR shipped contracts still
+// read that empty list as "owns no binding for a write to reach"; this one
+// proves the assignability in a VM and reports its zero as a measurement.
+//
 // Order is newest-first and load-bearing: each layer's pinned offsets and
 // hashes describe the document as it was when THAT layer shipped, so undoing
 // out of order fails closed rather than producing an approximate tree.
@@ -112,26 +126,29 @@
 //     backup/restore — have no separator concept at all. The module IS the
 //     whole removed block, and each undo re-inserts `moduleSource` alone.
 //
-//     THE SEVENTEEN FROM #406 ONWARD — macro check, #408 charts, #410
+//     THE EIGHTEEN FROM #406 ONWARD — macro check, #408 charts, #410
 //     post-auth, #411 TT reconnect, #413 close legs, #415 trade forms, #417
 //     trade detail, #421 portfolio data fetch, #423 backend portfolios, #425
 //     manual expiry, #428 traffic light, #430 candle-store chart, the rich
 //     async snapshot, the portfolio backend-candle fetch, the journal snapshot
-//     prefetch, the DXLink greeks pair and the strategy templates — treat the
-//     block as `body + one structural LF`. BOTH
+//     prefetch, the DXLink greeks pair, the strategy templates and the vega
+//     monitor — treat the block as `body + one structural LF`. BOTH
 //     leave index.html, only the body is written to the module file, and the
 //     undo re-inserts the body followed by SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the seventeen newest have it, the eight
-// oldest do not.
+// `const SEPARATOR = '\n'` declaration: the eighteen newest have it, the eight
+// oldest do not. Both counts, and the fifteen below, are EXECUTED in §4 of
+// tests/vega-monitor-boundary-contract.test.js — they were prose through four
+// cycles, which is how "the eighteen newest" survives the cycle that makes it
+// nineteen. Change them there or they fail there.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only FOURTEEN of the
-// seventeen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only FIFTEEN of the
+// eighteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
 // post-auth, TT reconnect, close legs, trade detail, portfolio data fetch,
 // backend portfolios, manual expiry, traffic light, candle-store chart, rich
 // async snapshot, portfolio backend candles, journal snapshot prefetch, the
-// portfolio DXLink greeks pair and the strategy templates. The
+// portfolio DXLink greeks pair, the strategy templates and the vega monitor. The
 // multi-fragment layers pin
 // their fragments individually instead (charts weaves three, trade forms joins
 // two), and macro check pins neither constant. A future layer that reasons
@@ -139,13 +156,14 @@
 // era from those constants.
 //
 // Layer shapes, measured against the shipped modules rather than assumed, and
-// scoped to what was actually measured: of the TWENTY-FIVE layers this bridge
+// scoped to what was actually measured: of the TWENTY-SIX layers this bridge
 // peels, every one is a single contiguous fragment except #408 (three) and
 // #415 (two). That is not a statement about the repository at large — the MCX3
 // delegate below this chain is itself two fragments, and the older EIC, PESS
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const VEGA_MONITOR = require('./vega-monitor-undo.js');
 const STRATEGY_TEMPLATES = require('./strategy-templates-undo.js');
 const PORTFOLIO_DXLINK_GREEKS = require('./portfolio-dxlink-greeks-undo.js');
 const JOURNAL_SNAPSHOT_PREFETCH = require('./journal-snapshot-prefetch-undo.js');
@@ -173,6 +191,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const VEGA_MONITOR_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-vega-monitor.js'),
+  'utf8'
+);
 const STRATEGY_TEMPLATES_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'config', 'strategy-templates.js'),
   'utf8'
@@ -275,9 +297,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preStrategyTemplates = STRATEGY_TEMPLATES.isApplied(html)
-    ? STRATEGY_TEMPLATES.undoStrategyTemplates(html, STRATEGY_TEMPLATES_SOURCE)
+  const preVegaMonitor = VEGA_MONITOR.isApplied(html)
+    ? VEGA_MONITOR.undoVegaMonitor(html, VEGA_MONITOR_SOURCE)
     : html;
+  const preStrategyTemplates = STRATEGY_TEMPLATES.isApplied(preVegaMonitor)
+    ? STRATEGY_TEMPLATES.undoStrategyTemplates(preVegaMonitor, STRATEGY_TEMPLATES_SOURCE)
+    : preVegaMonitor;
   const preDxlinkGreeks = PORTFOLIO_DXLINK_GREEKS.isApplied(preStrategyTemplates)
     ? PORTFOLIO_DXLINK_GREEKS.undoPortfolioDxlinkGreeks(preStrategyTemplates, PORTFOLIO_DXLINK_GREEKS_SOURCE)
     : preStrategyTemplates;

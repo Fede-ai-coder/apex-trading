@@ -238,7 +238,15 @@ console.log('relocation only · audited #440 · base=' + BASE_SHA.slice(0, 7));
 
 // This is the NEWEST layer, so the live document is the one it shipped: there
 // is nothing on top to peel. When a later layer lands it goes here, first.
-const INDEX = APP_LOADER.loadIndexHtml();
+// The vega monitor ratios were cut AFTER this layer, so the live document is no
+// longer the one this contract shipped. Peel them first; the helper re-verifies
+// its own output by length and SHA-256, so the hop is proved, not assumed.
+const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const INDEX = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -270,6 +278,16 @@ eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'sixty-nine local scripts');
 eq(LOCALS.indexOf(MODULE_REL), MODULE_POSITION, '…this module last, at position 68');
 eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
   '…immediately after the greeks anchor and immediately before the inline monolith');
+// The LIVE document is one layer newer, and both states are pinned: the peel
+// above is proved to return this contract's EXACT shipped state, and the live
+// state is pinned against the layer that now owns it. Without this pair the
+// live document would be checked by nothing here — the gap the assertion-call
+// census caught, because this file gained a peel and no assertions.
+eq(LIVE_INDEX.length, VEGA_MONITOR_U.EXTRACTED_CHARS,
+  'the live document is the vega-monitor extracted length');
+eq(sha256(LIVE_INDEX), VEGA_MONITOR_U.EXTRACTED_SHA256, '…and its digest');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
+  LOCAL_SCRIPT_COUNT + 1, '…carrying one more local script than this layer shipped');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -678,8 +696,8 @@ section('10. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', 'js/portfolio/portfolio-vega-monitor.js', MODULE_REL].sort(),
+    'production footprint is index.html, this module and the one cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -699,6 +717,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/portfolio/portfolio-vega-monitor.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }
