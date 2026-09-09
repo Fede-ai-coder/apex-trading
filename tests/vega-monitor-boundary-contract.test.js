@@ -66,7 +66,7 @@ const AUDIT_SPEC_REL = 'tests/mutation-specs/vega-monitor-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/vega-monitor-contract.spec.js';
 
 // The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 154;
+const TEST_FILE_COUNT = 155;
 const LOCAL_SCRIPT_COUNT = 70;
 const MODULE_POSITION = 69;
 

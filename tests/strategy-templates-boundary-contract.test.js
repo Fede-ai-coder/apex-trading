@@ -100,7 +100,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/strategy-templates-contract.spec
 
 // The suite does NOT ratchet this cycle: the audit leaves as this contract
 // arrives, one for one.
-const TEST_FILE_COUNT = 154;
+const TEST_FILE_COUNT = 155;
 const LOCAL_SCRIPT_COUNT = 69;
 const MODULE_POSITION = 68;
 
