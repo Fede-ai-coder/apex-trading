@@ -79,8 +79,27 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // number may not cross. Each costs about a second of CI. The exact count makes
 // every addition a deliberate line in a diff; the budget makes the aggregate a
 // deliberate decision rather than a slow slide.
-const DECLARED_MUTANTS = 155;
-const MUTANT_BUDGET = 200;
+//
+// RAISED 200 → 250 for the scanner-IVR audit, which is the decision this guard
+// exists to force, so here is what it was decided on. A cycle now runs in two
+// steps: Phase 1 adds a temporary audit spec (68 here) and Phase 2 retires it
+// while adding that layer's permanent contract spec (~48). So the PEAK is at
+// Phase 1 and the FLOOR grows by about one contract spec per cycle:
+//
+//   before this audit  155     after Phase 1  225     after Phase 2  ~203
+//
+// 250 clears this cycle and the next Phase 2. It does NOT clear the next
+// Phase 1, which lands near 271 — deliberately, so the same decision is taken
+// again with the same numbers in front of whoever takes it. The floor growing
+// every cycle is the real cost, and the lever for it is retiring an older
+// layer's spec, not raising this again by reflex.
+//
+// The other lever is the TARGET, since a mutant costs one run of it and not one
+// unit of work: this audit's first draft ran 6.2 s a run and would have cost
+// 418 s alone. Caching the whole-screen sweep and indexing identifier
+// occurrences took it to 2.25 s and 153 s, with no assertion removed.
+const DECLARED_MUTANTS = 225;
+const MUTANT_BUDGET = 250;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
