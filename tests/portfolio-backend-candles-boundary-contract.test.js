@@ -184,13 +184,18 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
-  ? VEGA_MONITOR_U.undoVegaMonitor(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(LIVE_INDEX)
+  ? SCANNER_IVR_U.undoScannerIvrThrottle(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(PRE_SCANNER_IVR)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      PRE_SCANNER_IVR, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+  : PRE_SCANNER_IVR;
 const PRE_STRATEGY_TEMPLATES = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
   ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
       PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))

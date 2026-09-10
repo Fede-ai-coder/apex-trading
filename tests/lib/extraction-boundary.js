@@ -173,8 +173,57 @@ function evaluationTimeReads(src, declarations, maskFn) {
   return Array.from(found).sort();
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE TWO DIRECTIONS THE SCREEN COULD NOT SEE, promoted here from audit #444 so
+// they outlive the audit that measured them.
+//
+// A SIXTH. Every direction before these read the monolith through `maskLiterals`,
+// which blanks string contents. So `onclick="rsApplyFilters()"` — written into
+// innerHTML at runtime — was invisible to every screen this programme ran, and a
+// region reachable only that way scored a perfect zero inbound. It is not a
+// corner case: audit #444 measured 27 of 97 owner-carrying regions named from
+// generated markup, 73 references in total, and the region holding the scanner's
+// filter handlers carried NINE while scoring the same as a candidate that
+// carried none.
+//
+// `literalView` returns the complement of the masked view: string-literal
+// content that is not comment, positions preserved, so an offset means the same
+// thing in both views.
+function literalView(src, maskFn, stripFn) {
+  if (typeof src !== 'string') throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  if (typeof maskFn !== 'function' || typeof stripFn !== 'function') {
+    throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  }
+  const masked = maskFn(src);
+  const noComments = stripFn(src);
+  let out = '';
+  for (let i = 0; i < src.length; i++) {
+    const isLiteral = masked[i] !== src[i] && noComments[i] === src[i];
+    out += isLiteral ? src[i] : (src[i] === '\n' ? '\n' : ' ');
+  }
+  return out;
+}
+
+// A SEVENTH. "Inbound write" has always meant an assignment TO a name the region
+// owns, which `bindingNames` plus a `=` scan finds. It misses the other kind:
+// `_scannerCandleDiag.scannerDxCandleSubscriptionsBlocked++` writes THROUGH the
+// name, into state the region owns, from a function that stays behind. Audit
+// #444 measured 15 of 97 regions written into that way, 383 writes in total, and
+// it is what separated the recommended layer from the sibling beside it.
+//
+// Returns true when the text at `at` is a write through `name` — `X.k = v`,
+// `X.k++`, `X[i] += n` — rather than a read of it or an assignment to it.
+function isPropertyWriteAt(masked, at, name) {
+  if (typeof masked !== 'string' || typeof name !== 'string') {
+    throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  }
+  if (typeof at !== 'number' || at < 0) throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
+  const after = masked.slice(at + name.length, at + name.length + 40);
+  return /^\s*(?:\.\s*[A-Za-z0-9_$]+|\[[^\]]{1,40}\])+\s*(?:=[^=]|\+\+|--|\+=|-=)/.test(after);
+}
+
 module.exports = {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, BINDING_FORMS, bindingNames,
-  evaluationTimeReads,
+  evaluationTimeReads, literalView, isPropertyWriteAt,
 };

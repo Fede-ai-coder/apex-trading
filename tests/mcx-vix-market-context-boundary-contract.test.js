@@ -377,6 +377,8 @@ ok(INDEX.indexOf(dxlinkGreeksTag) > INDEX.indexOf(snapshotPrefetchTag) && afterD
 // Re-terminated with the chain again: shifting the clauses above without adding
 // this one would leave the last tag pinned by nothing.
 const vegaMonitorOpen = '<script src="./js/portfolio/portfolio-vega-monitor.js">';
+const scannerIvrOpen = '<script src="./js/services/scanner-ivr-throttle.js">';
+const scannerIvrTag = scannerIvrOpen + '</script>';
 const vegaMonitorTag = vegaMonitorOpen + '</script>';
 const afterVmAt = INDEX.indexOf('<script', INDEX.indexOf(vegaMonitorTag) + vegaMonitorTag.length);
 const afterVmEnd = INDEX.indexOf('>', afterVmAt);
@@ -385,8 +387,17 @@ ok(INDEX.indexOf(strategyTemplatesTag) > INDEX.indexOf(dxlinkGreeksTag) && after
   'the strategy-templates owner loads immediately before the vega-monitor owner');
 // Re-terminated with the chain again: shifting the clauses above without adding
 // this one would leave the last tag pinned by nothing.
-ok(INDEX.indexOf(vegaMonitorTag) > INDEX.indexOf(strategyTemplatesTag) && !/\bsrc\s*=/i.test(afterVmTag),
-  'the vega-monitor owner loads immediately before the residual inline application script');
+ok(INDEX.indexOf(vegaMonitorTag) > INDEX.indexOf(strategyTemplatesTag) && afterVmTag === scannerIvrOpen,
+  'the vega-monitor owner loads immediately before the scanner-IVR owner');
+// Re-terminated with the chain again: the clause above no longer ends it, so
+// without this one the last tag would be pinned by nothing.
+const scannerIvrOpen2 = scannerIvrOpen;
+const afterSiAt = INDEX.indexOf('<script', INDEX.indexOf(scannerIvrTag) + scannerIvrTag.length);
+const afterSiEnd = INDEX.indexOf('>', afterSiAt);
+const afterSiTag = afterSiEnd >= 0 ? INDEX.slice(afterSiAt, afterSiEnd + 1) : '';
+ok(INDEX.indexOf(scannerIvrTag) > INDEX.indexOf(vegaMonitorTag) && !/\bsrc\s*=/i.test(afterSiTag),
+  'the scanner-IVR owner loads immediately before the residual inline application script');
+ok(scannerIvrOpen2 === scannerIvrOpen, 'control — the open tag used above is the one measured');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
 // 3. Exact moved declaration inventory and order.

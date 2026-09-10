@@ -194,13 +194,18 @@ console.log('relocation only · audited #437 · base=' + BASE_SHA.slice(0, 7));
 // its own output by length and SHA-256, so the hop is proved, not assumed.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(LIVE_INDEX)
-  ? VEGA_MONITOR_U.undoVegaMonitor(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(LIVE_INDEX)
+  ? SCANNER_IVR_U.undoScannerIvrThrottle(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_VEGA_MONITOR = VEGA_MONITOR_U.isApplied(PRE_SCANNER_IVR)
+  ? VEGA_MONITOR_U.undoVegaMonitor(
+      PRE_SCANNER_IVR, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-vega-monitor.js'), 'utf8'))
+  : PRE_SCANNER_IVR;
 const INDEX = STRATEGY_TEMPLATES_U.isApplied(PRE_VEGA_MONITOR)
   ? STRATEGY_TEMPLATES_U.undoStrategyTemplates(
       PRE_VEGA_MONITOR, fs.readFileSync(path.join(ROOT, 'js/config/strategy-templates.js'), 'utf8'))
@@ -249,11 +254,11 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // above is proved to return this contract's EXACT shipped state, and the live
 // state is pinned against the layer that now owns it. Without the second pair
 // the live document would be checked by nothing here.
-eq(LIVE_INDEX.length, VEGA_MONITOR_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, SCANNER_IVR_U.EXTRACTED_CHARS,
   'the live document is the strategy-templates extracted length');
-eq(sha256(LIVE_INDEX), VEGA_MONITOR_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), SCANNER_IVR_U.EXTRACTED_SHA256, '…and its digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 2, '…carrying two more local scripts than this layer shipped');
+  LOCAL_SCRIPT_COUNT + 3, '…carrying three more local scripts than this layer shipped');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -601,7 +606,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/portfolio-vega-monitor.js', MODULE_REL].sort(),
+    ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-ivr-throttle.js', MODULE_REL].sort(),
     'production footprint is index.html, this module and the two cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -623,6 +628,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
   ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfolio-vega-monitor.js' || rel === MODULE_REL ||
+    rel === 'js/services/scanner-ivr-throttle.js' ||
     rel === 'js/config/strategy-templates.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
