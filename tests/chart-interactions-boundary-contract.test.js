@@ -29,8 +29,9 @@
 //
 // The middle end is under two-thirds the size and scores more than twice as
 // much, because nine of its fifteen inbound edges are INTERNAL edges the cut
-// exposes and this cut never creates. `assertSeam` refuses it independently, on
-// the structural separator. Size does not predict coupling, and the cheapest
+// exposes and this cut never creates: FIVE owners inside it are read by the drag
+// code it leaves behind. `assertSeam` refuses it independently, on the
+// structural separator. Size does not predict coupling, and the cheapest
 // boundary is not the nearest one.
 //
 // THE HEAD BANNER NAMED SOMETHING IT DID NOT CONTAIN. It announces the
@@ -134,7 +135,10 @@ const MID_SEVEN = 16;
 const MID_EXPOSED_EDGES = 9;
 const MID_SEAM_ERROR = 'EXTRACTION_SEAM_NO_STRUCTURAL_SEPARATOR';
 const FULL_SEVEN = 7;
-const SPLIT_BY_MID = ['_chartXSpan', '_chartRedraw', '_chartClearHover', '_chartDrawHover'];
+// Measured, not listed from memory: the first draft named the four functions
+// that were salient and missed _CHART_MIN_VISIBLE, which the drag code reads too.
+const SPLIT_BY_MID = ['_CHART_MIN_VISIBLE', '_chartXSpan', '_chartRedraw',
+  '_chartClearHover', '_chartDrawHover'];
 const HEAD_BANNER = '// ── Interactive crosshair / tooltip engine for _drawCandleChart ──────────────';
 const ENGINE = '_chartDrawHover';
 const ENGINE_CHARS = 5592;
@@ -397,8 +401,8 @@ section('4. Three ends from one start — why this boundary, and where the chain
   const splitByMid = mid.names.filter((n) =>
     refSites(MASKED, n).some((i) => i >= MID_END && i < RAW_END_IN_CODE)).sort();
   eq(splitByMid, SPLIT_BY_MID.slice().sort(),
-    'these four owners are inside the middle cut AND called from the drag code it leaves behind');
-  eq(splitByMid.length, SPLIT_BY_MID.length, '…four of them, which is what makes that cut worse');
+    'these FIVE owners are inside the middle cut AND called from the drag code it leaves behind');
+  eq(splitByMid.length, SPLIT_BY_MID.length, '…five of them, which is what makes that cut worse');
   throwsWith(() => assertSeam(BASE_CODE, RAW_AT_IN_CODE, snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, MID_END)),
     MID_SEAM_ERROR, 'and assertSeam refuses the middle boundary independently of any score');
 

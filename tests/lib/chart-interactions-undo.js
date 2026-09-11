@@ -31,11 +31,14 @@
 //
 // The middle end is the one worth recording. At under two-thirds the size it
 // scores more than twice as much, because nine of its fifteen inbound edges are
-// INTERNAL edges the cut exposes and this cut never creates: `_chartXSpan`,
-// `_chartRedraw`, `_chartClearHover` and `_chartDrawHover` are all called from
-// the drag code a cut at 176824 would leave behind. `assertSeam` refuses that
-// boundary outright as well, on the structural separator, independently of any
-// score. The permanent contract re-measures all three rather than citing them.
+// INTERNAL edges the cut exposes and this cut never creates: FIVE of its owners
+// — `_CHART_MIN_VISIBLE`, `_chartXSpan`, `_chartRedraw`, `_chartClearHover` and
+// `_chartDrawHover` — are read by the drag code a cut at 176824 would leave
+// behind. The permanent contract DERIVES that set rather than listing it; this
+// line first named four, having been written from the ones that stood out.
+// `assertSeam` refuses that boundary outright as well, on the structural
+// separator, independently of any score. The permanent contract re-measures all
+// three ends rather than citing them.
 //
 // THE HEAD BANNER NAMES SOMETHING IT DOES NOT CONTAIN. The region opens on
 // `// ── Interactive crosshair / tooltip engine for _drawCandleChart ──`, and
