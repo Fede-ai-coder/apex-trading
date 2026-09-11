@@ -390,11 +390,15 @@ section('4. Three ends from one start — why this boundary, and where the chain
     'the middle cut is SMALLER and scores HIGHER: size does not predict coupling');
   eq(mid.inbound - full.inbound, MID_EXPOSED_EDGES,
     '…by exactly nine edges, which the cut EXPOSES rather than finds');
-  for (const n of SPLIT_BY_MID) {
-    ok(mid.names.indexOf(n) >= 0 &&
-       refSites(MASKED, n).some((i) => i >= MID_END && i < RAW_END_IN_CODE),
-      n + ' is inside the middle cut and called from the drag code it leaves behind');
-  }
+  // DERIVED, not iterated. A loop over a pinned list runs one assertion per
+  // element, so dropping an element simply runs one fewer — and passes. The
+  // mutation pass caught exactly that here. The set is computed from the two
+  // ranges and compared whole, which a dropped element cannot survive.
+  const splitByMid = mid.names.filter((n) =>
+    refSites(MASKED, n).some((i) => i >= MID_END && i < RAW_END_IN_CODE)).sort();
+  eq(splitByMid, SPLIT_BY_MID.slice().sort(),
+    'these four owners are inside the middle cut AND called from the drag code it leaves behind');
+  eq(splitByMid.length, SPLIT_BY_MID.length, '…four of them, which is what makes that cut worse');
   throwsWith(() => assertSeam(BASE_CODE, RAW_AT_IN_CODE, snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, MID_END)),
     MID_SEAM_ERROR, 'and assertSeam refuses the middle boundary independently of any score');
 
