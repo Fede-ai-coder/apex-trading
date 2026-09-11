@@ -202,6 +202,9 @@ const CONFIG_SCORE = 2;
 const CONFIG_OWNER = 'APEX_BUILD_TAG';
 const CONFIG_OWNER_FORM = 'const';
 const CONFIG_CODE_LINES = 3;
+// Where the chain-wide counts are READ from, never restated. CLAUDE.md keeps
+// them in the newest layer's contract for exactly this reason.
+const NEWEST_CONTRACT = 'tests/vega-monitor-boundary-contract.test.js';
 const CHAIN_LAYERS = 27;
 const CHAIN_LAYERS_OWNING_CONST = 0;
 const SHIPPED_MODULES_OWNING_CONST = 1;
@@ -471,6 +474,13 @@ section('4. What the seventh direction changed');
     'FORTY of the 96 regions score differently under seven directions than five');
 
   // And where it lands: the two rivals that tied ahead of the recommendation.
+  // Each rival is a region the screen produced, not a pair typed in beside it.
+  // Widening any of them by one unit changes no score, so the scores alone left
+  // all three endpoints pinned by nothing.
+  const screened = (r) => REGIONS.some((x) => x.start === r[0] && x.end === r[1]);
+  ok(screened(RS_REGION), 'the rs-handlers range is exactly a screened region');
+  ok(screened(OPTION_CHAIN_REGION), '…as is the option-chain range');
+
   const rs = profile(RS_REGION);
   eq(rs.five, RS_FIVE, 'the scanner filter handlers scored 4 on the five-direction screen');
   eq(rs.seven, RS_SEVEN, '…and score 13 on seven, on generated-markup callers');
@@ -588,6 +598,8 @@ section('6. The family, now two — and the gap widened');
 section('7. The lowest-coupled region is deferred on VALUE, not on safety');
 // ─────────────────────────────────────────────────────────────────────────────
 {
+  ok(REGIONS.some((x) => x.start === CONFIG_REGION[0] && x.end === CONFIG_REGION[1]),
+    'CONFIGURATION is exactly a screened region, endpoints included');
   const conf = profile(CONFIG_REGION);
   eq(conf.seven, CONFIG_SCORE, 'CONFIGURATION scores 2 — the lowest of all 96 regions');
   ok(SWEEP_DELTA.every((d) => d >= 0), 'control — the seven-direction delta is never negative');
@@ -601,13 +613,33 @@ section('7. The lowest-coupled region is deferred on VALUE, not on safety');
     '…wrapping THREE lines of code in 923 units, which is why it is deferred');
 
   // NO LAYER OF THE CHAIN HAS EVER OWNED A CONST.
-  const CHAIN = SIBLINGS.map((s) => s.rel).filter((rel) => rel !== CONST_MODULE);
+  // The chain is not re-listed here, and not guessed from the sibling set. The
+  // first draft did the latter — it took the chain to be "every sibling except
+  // the const-owning one", which assumes the answer it then reported. It also
+  // checked the length with `>=`, which is true of 27 and of 28 alike and so
+  // pinned nothing. Both are read from the newest layer's contract instead,
+  // which is where CLAUDE.md puts the chain-wide counts precisely because
+  // restating them is how they go stale.
+  const VEGA = fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8');
+  const CHAIN = new Function('MODULE_REL',
+    `return ${VEGA.match(/^const CHAIN = (\[[\s\S]*?^\]);$/m)[1]};`
+  )(VEGA.match(/^const MODULE_REL = '([^']+)';$/m)[1]);
+  eq(CHAIN.length, CHAIN_LAYERS, 'the chain is twenty-seven layers, read from that contract');
+  eq(Number(VEGA.match(/^const CHAIN_LENGTH = (\d+);$/m)[1]), CHAIN_LAYERS,
+    '…and the CHAIN_LENGTH it pins agrees with the list it ships');
+
+  const chainOwningConst = CHAIN.filter((rel) =>
+    scanTopLevelDeclarations(fs.readFileSync(path.join(ROOT, rel), 'utf8')).some((d) => d.form === 'const'));
+  eq(chainOwningConst.length, CHAIN_LAYERS_OWNING_CONST,
+    'NO layer of the twenty-seven owns a top-level const — measured over the real chain');
+
   const owningConst = SIBLINGS.filter((s) =>
     scanTopLevelDeclarations(fs.readFileSync(path.join(ROOT, s.rel), 'utf8')).some((d) => d.form === 'const'));
   eq(owningConst.length, SHIPPED_MODULES_OWNING_CONST,
     'exactly ONE of the seventy-one shipped modules owns a top-level const');
   eq(owningConst[0].rel, CONST_MODULE, '…and it is js/config/backend-config.js');
-  ok(CHAIN.length >= CHAIN_LAYERS, 'the extraction chain is a subset of the shipped modules');
+  ok(!CHAIN.includes(CONST_MODULE),
+    '…which is a shipped module but not a layer, so the two counts do not contradict');
 
   // AND THAT BREAKS A CHECK EVERY CONTRACT CARRIES.
   {
@@ -738,6 +770,11 @@ section('10. Production is untouched');
   ok(changed.indexOf(RETIRED_SPEC) >= 0, 'the retired mutation spec is part of the change');
   ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC)), '…and is gone from the tree');
   ok(fileExistsAt(BASE_SHA, RETIRED_SPEC), '…having existed at the base');
+  // What the retirement costs, counted from the spec as it stood at the base.
+  // A deleted file cannot be counted in the tree, and absence alone pins no
+  // number: before this line, RETIRED_SPEC_MUTANTS could have said anything.
+  eq((git(['show', BASE_SHA + ':' + RETIRED_SPEC]).match(/^\s*\{ id: /gm) || []).length,
+    RETIRED_SPEC_MUTANTS, '…and carried FORTY-NINE mutants when it did');
   eq(require(path.join(ROOT, 'tests/lib/mutation-spec.js'))
       .loadSpecs('tests/mutation-specs').filter((x) => x.file === RETIRED_SPEC).length, 0,
     '…so the coverage contract no longer loads it');

@@ -110,7 +110,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // each region stops at the score that would rank it, it runs 1,156 ms — both
 // best-of-three and alone. Across its 76 mutants that is 155 s of CI down to
 // 88 s, with no assertion removed and no region left unscreened.
-const DECLARED_MUTANTS = 239;
+const DECLARED_MUTANTS = 240;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
