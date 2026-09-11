@@ -70,7 +70,7 @@ const INLINE_OPEN = '<script>';
 const BASE_SHA = 'dd682ecd21613b8093c0effd8f42556df4a05c3e';
 // Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
 // count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 155;
+const TEST_FILE_COUNT = 156;
 const LOCAL_SCRIPT_COUNT = 66;
 const AUDIT_REL = 'tests/temporary-portfolio-backend-candles-boundary-audit.test.js';
 

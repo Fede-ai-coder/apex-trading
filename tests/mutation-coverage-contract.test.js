@@ -80,25 +80,37 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // every addition a deliberate line in a diff; the budget makes the aggregate a
 // deliberate decision rather than a slow slide.
 //
-// RAISED 200 → 250 for the scanner-IVR audit, which is the decision this guard
-// exists to force, so here is what it was decided on. A cycle now runs in two
-// steps: Phase 1 adds a temporary audit spec (68 here) and Phase 2 retires it
-// while adding that layer's permanent contract spec (~48). So the PEAK is at
-// Phase 1 and the FLOOR grows by about one contract spec per cycle:
+// RAISED 200 → 250 in #444 for that cycle's audit. #446 did NOT raise it again,
+// and the reason is the trajectory rather than this one number. A cycle adds a
+// temporary audit spec at Phase 1 and swaps it for that layer's permanent
+// contract spec at Phase 2, so the FLOOR rises by roughly one contract spec —
+// 50 to 60 mutants — every cycle, for ever. Raising the ceiling buys exactly one
+// cycle each time; retiring one older spec per new layer keeps the count flat.
 //
-//   before this audit  155     after Phase 1  225     after Phase 2  ~203
+// So #446 retired tests/mutation-specs/portfolio-dxlink-greeks-contract.spec.js
+// (49 mutants, layer #24, three cycles settled). Its CONTRACT still runs on every
+// push with every assertion intact; what stops is the mutation pass proving those
+// pins are load-bearing. That is the cost, and it is the cheapest one available:
+// the alternative is an unbounded ceiling.
 //
-// 250 clears this cycle and the next Phase 2. It does NOT clear the next
-// Phase 1, which lands near 271 — deliberately, so the same decision is taken
-// again with the same numbers in front of whoever takes it. The floor growing
-// every cycle is the real cost, and the lever for it is retiring an older
-// layer's spec, not raising this again by reflex.
+// THE COUNT IS A PROXY AND A POOR ONE, which is worth recording next to it. Cost
+// is dominated by TARGET RUNTIME, not by mutant count — measured best-of-three,
+// alone, with nothing else running:
 //
-// The other lever is the TARGET, since a mutant costs one run of it and not one
-// unit of work: this audit's first draft ran 6.2 s a run and would have cost
-// 418 s alone. Caching the whole-screen sweep and indexing identifier
-// occurrences took it to 2.25 s and 153 s, with no assertion removed.
-const DECLARED_MUTANTS = 212;
+//   portfolio-dxlink-greeks   49 × 1204 ms =  59 s      strategy-templates  52 ×  771 ms = 40 s
+//   scanner-ivr               59 × 1013 ms =  60 s      vega-monitor        46 ×  796 ms = 37 s
+//
+// strategy-templates carries MORE mutants than dxlink-greeks and costs a third
+// less. A first pass at these timings, taken while other work was in flight,
+// read roughly double across the board; concurrency makes this measurement lie,
+// so take it alone or not at all.
+//
+// The other lever stays the target. #446's audit sweeps all 96 regions, and a
+// sweep that calls the unabridged profile runs 2,035 ms; indexed, and capped so
+// each region stops at the score that would rank it, it runs 1,156 ms — both
+// best-of-three and alone. Across its 76 mutants that is 155 s of CI down to
+// 88 s, with no assertion removed and no region left unscreened.
+const DECLARED_MUTANTS = 239;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;

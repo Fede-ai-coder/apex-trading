@@ -82,7 +82,7 @@ const AUDIT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-contract.spec.js';
 
 // The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 155;
+const TEST_FILE_COUNT = 156;
 const LOCAL_SCRIPT_COUNT = 71;
 const MODULE_POSITION = 70;
 

@@ -68,7 +68,7 @@ const ANCHOR_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></scrip
 const INLINE_OPEN = '<script>';
 
 const BASE_SHA = '336a3391369d67d2a63721a720eb798814b72664';
-const TEST_FILE_COUNT = 155;
+const TEST_FILE_COUNT = 156;
 const LOCAL_SCRIPT_COUNT = 61;
 
 const OWNERS = [
