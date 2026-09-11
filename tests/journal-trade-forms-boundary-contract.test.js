@@ -325,15 +325,20 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
-  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+  : PRE_CHART_INTERACTIONS;
 const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(PRE_SCANNER_EARNINGS)
   ? SCANNER_IVR_U.undoScannerIvrThrottle(
       PRE_SCANNER_EARNINGS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
@@ -641,7 +646,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-trade-detail.js', MODULE_REL],
   'production footprint is exactly index.html plus this owner and the later trade-detail owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -653,7 +658,8 @@ ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
 ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')), 'no configuration changed');
 ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfolio-vega-monitor.js' || rel === MODULE_REL ||
     rel === 'js/services/scanner-ivr-throttle.js' ||
-    rel === 'js/services/scanner-earnings-throttle.js' || rel === 'CLAUDE.md' ||
+    rel === 'js/services/scanner-earnings-throttle.js' ||
+    rel === 'js/ui/chart-interactions.js' || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');

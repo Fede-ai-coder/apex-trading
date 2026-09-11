@@ -126,7 +126,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 73;
+const PARTS_TOTAL = 74;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -259,15 +259,20 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
-  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+  : PRE_CHART_INTERACTIONS;
 const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(PRE_SCANNER_EARNINGS)
   ? SCANNER_IVR_U.undoScannerIvrThrottle(
       PRE_SCANNER_EARNINGS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
@@ -489,15 +494,15 @@ eq(U.REINSERT_AT, RAW_AT, 'the module goes back exactly where it came from');
 section('10. Load order');
 // ─────────────────────────────────────────────────────────────────────────────
 const PARTS = APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null);
-eq(PARTS.length, PARTS_TOTAL, 'the application is 72 module tags plus the inline monolith');
+eq(PARTS.length, PARTS_TOTAL, 'the application is 73 module tags plus the inline monolith');
 eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module loads at position 59');
 // This section reads the LIVE load order, not the peeled document, so it states
 // what is true now: backend-portfolios was cut after this layer and sits between
 // this module and the inline monolith.
 eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
   '…followed by the backend-portfolios module, which was cut later');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 13,
-  '…and the inline monolith is thirteen positions on');
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 14,
+  '…and the inline monolith is fourteen positions on');
 {
   // The referencing set is DERIVED, not assumed.
   const referencing = PARTS
@@ -575,7 +580,7 @@ const changed = Array.from(new Set(committed.concat(status))).sort();
 // well. One module per later layer, so the list is index.html + this module +
 // one entry per peel hop above — and that count is asserted, not narrated,
 // because the narrated one ("the four layers") was two cycles stale.
-const LATER_LAYERS = [SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U];
 const production = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(production,
@@ -583,7 +588,8 @@ eq(production,
    'js/portfolio/portfolio-dxlink-greeks.js',
    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js',
    'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-prefetch.js',
-   'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js'],
+   'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js',
+   'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js'],
   'production footprint since this base is index.html, this module, and the layers cut after it');
 eq(production.length, 2 + LATER_LAYERS.length,
   'that list is exactly index.html + this module + one module per later peel hop');
@@ -602,6 +608,7 @@ ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts
 ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfolio-vega-monitor.js' || rel === MODULE_REL ||
     rel === 'js/services/scanner-ivr-throttle.js' ||
     rel === 'js/services/scanner-earnings-throttle.js' ||
+    rel === 'js/ui/chart-interactions.js' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),

@@ -172,6 +172,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const CHART_INTERACTIONS = require('./chart-interactions-undo.js');
 const SCANNER_EARNINGS = require('./scanner-earnings-throttle-undo.js');
 const SCANNER_IVR = require('./scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR = require('./vega-monitor-undo.js');
@@ -202,6 +203,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const CHART_INTERACTIONS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'chart-interactions.js'),
+  'utf8'
+);
 const SCANNER_EARNINGS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'scanner-earnings-throttle.js'),
   'utf8'
@@ -316,9 +321,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preScannerEarnings = SCANNER_EARNINGS.isApplied(html)
-    ? SCANNER_EARNINGS.undoScannerEarningsThrottle(html, SCANNER_EARNINGS_SOURCE)
+  const preChartInteractions = CHART_INTERACTIONS.isApplied(html)
+    ? CHART_INTERACTIONS.undoChartInteractions(html, CHART_INTERACTIONS_SOURCE)
     : html;
+  const preScannerEarnings = SCANNER_EARNINGS.isApplied(preChartInteractions)
+    ? SCANNER_EARNINGS.undoScannerEarningsThrottle(preChartInteractions, SCANNER_EARNINGS_SOURCE)
+    : preChartInteractions;
   const preScannerIvr = SCANNER_IVR.isApplied(preScannerEarnings)
     ? SCANNER_IVR.undoScannerIvrThrottle(preScannerEarnings, SCANNER_IVR_SOURCE)
     : preScannerEarnings;

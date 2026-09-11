@@ -134,8 +134,10 @@ const CHAIN = [
   'js/services/scanner-ivr-throttle.js',
   // Newest last, for the same reason recorded above.
   'js/services/scanner-earnings-throttle.js',
+  // Newest last, for the same reason recorded above.
+  'js/ui/chart-interactions.js',
 ];
-const CHAIN_LENGTH = 28;
+const CHAIN_LENGTH = 29;
 const SMALLEST_MODULE = MODULE_REL;
 // Re-pinned by #445: the scanner IVR throttle lands at 4,050 and takes this
 // position from journal-migration (4,461). A superlative pinned over the whole
@@ -143,7 +145,7 @@ const SMALLEST_MODULE = MODULE_REL;
 const SECOND_SMALLEST = 'js/services/scanner-ivr-throttle.js';
 const SECOND_SMALLEST_CHARS = 4050;
 const SINGLE_OWNER_LAYERS = 5;
-const LAYERS_ENDING_BRACE = 25;
+const LAYERS_ENDING_BRACE = 26;
 // The two chain-wide separator counts moved to the NEWEST layer's contract in
 // #445. They belong wherever a mutation spec covers them, and the newest layer
 // always has one; leaving a copy in every cycle's contract is how a chain-wide
@@ -231,12 +233,17 @@ console.log('relocation only · audited #442 · base=' + BASE_SHA.slice(0, 7));
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
-const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
-  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+  : PRE_CHART_INTERACTIONS;
 const INDEX = SCANNER_IVR_U.isApplied(PRE_SCANNER_EARNINGS)
   ? SCANNER_IVR_U.undoScannerIvrThrottle(
       PRE_SCANNER_EARNINGS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
@@ -363,7 +370,7 @@ section('4. One owner — and the smallest module in the chain');
     'zero top-level statement lines: nothing outside the declaration');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-eight layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-nine layers ship today');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
@@ -384,7 +391,9 @@ section('4. One owner — and the smallest module in the chain');
     'js/services/journal-rich-snapshot.js',
   ], '…and this is the fifth of them');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
-    'twenty-four of the twenty-seven end `}\\n`, this one among them');
+    'LAYERS_ENDING_BRACE of the chain end `}\n`, this one among them — the counts are '
+    + 'pinned above rather than spelled out here, which is how the suite-count messages '
+    + 'drifted to four different wrong numbers before #448 repaired them');
 
 }
 
@@ -591,8 +600,9 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js'],
-    'production footprint is index.html, this module and the one cut after it');
+    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js',
+      'js/ui/chart-interactions.js'],
+    'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -610,6 +620,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/services/scanner-ivr-throttle.js' ||
     rel === 'js/services/scanner-earnings-throttle.js' ||
+    rel === 'js/ui/chart-interactions.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

@@ -47,6 +47,18 @@ function scanPins(src) {
         if (c === inStr) inStr = null;
         continue;
       }
+      // Skip line comments BEFORE tracking string state. An apostrophe in a
+      // comment — "§9's", "#447's" — otherwise opens a string that runs to the
+      // next quote in the data, and the declaration stops being recognised as a
+      // pin at all. That is silent: an un-pinned constant is simply absent from
+      // the coverage report, so no spec is asked to mutate it. It had already
+      // happened to CHAIN in extraction-boundary-rule-contract, which has no
+      // spec, so nothing surfaced it until #449 hit the same thing.
+      if (c === '/' && src[i + 1] === '/') {
+        const nl = src.indexOf('\n', i);
+        if (nl < 0) break;
+        i = nl; continue;
+      }
       if (c === '"' || c === "'" || c === '`') { inStr = c; continue; }
       if (c === '[' || c === '{' || c === '(') depth++;
       else if (c === ']' || c === '}' || c === ')') depth--;
