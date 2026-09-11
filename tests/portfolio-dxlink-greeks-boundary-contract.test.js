@@ -85,7 +85,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-contract
 // The audit is deleted and its contract added, so the suite size is unchanged;
 // only the mutation spec is renamed. That is the first cycle where the count
 // does NOT move, which is why it is pinned rather than ratcheted.
-const TEST_FILE_COUNT = 156;
+const TEST_FILE_COUNT = 157;
 const LOCAL_SCRIPT_COUNT = 68;
 const MODULE_POSITION = 67;
 
@@ -286,7 +286,7 @@ eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.
     UNDO.BASE_LOCAL_SCRIPTS, '…carrying sixty-seven local scripts');
 }
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length,
-  TEST_FILE_COUNT, 'the suite is 152 files — this contract replaced the audit one for one');
+  TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The module is the block, verbatim');

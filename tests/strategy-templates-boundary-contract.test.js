@@ -100,7 +100,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/strategy-templates-contract.spec
 
 // The suite does NOT ratchet this cycle: the audit leaves as this contract
 // arrives, one for one.
-const TEST_FILE_COUNT = 156;
+const TEST_FILE_COUNT = 157;
 const LOCAL_SCRIPT_COUNT = 69;
 const MODULE_POSITION = 68;
 
@@ -319,7 +319,7 @@ eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.
   pass++;
 }
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length,
-  TEST_FILE_COUNT, 'the suite is 153 files — unchanged, the audit left as this contract arrived');
+  TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The module is the block, verbatim');
@@ -719,7 +719,15 @@ section('10. Exact production scope, and the temporary audit is gone');
   // tests/mutation-coverage-contract.test.js honest.
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)),
     'the audit’s mutation spec is gone with the audit it targeted');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED IN #448, deliberately. The mutant budget's floor rises by one
+  // contract spec every cycle; raising the ceiling buys exactly one cycle, and
+  // retiring one older spec per new layer keeps the count flat. #446 retired
+  // layer #24's spec; this layer — #25, shipped in #441 — is the next.
+  // Every assertion in this contract still runs on every push; what stopped is
+  // the mutation pass re-proving those pins are load-bearing. Restoring it is a
+  // matter of writing the spec again and raising DECLARED_MUTANTS by its count.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED in #448 to hold the mutant budget flat');
   ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow or bootstrap script changed');
   ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
     'no documentation changed, except the repository working notes');

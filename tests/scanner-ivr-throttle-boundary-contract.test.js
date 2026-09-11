@@ -82,7 +82,7 @@ const AUDIT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-contract.spec.js';
 
 // The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 156;
+const TEST_FILE_COUNT = 157;
 const LOCAL_SCRIPT_COUNT = 71;
 const MODULE_POSITION = 70;
 
@@ -643,7 +643,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     '…as is the audit\'s own path');
   ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
-    TEST_FILE_COUNT, 'the suite does not ratchet: 155 files before and after');
+    TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||

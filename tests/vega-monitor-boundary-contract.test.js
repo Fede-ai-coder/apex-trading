@@ -67,7 +67,7 @@ const AUDIT_SPEC_REL = 'tests/mutation-specs/vega-monitor-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/vega-monitor-contract.spec.js';
 
 // The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 156;
+const TEST_FILE_COUNT = 157;
 const LOCAL_SCRIPT_COUNT = 70;
 const MODULE_POSITION = 69;
 
@@ -288,7 +288,7 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
   pass++;
 }
 eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => /\.test\.js$/.test(f)).length,
-  TEST_FILE_COUNT, 'the suite is 154 files — unchanged, the audit left as this contract arrived');
+  TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The module is the block, verbatim');
