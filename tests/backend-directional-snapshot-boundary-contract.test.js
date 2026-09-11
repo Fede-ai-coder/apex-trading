@@ -272,6 +272,7 @@ const VEGA_MONITOR_EXTRACTION_SCRIPTS = [
 ];
 const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/services/scanner-ivr-throttle.js',
+  './js/services/scanner-earnings-throttle.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -1220,8 +1221,12 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const SCANNER_IVR_RELOCATED_ABOVE = require('./lib/scanner-ivr-throttle-undo.js').RAW_CHARS;
   eq(SCANNER_IVR_RELOCATED_ABOVE, 4051,
      'the scanner-IVR relocation removed exactly 4,051 chars from the monolith');
+  const SCANNER_EARNINGS_RELOCATED_ABOVE = require('./lib/scanner-earnings-throttle-undo.js').RAW_CHARS;
+  eq(SCANNER_EARNINGS_RELOCATED_ABOVE, 4882,
+     'the scanner-Earnings relocation removed exactly 4,882 chars from the monolith');
   const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE +
-    DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE + SCANNER_IVR_RELOCATED_ABOVE;
+    DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE + SCANNER_IVR_RELOCATED_ABOVE +
+    SCANNER_EARNINGS_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2812,8 +2817,8 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 71,
-   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 71 in all, before the inline monolith');
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 72,
+   'index.html loads 26 DSB-fixture local scripts plus the declared extraction modules — 72 in all, before the inline monolith');
 // ── the three DSB tags, positioned exactly as the plan requires ──────────────
 {
   const at = function (src) { return LOCAL_SCRIPTS.indexOf(src); };
@@ -3016,8 +3021,9 @@ function topLevelDeclarations(code) {
       // its own contract proves it performs no fetch, starts no timer and
       // touches no DOM at load.
       './js/services/scanner-ivr-throttle.js',
+      './js/services/scanner-earnings-throttle.js',
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners, the backend-portfolios re-exports, the strategy-template data and the scanner-IVR throttle state');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners, the backend-portfolios re-exports, the strategy-template data and the scanner-IVR and scanner-Earnings throttle state');
 
   // The backend-portfolios module is the newest entry on that list and the only
   // one whose residue is assignments to `window`. It is NOT waved through on the

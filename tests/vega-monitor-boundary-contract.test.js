@@ -132,8 +132,10 @@ const CHAIN = [
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
   'js/services/scanner-ivr-throttle.js',
+  // Newest last, for the same reason recorded above.
+  'js/services/scanner-earnings-throttle.js',
 ];
-const CHAIN_LENGTH = 27;
+const CHAIN_LENGTH = 28;
 const SMALLEST_MODULE = MODULE_REL;
 // Re-pinned by #445: the scanner IVR throttle lands at 4,050 and takes this
 // position from journal-migration (4,461). A superlative pinned over the whole
@@ -141,7 +143,7 @@ const SMALLEST_MODULE = MODULE_REL;
 const SECOND_SMALLEST = 'js/services/scanner-ivr-throttle.js';
 const SECOND_SMALLEST_CHARS = 4050;
 const SINGLE_OWNER_LAYERS = 5;
-const LAYERS_ENDING_BRACE = 24;
+const LAYERS_ENDING_BRACE = 25;
 // The two chain-wide separator counts moved to the NEWEST layer's contract in
 // #445. They belong wherever a mutation spec covers them, and the newest layer
 // always has one; leaving a copy in every cycle's contract is how a chain-wide
@@ -229,11 +231,16 @@ console.log('relocation only · audited #442 · base=' + BASE_SHA.slice(0, 7));
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
-const INDEX = SCANNER_IVR_U.isApplied(LIVE_INDEX)
-  ? SCANNER_IVR_U.undoScannerIvrThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
+const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = SCANNER_IVR_U.isApplied(PRE_SCANNER_EARNINGS)
+  ? SCANNER_IVR_U.undoScannerIvrThrottle(
+      PRE_SCANNER_EARNINGS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
+  : PRE_SCANNER_EARNINGS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -356,7 +363,7 @@ section('4. One owner — and the smallest module in the chain');
     'zero top-level statement lines: nothing outside the declaration');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-seven layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-eight layers ship today');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
@@ -584,7 +591,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/scanner-ivr-throttle.js'],
+    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js'],
     'production footprint is index.html, this module and the one cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -602,6 +609,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel === '.gitattributes'), '.gitattributes is untouched');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/services/scanner-ivr-throttle.js' ||
+    rel === 'js/services/scanner-earnings-throttle.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }
