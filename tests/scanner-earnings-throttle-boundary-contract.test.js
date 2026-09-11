@@ -412,8 +412,11 @@ section('5. Coupling, in all seven directions');
   eq(sites, EDGE_SITES, 'FOUR references reach in from the rest of the monolith');
   eq(sites.length, EXTERNAL_EDGES, '…exactly four');
   ok(sites.every(insideFunction), '…every one inside a function body, so none runs at load');
-  eq(BASE_CODE.slice(CONSUMER_SITE, CONSUMER_SITE + CONSUMER_NAME.length), CONSUMER_NAME,
-    'the site at 95,154 names fetchScannerEarnings');
+  // The WHOLE identifier at that site, not a slice of CONSUMER_NAME.length —
+  // which is what this assertion used to take, and so passed for any PREFIX of
+  // the real name. The mutation pass caught it: 'fetchScannerEarning' survived.
+  eq(BASE_CODE.slice(CONSUMER_SITE).match(/^[A-Za-z0-9_$]+/)[0], CONSUMER_NAME,
+    'the site at 95,154 names fetchScannerEarnings, whole identifier and not a prefix');
   ok(/await fetchScannerEarnings\(/.test(BASE_CODE.slice(CONSUMER_SITE - 8, CONSUMER_SITE + 30)),
     '…as the real consumer: an awaited call');
   for (const at of DIAG_SITES) {
