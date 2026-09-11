@@ -395,8 +395,17 @@ const scannerIvrOpen2 = scannerIvrOpen;
 const afterSiAt = INDEX.indexOf('<script', INDEX.indexOf(scannerIvrTag) + scannerIvrTag.length);
 const afterSiEnd = INDEX.indexOf('>', afterSiAt);
 const afterSiTag = afterSiEnd >= 0 ? INDEX.slice(afterSiAt, afterSiEnd + 1) : '';
-ok(INDEX.indexOf(scannerIvrTag) > INDEX.indexOf(vegaMonitorTag) && !/\bsrc\s*=/i.test(afterSiTag),
-  'the scanner-IVR owner loads immediately before the residual inline application script');
+const scannerEarningsTag = '<script src="./js/services/scanner-earnings-throttle.js"></script>';
+const afterSeAt = INDEX.indexOf('<', INDEX.indexOf(scannerEarningsTag) + scannerEarningsTag.length);
+const afterSeEnd = INDEX.indexOf('>', afterSeAt);
+const afterSeTag = afterSeEnd >= 0 ? INDEX.slice(afterSeAt, afterSeEnd + 1) : '';
+// The tag that sits immediately before the inline monolith moves with every
+// cycle. What is stable is the ORDER, so that is what is pinned, plus the fact
+// that the newest layer — whichever it is — is the one abutting the monolith.
+ok(INDEX.indexOf(scannerEarningsTag) > INDEX.indexOf(scannerIvrTag)
+  && INDEX.indexOf(scannerIvrTag) > INDEX.indexOf(vegaMonitorTag)
+  && !/\bsrc\s*=/i.test(afterSeTag),
+  'the scanner-Earnings owner loads immediately before the residual inline application script');
 ok(scannerIvrOpen2 === scannerIvrOpen, 'control — the open tag used above is the one measured');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
