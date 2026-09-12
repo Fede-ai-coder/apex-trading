@@ -87,10 +87,11 @@ const BASE_UTF8 = 1897113;
 const BASE_LF = 32721;
 const BASE_INDEX_SHA256 = '8e52b9a882b29c3097c4bc6031c90349be4fffba481710a909b6f6f8695b4721';
 const BASE_LOCAL_SCRIPTS = 57;
-// Ratchet. Advanced to 142 by the portfolio data-fetch extraction audit, which
-// adds tests/temporary-portfolio-data-fetch-boundary-audit.test.js. That audit
-// is replaced one-for-one by its permanent contract, so the count stays at 142.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 
 // ── The two moved fragments, in base coordinates ─────────────────────────────
 const HANDLERS = {

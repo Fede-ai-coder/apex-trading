@@ -68,7 +68,11 @@ const ANCHOR_TAG = '<script src="./js/portfolio/portfolio-data-fetch.js"></scrip
 const INLINE_OPEN = '<script>';
 
 const BASE_SHA = '336a3391369d67d2a63721a720eb798814b72664';
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 61;
 
 const OWNERS = [

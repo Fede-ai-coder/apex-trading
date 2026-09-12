@@ -33,7 +33,18 @@ const ROOT = path.resolve(__dirname, '..', '..');
 // Scan a source for top-level pinned constants. Returns [{ name, rhs, line }].
 function scanPins(src) {
   const out = [];
-  const re = /^const ([A-Z][A-Z0-9_]*) = /gm;
+  // The separator after `=` may be a NEWLINE, not only a space. A declaration
+  // whose value starts on the following line —
+  //
+  //     const MONOLITH_DEPENDENCIES =
+  //       ['S', 'debugLog', …];
+  //
+  // — is the same kind of pin, and requiring a space here silently dropped it,
+  // exactly as the comment-apostrophe bug below did: an un-pinned constant is
+  // absent from the coverage report, so no spec is ever asked to mutate it.
+  // Eighteen declarations across eight files were invisible this way when #450
+  // found it, two of them in the audit that found it.
+  const re = /^const ([A-Z][A-Z0-9_]*) =[ \t\r\n]/gm;
   let m;
   while ((m = re.exec(src)) !== null) {
     const valueAt = m.index + m[0].length;

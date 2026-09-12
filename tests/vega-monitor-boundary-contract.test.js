@@ -66,8 +66,11 @@ const AUDIT_REL = 'tests/temporary-vega-monitor-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/vega-monitor-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/vega-monitor-contract.spec.js';
 
-// The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 70;
 const MODULE_POSITION = 69;
 
@@ -610,7 +613,16 @@ section('8. Exact production scope, and the temporary audit is gone');
     'no temporary audit is shipped: this contract replaces it one for one');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)),
     'the audit’s mutation spec is gone with the audit it targeted');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED IN #450, deliberately. The mutant budget's floor rises by one
+  // contract spec every cycle; raising the ceiling buys exactly one cycle, and
+  // retiring one older spec per new layer keeps the count flat. #446 retired
+  // layer #24's spec, #448 layer #25's, and this layer — #26 — is the next in
+  // that order. Every assertion in this contract still runs on every push; what
+  // stopped is the mutation pass re-proving those pins are load-bearing.
+  // Restoring it is a matter of writing the spec again and raising
+  // DECLARED_MUTANTS by its count.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED in #450 to hold the mutant budget flat');
   ok(!changed.some((rel) => rel.startsWith('.github/')), 'no workflow or bootstrap script changed');
   ok(!changed.some((rel) => rel.endsWith('.md') && rel !== 'CLAUDE.md'),
     'no documentation changed, except the repository working notes');
