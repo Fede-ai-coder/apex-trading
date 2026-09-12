@@ -249,11 +249,16 @@ console.log('relocation only · audited #446 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
-const INDEX = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
-  ? CHART_INTERACTIONS_U.undoChartInteractions(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : PRE_JOURNAL_SNAPSHOT_HELPERS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -682,7 +687,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   // base carries the module #449 cut as well. Re-terminated each time the chain
   // grows, rather than loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js'].sort(),
+    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js'].sort(),
     'production footprint is index.html, this module, and the layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -705,6 +710,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/ui/chart-interactions.js' ||
+    rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

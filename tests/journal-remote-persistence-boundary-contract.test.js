@@ -85,6 +85,7 @@ const VEGA_MONITOR_TAG = '<script src="./js/portfolio/portfolio-vega-monitor.js"
 const SCANNER_IVR_TAG = '<script src="./js/services/scanner-ivr-throttle.js"></script>';
 const SCANNER_EARNINGS_TAG = '<script src="./js/services/scanner-earnings-throttle.js"></script>';
 const CHART_INTERACTIONS_TAG = '<script src="./js/ui/chart-interactions.js"></script>';
+const SNAPSHOT_HELPERS_TAG = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -237,16 +238,21 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(INDEX)
-  ? CHART_INTERACTIONS_U.undoChartInteractions(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : INDEX;
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : PRE_JOURNAL_SNAPSHOT_HELPERS;
 const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
   ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
       PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
@@ -364,7 +370,7 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n',
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n',
   'service tail ends UI -> Remote -> Write-through -> Migration -> Manual Import -> Backup/Restore -> MCX macro check -> MCX charts -> Apex post-auth -> TT reconnect -> Journal Close Legs -> Journal trade forms -> Journal trade detail -> Portfolio data fetch -> Backend portfolios -> Manual expiry -> Traffic light -> Candle-store chart -> Rich async snapshot -> Portfolio backend candles -> Journal snapshot prefetch -> Portfolio DXLink greeks -> Strategy templates -> Vega monitor -> inline');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
@@ -506,6 +512,7 @@ same(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-backend-write-through.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-helpers.js',
   'js/services/journal-snapshot-prefetch.js',
   'js/services/journal-migration.js', 'js/services/journal-manual-import.js',
   'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js',

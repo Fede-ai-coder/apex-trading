@@ -231,9 +231,16 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('CHART INTERACTIONS — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited #448 · base=' + BASE_SHA);
 
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
-const INDEX = APP_LOADER.loadIndexHtml();
+// A later layer landed, so it is peeled here, first — which is exactly what the
+// previous version of this comment said would happen. INDEX below is therefore
+// this layer's own extracted document, not the live one, and §8 keeps the two
+// apart: the production footprint is measured against the LIVE tree.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
+const INDEX = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -609,8 +616,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/services/journal-snapshot-helpers.js'].sort(),
+    'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -629,6 +636,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

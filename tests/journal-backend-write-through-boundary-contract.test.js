@@ -462,16 +462,21 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(INDEX)
-  ? CHART_INTERACTIONS_U.undoChartInteractions(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : INDEX;
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : PRE_JOURNAL_SNAPSHOT_HELPERS;
 const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
   ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
       PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
@@ -563,9 +568,9 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1540382, 'current shipped index UTF-16 length is the post-chart-interactions value');
-eq(sha256(INDEX), '31f968a564c28b3d006e494cc1829112dd8dacefc6539bc465c953ddfa8a7d42',
-  'current shipped index SHA-256 is the post-vega-monitor value');
+eq(INDEX.length, 1529653, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), 'bad872575738d9fd4735c592438b6956af0d449dc8b79a34eae89429882f0b48',
+  'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
 // here on the peeled state, so shifting the chain never leaves a slot pinned by
@@ -882,6 +887,7 @@ eq(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/services/journal-rich-snapshot.js',
+  'js/services/journal-snapshot-helpers.js',
   'js/portfolio/portfolio-backend-candles.js',
   'js/services/journal-snapshot-prefetch.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',

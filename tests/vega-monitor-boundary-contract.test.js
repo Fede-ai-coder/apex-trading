@@ -236,13 +236,18 @@ console.log('relocation only · audited #442 · base=' + BASE_SHA.slice(0, 7));
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
-const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
-  ? CHART_INTERACTIONS_U.undoChartInteractions(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : PRE_JOURNAL_SNAPSHOT_HELPERS;
 const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
   ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
       PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
@@ -603,7 +608,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js',
+    ['index.html', MODULE_REL, 'js/services/journal-snapshot-helpers.js',
+      'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js',
       'js/ui/chart-interactions.js'],
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
@@ -633,6 +639,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/scanner-ivr-throttle.js' ||
     rel === 'js/services/scanner-earnings-throttle.js' ||
     rel === 'js/ui/chart-interactions.js' ||
+    rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

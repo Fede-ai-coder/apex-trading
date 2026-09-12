@@ -172,6 +172,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_SNAPSHOT_HELPERS = require('./journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS = require('./chart-interactions-undo.js');
 const SCANNER_EARNINGS = require('./scanner-earnings-throttle-undo.js');
 const SCANNER_IVR = require('./scanner-ivr-throttle-undo.js');
@@ -203,6 +204,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_SNAPSHOT_HELPERS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-snapshot-helpers.js'),
+  'utf8'
+);
 const CHART_INTERACTIONS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'ui', 'chart-interactions.js'),
   'utf8'
@@ -321,9 +326,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preChartInteractions = CHART_INTERACTIONS.isApplied(html)
-    ? CHART_INTERACTIONS.undoChartInteractions(html, CHART_INTERACTIONS_SOURCE)
+  const preJournalSnapshotHelpers = JOURNAL_SNAPSHOT_HELPERS.isApplied(html)
+    ? JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(html, JOURNAL_SNAPSHOT_HELPERS_SOURCE)
     : html;
+  const preChartInteractions = CHART_INTERACTIONS.isApplied(preJournalSnapshotHelpers)
+    ? CHART_INTERACTIONS.undoChartInteractions(preJournalSnapshotHelpers, CHART_INTERACTIONS_SOURCE)
+    : preJournalSnapshotHelpers;
   const preScannerEarnings = SCANNER_EARNINGS.isApplied(preChartInteractions)
     ? SCANNER_EARNINGS.undoScannerEarningsThrottle(preChartInteractions, SCANNER_EARNINGS_SOURCE)
     : preChartInteractions;

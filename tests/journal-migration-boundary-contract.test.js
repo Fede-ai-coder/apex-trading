@@ -136,16 +136,21 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(INDEX)
-  ? CHART_INTERACTIONS_U.undoChartInteractions(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(INDEX)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : INDEX;
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : PRE_JOURNAL_SNAPSHOT_HELPERS;
 const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
   ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
       PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
@@ -549,9 +554,9 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1540382, 'current shipped index UTF-16 length is the post-chart-interactions value');
-eq(sha256(INDEX), '31f968a564c28b3d006e494cc1829112dd8dacefc6539bc465c953ddfa8a7d42',
-  'current shipped index SHA-256 is the post-vega-monitor value');
+eq(INDEX.length, 1529653, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), 'bad872575738d9fd4735c592438b6956af0d449dc8b79a34eae89429882f0b48',
+  'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
 // here on the peeled state, so shifting the chain never leaves a slot pinned by
@@ -678,7 +683,8 @@ const VEGA_MONITOR_TAG2 = '<script src="./js/portfolio/portfolio-vega-monitor.js
 const SCANNER_IVR_TAG2 = '<script src="./js/services/scanner-ivr-throttle.js"></script>';
 const SCANNER_EARNINGS_TAG2 = '<script src="./js/services/scanner-earnings-throttle.js"></script>';
 const CHART_INTERACTIONS_TAG2 = '<script src="./js/ui/chart-interactions.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n<script>'), 1,
+const SNAPSHOT_HELPERS_TAG2 = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n' + SNAPSHOT_HELPERS_TAG2 + '\n<script>'), 1,
   'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the portfolio backend candles, then the journal snapshot prefetch, then the portfolio DXLink greeks, then the strategy templates, then the vega monitor, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
@@ -918,12 +924,13 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 // layer cut afterwards. The count is asserted rather than narrated: the prose
 // that used to name the later owners stopped at seven of them and stayed there
 // for nine more cycles, because a sentence cannot fail.
-const LATER_LAYERS = [CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U, PORTFOLIO_U, TRADE_DETAIL_U,
   TRADE_FORMS_U, CLOSE_LEGS_U, TT_RECONNECT_U, APEX_POST_AUTH_U, MCX_CHARTS_U,
   MCX_MACRO_CHECK_U, BACKUP_RESTORE_U, MANUAL_U];
 eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js',
   'js/services/journal-manual-import.js', MODULE_REL, 'js/services/journal-rich-snapshot.js',
+  'js/services/journal-snapshot-helpers.js',
   'js/services/journal-snapshot-prefetch.js',
   'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
   'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
