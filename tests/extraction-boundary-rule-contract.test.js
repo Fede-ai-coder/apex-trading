@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const JOURNAL_SNAPSHOT_HELPERS = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR = require('./lib/scanner-ivr-throttle-undo.js');
@@ -185,6 +186,7 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(doc, read('js/services/journal-snapshot-helpers.js'));
   doc = CHART_INTERACTIONS.undoChartInteractions(doc, read('js/ui/chart-interactions.js'));
   doc = SCANNER_EARNINGS.undoScannerEarningsThrottle(doc, read('js/services/scanner-earnings-throttle.js'));
   doc = SCANNER_IVR.undoScannerIvrThrottle(doc, read('js/services/scanner-ivr-throttle.js'));

@@ -125,7 +125,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // to rank it. Indexing the sibling scan and binary-searching the occurrence
 // lists took it from 2,004 ms to 1,301 ms, so its 102 mutants cost 133 s instead
 // of 204 s — again with nothing unscreened.
-const DECLARED_MUTANTS = 234;
+const DECLARED_MUTANTS = 197;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;

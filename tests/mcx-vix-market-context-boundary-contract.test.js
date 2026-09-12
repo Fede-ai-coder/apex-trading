@@ -403,14 +403,16 @@ const afterSeTag = afterSeEnd >= 0 ? INDEX.slice(afterSeAt, afterSeEnd + 1) : ''
 // cycle. What is stable is the ORDER, so that is what is pinned, plus the fact
 // that the newest layer — whichever it is — is the one abutting the monolith.
 const chartInteractionsTag = '<script src="./js/ui/chart-interactions.js"></script>';
-const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(chartInteractionsTag) + chartInteractionsTag.length);
+const newestLayerTag = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
+const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(chartInteractionsTag) > INDEX.indexOf(scannerEarningsTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(chartInteractionsTag)
+  && INDEX.indexOf(chartInteractionsTag) > INDEX.indexOf(scannerEarningsTag)
   && INDEX.indexOf(scannerEarningsTag) > INDEX.indexOf(scannerIvrTag)
   && INDEX.indexOf(scannerIvrTag) > INDEX.indexOf(vegaMonitorTag)
   && !/\bsrc\s*=/i.test(afterCiTag),
-  'the chart-interactions owner loads immediately before the residual inline application script');
+  'the NEWEST layer loads immediately before the residual inline application script');
 ok(scannerIvrOpen2 === scannerIvrOpen, 'control — the open tag used above is the one measured');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 
