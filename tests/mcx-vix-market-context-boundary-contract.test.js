@@ -402,10 +402,15 @@ const afterSeTag = afterSeEnd >= 0 ? INDEX.slice(afterSeAt, afterSeEnd + 1) : ''
 // The tag that sits immediately before the inline monolith moves with every
 // cycle. What is stable is the ORDER, so that is what is pinned, plus the fact
 // that the newest layer — whichever it is — is the one abutting the monolith.
-ok(INDEX.indexOf(scannerEarningsTag) > INDEX.indexOf(scannerIvrTag)
+const chartInteractionsTag = '<script src="./js/ui/chart-interactions.js"></script>';
+const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(chartInteractionsTag) + chartInteractionsTag.length);
+const afterCiEnd = INDEX.indexOf('>', afterCiAt);
+const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
+ok(INDEX.indexOf(chartInteractionsTag) > INDEX.indexOf(scannerEarningsTag)
+  && INDEX.indexOf(scannerEarningsTag) > INDEX.indexOf(scannerIvrTag)
   && INDEX.indexOf(scannerIvrTag) > INDEX.indexOf(vegaMonitorTag)
-  && !/\bsrc\s*=/i.test(afterSeTag),
-  'the scanner-Earnings owner loads immediately before the residual inline application script');
+  && !/\bsrc\s*=/i.test(afterCiTag),
+  'the chart-interactions owner loads immediately before the residual inline application script');
 ok(scannerIvrOpen2 === scannerIvrOpen, 'control — the open tag used above is the one measured');
 ok(!/\b(?:async|defer|type)\s*=/i.test(tag), 'MCX-2 tag is classic and synchronous');
 

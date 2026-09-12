@@ -1425,8 +1425,8 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
   // The message used to ENUMERATE the owners, and had to be extended by hand
   // every cycle — a sentence that cannot fail, so it fell behind. The tail chain
   // immediately below names them in assertions that do run.
-  eq(local.length, 72,
-     '4.9 index.html loads 72 local application scripts; the tail chain below names the newest of them');
+  eq(local.length, 73,
+     '4.9 index.html loads 73 local application scripts; the tail chain below names the newest of them');
   // The SEVEN Journal owners, named individually and checked as one contiguous
   // run ending immediately before the MCX macro-check owner. They used to be
   // recognised here only by the words "seven Journal owners" inside the 4.9
@@ -1457,85 +1457,85 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
        '4.8e the regime-policy module is the one tag interleaved into the run');
     eq(slots[slots.length - 1] - slots[0], JOURNAL_OWNERS.length,
        '4.8f …so the run spans exactly eight consecutive slots and holds nothing else');
-    eq(slots[slots.length - 1] + 1, local.length - 20,
+    eq(slots[slots.length - 1] + 1, local.length - 21,
        '4.8g and the run ends immediately before the MCX macro-check owner');
   }
-  eq(local[local.length - 20].src, './js/ui/mcx-macro-check.js',
+  eq(local[local.length - 21].src, './js/ui/mcx-macro-check.js',
      '4.9a the MCX macro-check owner is immediately before the MCX charts owner');
   eq(local.filter((s) => s.src === './js/ui/mcx-macro-check.js').length, 1,
      '4.9b exactly one MCX macro-check tag, no duplicate');
-  eq(local[local.length - 19].src, './js/ui/mcx-charts.js',
+  eq(local[local.length - 20].src, './js/ui/mcx-charts.js',
      '4.9c the MCX charts owner is immediately before the Apex shared post-auth owner');
-  eq(local[local.length - 18].src, './js/services/apex-post-auth-init.js',
+  eq(local[local.length - 19].src, './js/services/apex-post-auth-init.js',
      '4.9d the Apex shared post-auth owner is immediately before the TT reconnect owner');
   eq(local.filter((s) => s.src === './js/services/apex-post-auth-init.js').length, 1,
      '4.9e exactly one Apex post-auth tag, no duplicate');
-  eq(local[local.length - 17].src, './js/ui/tt-reconnect.js',
+  eq(local[local.length - 18].src, './js/ui/tt-reconnect.js',
      '4.9f the TT reconnect owner is immediately before the Journal Close Legs owner');
   eq(local.filter((s) => s.src === './js/ui/tt-reconnect.js').length, 1,
      '4.9g exactly one TT reconnect tag, no duplicate');
-  eq(local[local.length - 16].src, './js/ui/journal-close-legs.js',
+  eq(local[local.length - 17].src, './js/ui/journal-close-legs.js',
      '4.9h the Journal Close Legs owner is immediately before the Journal trade-forms owner');
   eq(local.filter((s) => s.src === './js/ui/journal-close-legs.js').length, 1,
      '4.9i exactly one Journal Close Legs tag, no duplicate');
-  eq(local[local.length - 15].src, './js/ui/journal-trade-forms.js',
+  eq(local[local.length - 16].src, './js/ui/journal-trade-forms.js',
      '4.9j the Journal trade-forms owner is immediately before the Journal trade-detail owner');
   eq(local.filter((s) => s.src === './js/ui/journal-trade-forms.js').length, 1,
      '4.9k exactly one Journal trade-forms tag, no duplicate');
-  eq(local[local.length - 14].src, './js/ui/journal-trade-detail.js',
+  eq(local[local.length - 15].src, './js/ui/journal-trade-detail.js',
      '4.9k2 the Journal trade-detail owner is immediately before the portfolio owner');
   eq(local.filter((s) => s.src === './js/ui/journal-trade-detail.js').length, 1,
      '4.9k3 exactly one Journal trade-detail tag, no duplicate');
-  eq(local[local.length - 13].src, './js/portfolio/portfolio-data-fetch.js',
+  eq(local[local.length - 14].src, './js/portfolio/portfolio-data-fetch.js',
      '4.9k4 the portfolio data-fetch owner is immediately before the backend-portfolios owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-data-fetch.js').length, 1,
      '4.9k5 exactly one portfolio data-fetch tag, no duplicate');
   // The chain shifted by one, so the END of it must be re-pinned. Without these
   // two the last slot would be asserted by nothing at all — the exact way this
   // family lost coverage once before.
-  eq(local[local.length - 12].src, './js/portfolio/backend-portfolios.js',
+  eq(local[local.length - 13].src, './js/portfolio/backend-portfolios.js',
      '4.9k6 the backend-portfolios owner is immediately before the manual-expiry owner');
   eq(local.filter((s) => s.src === './js/portfolio/backend-portfolios.js').length, 1,
      '4.9k7 exactly one backend-portfolios tag, no duplicate');
   // The chain shifted again, so its END is re-pinned again. Leaving it would put
   // the last slot back under no assertion at all.
-  eq(local[local.length - 11].src, './js/portfolio/portfolio-expiry-manual.js',
+  eq(local[local.length - 12].src, './js/portfolio/portfolio-expiry-manual.js',
      '4.9k8 the manual-expiry owner is immediately before the traffic-light owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-expiry-manual.js').length, 1,
      '4.9k9 exactly one manual-expiry tag, no duplicate');
   // The chain shifted a third time, so its END is re-pinned a third time. This is
   // the assertion that would silently disappear if only the indices were bumped.
-  eq(local[local.length - 10].src, './js/portfolio/portfolio-traffic-light.js',
+  eq(local[local.length - 11].src, './js/portfolio/portfolio-traffic-light.js',
      '4.9k10 the traffic-light owner is immediately before the candle-store-chart owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-traffic-light.js').length, 1,
      '4.9k11 exactly one traffic-light tag, no duplicate');
   // Re-terminated a fourth time: bumping the indices alone would leave the last
   // slot asserted by nothing, which is how this family lost coverage once.
-  eq(local[local.length - 9].src, './js/ui/backend-candle-store-chart.js',
+  eq(local[local.length - 10].src, './js/ui/backend-candle-store-chart.js',
      '4.9k12 the candle-store-chart owner is immediately before the rich-snapshot owner');
   // Re-terminated a fifth time, for the same reason as the four before it.
-  eq(local[local.length - 8].src, './js/services/journal-rich-snapshot.js',
+  eq(local[local.length - 9].src, './js/services/journal-rich-snapshot.js',
      '4.9k13 the rich-snapshot owner is immediately before the backend-candles owner');
   eq(local.filter((s) => s.src === './js/services/journal-rich-snapshot.js').length, 1,
      '4.9k14 exactly one rich-snapshot tag, no duplicate');
   // Re-terminated a sixth time, for the same reason as the five before it.
-  eq(local[local.length - 7].src, './js/portfolio/portfolio-backend-candles.js',
+  eq(local[local.length - 8].src, './js/portfolio/portfolio-backend-candles.js',
      '4.9k15 the portfolio backend-candles owner is immediately before the snapshot-prefetch owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-backend-candles.js').length, 1,
      '4.9k16 exactly one backend-candles tag, no duplicate');
   // Re-terminated a seventh time, for the same reason as the six before it.
-  eq(local[local.length - 6].src, './js/services/journal-snapshot-prefetch.js',
+  eq(local[local.length - 7].src, './js/services/journal-snapshot-prefetch.js',
      '4.9k17 the journal snapshot-prefetch owner is immediately before the DXLink greeks owner');
   eq(local.filter((s) => s.src === './js/services/journal-snapshot-prefetch.js').length, 1,
      '4.9k18 exactly one snapshot-prefetch tag, no duplicate');
   // Re-terminated an eighth time, for the same reason as the seven before it.
-  eq(local[local.length - 5].src, './js/portfolio/portfolio-dxlink-greeks.js',
+  eq(local[local.length - 6].src, './js/portfolio/portfolio-dxlink-greeks.js',
      '4.9k19 the portfolio DXLink greeks owner is immediately before the strategy-templates owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-dxlink-greeks.js').length, 1,
      '4.9k20 exactly one DXLink greeks tag, no duplicate');
   // Re-terminated a ninth time, for the same reason as the eight before it: the
   // endpoint claim moves to the layer that actually holds the last slot.
-  eq(local[local.length - 4].src, './js/config/strategy-templates.js',
+  eq(local[local.length - 5].src, './js/config/strategy-templates.js',
      '4.9k21 the strategy-templates owner is immediately before the vega-monitor owner');
   eq(local.filter((s) => s.src === './js/config/strategy-templates.js').length, 1,
      '4.9k22 exactly one strategy-templates tag, no duplicate');
@@ -1544,21 +1544,28 @@ expectOk(() => verifyLoad(SCRIPT_MODEL), '4.1 the script tag and its slot satisf
   // like the nine before it" — counted a set nobody was counting: the comments
   // above run fourth, fifth, sixth, seventh, ninth, with no eighth. A number
   // that cannot be checked against the file is worse than no number.)
-  eq(local[local.length - 3].src, './js/portfolio/portfolio-vega-monitor.js',
+  eq(local[local.length - 4].src, './js/portfolio/portfolio-vega-monitor.js',
      '4.9k23 the vega-monitor owner is third-from-last, immediately before the scanner-IVR owner');
   eq(local.filter((s) => s.src === './js/portfolio/portfolio-vega-monitor.js').length, 1,
      '4.9k24 exactly one vega-monitor tag, no duplicate');
   // Re-terminated with the chain: the clause above moved off the last slot, so
   // without this one the endpoint would be pinned by nothing at all — the exact
   // defect CLAUDE.md records this file for.
-  eq(local[local.length - 2].src, './js/services/scanner-ivr-throttle.js',
+  eq(local[local.length - 3].src, './js/services/scanner-ivr-throttle.js',
      '4.9k25 the scanner-IVR owner is second-to-last, immediately before the scanner-Earnings owner');
   eq(local.filter((s) => s.src === './js/services/scanner-ivr-throttle.js').length, 1,
      '4.9k26 exactly one scanner-IVR tag, no duplicate');
   // Re-terminated with the chain AGAIN, for the same reason: every link moved
   // down one, so the last slot needs a clause of its own or nothing pins it.
-  eq(local[local.length - 1].src, './js/services/scanner-earnings-throttle.js',
-     '4.9k27 the scanner-Earnings owner is the LAST local application script before the inline monolith');
+  eq(local[local.length - 2].src, './js/services/scanner-earnings-throttle.js',
+     '4.9k27 the scanner-Earnings owner is second from the end');
+  // Re-terminated with the chain AGAIN: every link moved down one, so the last
+  // slot needs a clause of its own or nothing pins it — the defect CLAUDE.md
+  // records this very file for.
+  eq(local[local.length - 1].src, './js/ui/chart-interactions.js',
+     '4.9k29 the chart-interactions owner is the LAST local application script before the monolith');
+  eq(local.filter((s) => s.src === './js/ui/chart-interactions.js').length, 1,
+     '4.9k30 exactly one chart-interactions tag, no duplicate');
   eq(local.filter((s) => s.src === './js/services/scanner-earnings-throttle.js').length, 1,
      '4.9k28 exactly one scanner-Earnings tag, no duplicate');
   eq(local.filter((s) => s.src === './js/ui/backend-candle-store-chart.js').length, 1,

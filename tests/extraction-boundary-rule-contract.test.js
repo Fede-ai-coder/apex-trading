@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const CHART_INTERACTIONS = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR = require('./lib/vega-monitor-undo.js');
@@ -109,8 +110,10 @@ const CHAIN = [
   'js/services/scanner-ivr-throttle.js',
   // Newest last, for the same reason recorded above.
   'js/services/scanner-earnings-throttle.js',
+  // Newest last, for the same reason recorded above.
+  'js/ui/chart-interactions.js',
 ];
-const CHAIN_LENGTH = 28;
+const CHAIN_LENGTH = 29;
 
 // The one layer that already ended on trailing top-level code, and by how much.
 const TRAILING_CODE_LAYER = 'js/services/journal-backend-write-through.js';
@@ -182,6 +185,7 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = CHART_INTERACTIONS.undoChartInteractions(doc, read('js/ui/chart-interactions.js'));
   doc = SCANNER_EARNINGS.undoScannerEarningsThrottle(doc, read('js/services/scanner-earnings-throttle.js'));
   doc = SCANNER_IVR.undoScannerIvrThrottle(doc, read('js/services/scanner-ivr-throttle.js'));
   HISTORY.push({ name: 'scanner-ivr-throttle', H: SCANNER_IVR, doc });
@@ -249,9 +253,9 @@ for (const { name, H, doc } of HISTORY) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. The twenty-eight shipped modules');
+section('4. The twenty-nine shipped modules');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-eight shipped layers');
+eq(CHAIN.length, CHAIN_LENGTH, 'the chain is the twenty-nine shipped layers');
 for (const rel of CHAIN) {
   const src = read(rel);
   ok(src.length > 0, rel + ': exists and is non-empty');
@@ -344,9 +348,9 @@ section('6. The two dead rules, pinned against the case that killed them');
     if (tail.split('\n').some((l) => !isBlankOrComment(l))) withTrailingCode.push(rel);
   }
   eq(withTrailingCode, [TRAILING_CODE_LAYER, 'js/portfolio/backend-portfolios.js'],
-    'TWO of the twenty-eight end on trailing top-level code');
-  eq(CHAIN.length - withTrailingCode.length, 26,
-    '…and twenty-six end at their last declaration');
+    'TWO of the twenty-nine end on trailing top-level code');
+  eq(CHAIN.length - withTrailingCode.length, 27,
+    '…and twenty-seven end at their last declaration');
   // The distinction that matters: of the SIXTEEN layers that predate the
   // backend-portfolios cut, which uncovered this, exactly one did — which is why
   // fifteen-of-sixteen felt like a law. Backend portfolios is the second case,
@@ -512,7 +516,7 @@ section('9. The four superlatives, measured over the whole set');
 
   // (a) "the first layer with async owners", published of portfolio-data-fetch.
   const withAsync = CHAIN.filter(hasAsyncOwner);
-  eq(withAsync.length, 16, 'sixteen of the twenty-eight layers own an async declaration');
+  eq(withAsync.length, 16, 'sixteen of the twenty-nine layers own an async declaration');
   const earlier = CHAIN.slice(0, CHAIN.indexOf(FETCH_LAYER));
   eq(earlier.length, 15, 'fifteen layers predate the one the claim was made about');
   eq(earlier.filter(hasAsyncOwner).length, 9, '…and NINE of them already had async owners');
@@ -554,8 +558,8 @@ section('9. The four superlatives, measured over the whole set');
   // top level, by relocation, so it needs a host for the same reason
   // backend-portfolios does. Named, not counted, so a fourth still fails.
   eq(needHost, [TRAILING_CODE_LAYER, NEWEST_TRAILING, 'js/ui/backend-candle-store-chart.js'],
-     'exactly THREE of the twenty-eight need a host to load');
-  eq(CHAIN.length - needHost.length, 25, '…so twenty-five load bare, not two');
+     'exactly THREE of the twenty-nine need a host to load');
+  eq(CHAIN.length - needHost.length, 26, '…so twenty-six load bare, not two');
 
   // WHICH LAYER REFUTES WHICH CLAIM. Two of the four share a refuter; the other
   // two do not, and asserting otherwise is the mistake this section exists for.

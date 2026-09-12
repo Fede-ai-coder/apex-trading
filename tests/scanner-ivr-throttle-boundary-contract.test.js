@@ -170,8 +170,14 @@ const CHAIN = [
   'js/portfolio/portfolio-vega-monitor.js',
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
+  // The layer #447 shipped, which this list did NOT gain at the time: the
+  // length assertion could not catch it, because the list and the count it is
+  // checked against both live in this file. CLAUDE.md keeps the chain-wide
+  // numbers in the NEWEST contract for exactly this reason.
+  'js/services/scanner-earnings-throttle.js',
+  'js/ui/chart-interactions.js',
 ];
-const CHAIN_LENGTH = 27;
+const CHAIN_LENGTH = 29;
 const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';
 const SMALLEST_CHARS = 1761;
 const SECOND_SMALLEST = MODULE_REL;
@@ -179,15 +185,15 @@ const SECOND_SMALLEST_CHARS = 4050;
 const DISPLACED_LAYER = 'js/services/journal-migration.js';
 const DISPLACED_CHARS = 4461;
 const LARGEST_CHARS = 71811;
-const LAYERS_ENDING_BRACE = 24;
+const LAYERS_ENDING_BRACE = 26;
 // CHAIN-WIDE COUNTS LIVE IN THE NEWEST LAYER'S CONTRACT, and move forward with
 // it each cycle. #443 introduced these two after finding the bridge had stated
 // them in prose for four cycles with nothing executing them; they moved here in
 // #445 rather than being copied, because the newest contract is the one that
 // always carries a mutation spec, and a chain-wide number nobody mutates is a
 // number nobody checks.
-const LAYERS_WITH_SEPARATOR = 19;
-const LAYERS_WITH_RAW_PAIR = 16;
+const LAYERS_WITH_SEPARATOR = 21;
+const LAYERS_WITH_RAW_PAIR = 18;
 const LAYERS_WITHOUT_SEPARATOR = 8;
 
 let pass = 0;
@@ -242,11 +248,16 @@ console.log('relocation only · audited #444 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
-const INDEX = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
-  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+  : PRE_CHART_INTERACTIONS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -360,7 +371,7 @@ section('4. Twelve owners — and where this lands in the chain');
     'zero top-level statement lines: nothing outside the declarations');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-seven layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-nine layers ship today');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
@@ -373,7 +384,9 @@ section('4. Twelve owners — and where this lands in the chain');
   eq(bySize[bySize.length - 1].units, LARGEST_CHARS,
     'the chain\'s largest is 71,811, which is why "third-largest" was never close');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
-    'twenty-four of the twenty-seven end `}\\n`, this one among them');
+    'LAYERS_ENDING_BRACE of the chain end `}\n`, this one among them — the counts are '
+    + 'pinned above rather than spelled out here, which is how the suite-count messages '
+    + 'drifted to four different wrong numbers before #448 repaired them');
 
   // The bridge's two separator claims, executed. Helpers are matched by the
   // module path in their own TAG, not by filename: this layer's helper is
@@ -387,14 +400,14 @@ section('4. Twelve owners — and where this lands in the chain');
     return hit.length === 1 ? hit[0] : null;
   });
   eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the twenty-seven resolves to exactly one undo helper by its own TAG');
+    'every one of the twenty-nine resolves to exactly one undo helper by its own TAG');
   const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
   eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
-    'nineteen layers carry a SEPARATOR export, this one among them');
+    'twenty-one layers carry a SEPARATOR export, this one among them');
   eq(CHAIN_LENGTH - withSeparator.length, LAYERS_WITHOUT_SEPARATOR,
     '…and the eight oldest have no separator concept at all');
   eq(withSeparator.filter((M) => M.RAW_CHARS === M.MODULE_CHARS + 1).length, LAYERS_WITH_RAW_PAIR,
-    '…but only sixteen of the nineteen pin a single RAW_CHARS one unit longer than MODULE_CHARS, '
+    '…but only eighteen of the twenty-one pin a single RAW_CHARS one unit longer than MODULE_CHARS, '
     + 'so the pair is not the tell the separator is');
 }
 
@@ -625,8 +638,9 @@ section('8. Exact production scope, and the temporary audit is gone');
   // is the point: this assertion is re-terminated each time the chain grows,
   // rather than being loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js'].sort(),
-    'production footprint is index.html, this module, and the layer cut after it');
+    ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js',
+      'js/ui/chart-interactions.js'].sort(),
+    'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -648,6 +662,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/services/scanner-earnings-throttle.js' ||
+    rel === 'js/ui/chart-interactions.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

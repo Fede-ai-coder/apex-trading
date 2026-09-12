@@ -110,7 +110,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // each region stops at the score that would rank it, it runs 1,156 ms — both
 // best-of-three and alone. Across its 76 mutants that is 155 s of CI down to
 // 88 s, with no assertion removed and no region left unscreened.
-const DECLARED_MUTANTS = 242;
+const DECLARED_MUTANTS = 237;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
@@ -229,6 +229,21 @@ for (const { file, spec } of loaded) {
     'control — a require is not a pin');
   eq(SPECS.pinNames('const B = (x) => x;\n'), [], 'control — an arrow helper is not a pin');
   eq(SPECS.pinNames('const C = 5;\n'), ['C'], 'control — a bare number is');
+
+  // AN APOSTROPHE IN A COMMENT MUST NOT UN-PIN A CONSTANT. The scanner tracks
+  // string state to find the `;` that closes a declaration, and a comment
+  // reading "§9's" used to open a string that ran to the next quote in the
+  // data — after which the declaration was not reported as a pin at all, and
+  // so was never asked for coverage. That is silent by construction: an absent
+  // pin looks exactly like a covered one. It had already happened to CHAIN in
+  // extraction-boundary-rule-contract, which carries no spec.
+  eq(SPECS.pinNames("const D = [\n  // oldest first — §9's slice depends on it.\n  'a', 'b',\n];\n"),
+    ['D'], 'a comment with an apostrophe inside the literal does NOT un-pin it');
+  eq(SPECS.pinNames("const E = [\n  'a',\n];\n"), ['E'],
+    'control — the same literal without the comment is a pin too, so the case above measures');
+  ok(SPECS.pinNames(fs.readFileSync(
+    path.join(ROOT, 'tests/extraction-boundary-rule-contract.test.js'), 'utf8')).indexOf('CHAIN') >= 0,
+    '…and the real declaration that hit it is a pin again');
   eq(SPECS.pinNames("const D = [\n  'a',\n  'b',\n];\n"), ['D'],
     'control — a multi-line array literal is one pin, not none');
   eq(SPECS.pinNames('  const E = 5;\n'), [],

@@ -136,8 +136,8 @@ const VM_GLOBALS = 11;
 // A runtime dependency is the COMMON case in this chain, not an exception made
 // for this layer. Counted, because the audit's first draft said "two" from the
 // layers nearest to hand and the real answer was six — this contract makes it
-// seven, by being the seventh such layer itself.
-const CONTRACTS_WITH_A_DEPENDENCY = 7;
+// eight, the chart-interactions layer of #449 having joined them.
+const CONTRACTS_WITH_A_DEPENDENCY = 8;
 
 // ── The family it was cut out of ─────────────────────────────────────────────
 const CANDLES = [75943, 80720];
@@ -175,8 +175,10 @@ const CHAIN = [
   'js/services/scanner-ivr-throttle.js',
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
+  // Newest last, for the same reason recorded above.
+  'js/ui/chart-interactions.js',
 ];
-const CHAIN_LENGTH = 28;
+const CHAIN_LENGTH = 29;
 const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';
 const SMALLEST_CHARS = 1761;
 const SECOND_SMALLEST = 'js/services/scanner-ivr-throttle.js';
@@ -186,15 +188,15 @@ const SECOND_SMALLEST_CHARS = 4050;
 // that stops one being invented.
 const MODULE_SIZE_RANK = 7;
 const LARGEST_CHARS = 71811;
-const LAYERS_ENDING_BRACE = 25;
+const LAYERS_ENDING_BRACE = 26;
 // CHAIN-WIDE COUNTS LIVE IN THE NEWEST LAYER'S CONTRACT, and move forward with
 // it each cycle. #443 introduced these after finding the bridge had stated them
 // in prose for four cycles with nothing executing them; they moved out of the
 // bridge in #445 rather than being copied, because the newest contract is the
 // one that always carries a mutation spec, and a chain-wide number nobody
 // mutates is a number nobody checks.
-const LAYERS_WITH_SEPARATOR = 20;
-const LAYERS_WITH_RAW_PAIR = 17;
+const LAYERS_WITH_SEPARATOR = 21;
+const LAYERS_WITH_RAW_PAIR = 18;
 const LAYERS_WITHOUT_SEPARATOR = 8;
 
 let pass = 0;
@@ -239,9 +241,16 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('SCANNER EARNINGS THROTTLE — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited #446 · base=' + BASE_SHA);
 
-// This is the NEWEST layer, so the live document is the one it shipped: there
-// is nothing on top to peel. When a later layer lands it goes here, first.
-const INDEX = APP_LOADER.loadIndexHtml();
+// A later layer landed, so it is peeled here, first — which is exactly what the
+// previous version of this comment said would happen. INDEX below is therefore
+// this layer's own extracted document, not the live one, and §8 keeps the two
+// apart: the production footprint is measured against the LIVE tree.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
+const INDEX = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -355,7 +364,7 @@ section('4. Eleven owners — and where this lands in the chain');
     'zero top-level statement lines: nothing outside the declarations');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-eight layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'twenty-nine layers ship today');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
@@ -372,7 +381,9 @@ section('4. Eleven owners — and where this lands in the chain');
   eq(bySize[bySize.length - 1].units, LARGEST_CHARS,
     'the chain\'s largest is 71,811, which is why "third-largest" was never close');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
-    'twenty-five of the twenty-eight end `}\\n`, this one among them');
+    'LAYERS_ENDING_BRACE of the chain end `}\n`, this one among them — the counts are '
+    + 'pinned above rather than spelled out here, which is how the suite-count messages '
+    + 'drifted to four different wrong numbers before #448 repaired them');
 
   // The bridge's two separator claims, executed. Helpers are matched by the
   // module path in their own TAG, not by filename: a basename matcher does not
@@ -386,14 +397,14 @@ section('4. Eleven owners — and where this lands in the chain');
     return hit.length === 1 ? hit[0] : null;
   });
   eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the twenty-eight resolves to exactly one undo helper by its own TAG');
+    'every one of the twenty-nine resolves to exactly one undo helper by its own TAG');
   const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
   eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
-    'twenty layers carry a SEPARATOR export, this one among them');
+    'twenty-one layers carry a SEPARATOR export, this one among them');
   eq(CHAIN_LENGTH - withSeparator.length, LAYERS_WITHOUT_SEPARATOR,
     '…and the eight oldest have no separator concept at all');
   eq(withSeparator.filter((M) => M.RAW_CHARS === M.MODULE_CHARS + 1).length, LAYERS_WITH_RAW_PAIR,
-    '…but only seventeen of the twenty pin a single RAW_CHARS one unit longer than MODULE_CHARS, '
+    '…but only eighteen of the twenty-one pin a single RAW_CHARS one unit longer than MODULE_CHARS, '
     + 'so the pair is not the tell the separator is');
 }
 
@@ -497,7 +508,7 @@ section('5. Coupling, in all seven directions');
         return m && m[1].trim() !== '[]';
       });
     eq(withDeps.length, CONTRACTS_WITH_A_DEPENDENCY,
-      'SEVEN shipped contracts now pin a non-empty MONOLITH_DEPENDENCIES, this one included');
+      'EIGHT shipped contracts now pin a non-empty MONOLITH_DEPENDENCIES, this one included');
     ok(withDeps.indexOf(path.basename(CONTRACT_REL)) >= 0, '…and this contract is one of them');
   }
 
@@ -664,9 +675,12 @@ section('8. Exact production scope, and the temporary audit is gone');
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
+  // A LATER LAYER HAS LANDED SINCE THIS ONE, so the footprint since THIS layer's
+  // base carries the module #449 cut as well. Re-terminated each time the chain
+  // grows, rather than loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js'].sort(),
+    'production footprint is index.html, this module, and the layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -687,6 +701,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/ui/chart-interactions.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

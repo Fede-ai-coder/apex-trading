@@ -208,15 +208,20 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(LIVE_INDEX)
-  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(LIVE_INDEX)
+  ? CHART_INTERACTIONS_U.undoChartInteractions(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SCANNER_EARNINGS = SCANNER_EARNINGS_U.isApplied(PRE_CHART_INTERACTIONS)
+  ? SCANNER_EARNINGS_U.undoScannerEarningsThrottle(
+      PRE_CHART_INTERACTIONS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-earnings-throttle.js'), 'utf8'))
+  : PRE_CHART_INTERACTIONS;
 const PRE_SCANNER_IVR = SCANNER_IVR_U.isApplied(PRE_SCANNER_EARNINGS)
   ? SCANNER_IVR_U.undoScannerIvrThrottle(
       PRE_SCANNER_EARNINGS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-ivr-throttle.js'), 'utf8'))
@@ -334,7 +339,8 @@ section('4. ONE owner — and the two sets that claim quantifies over');
 
   // TWO different sets, because the answer differs between them and two drafts
   // of the audit's header quantified over the wrong one. Both are measured.
-  eq(EXTRACTION_CHAIN.length, CHAIN_LENGTH, 'twenty-one layers have been cut from the monolith');
+  eq(EXTRACTION_CHAIN.length, CHAIN_LENGTH, 'twenty-one layers had been cut when this layer shipped — the list is FROZEN at '
+    + 'this layer, which is what the next assertion pins, so later cuts do not join it');
   eq(EXTRACTION_CHAIN[CHAIN_LENGTH - 1], MODULE_REL, '…this one being the newest');
   eq(EXTRACTION_CHAIN.filter((rel) => LOCALS.indexOf(rel) < 0), [],
     'control — every layer in the chain is a shipped local script');
