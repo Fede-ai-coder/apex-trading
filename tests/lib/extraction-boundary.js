@@ -112,16 +112,30 @@ function assertSeam(source, at, bodyEnd) {
 //
 // A banner marks a feature boundary only when it is at TOP LEVEL. Pass the
 // monolith and the function-body ranges the caller already computed.
+//
+// HOW MANY DASHES. The rule matched `// ── ` — exactly two — and the monolith
+// also writes section banners as `// ─── Title ───`, three. One dash of
+// difference made 49 titled banners invisible, and the blindness was not spread
+// evenly: TWENTY-NINE of them sit in one stretch, which the screen therefore saw
+// as a single 243,851-unit region — 17% of the monolith, screened as one
+// indivisible block it already knew it could not take whole (#424 measured that
+// stretch: four external edges, and a ReferenceError in an empty VM because it
+// assigns `S.swing` at load). It could not be taken, and the pieces inside it
+// could not be seen. #452 measured the gap and closed it.
+//
+// The pattern now reads "two or more dashes, then whitespace, then a title", so
+// it admits both styles and still rejects the thirteen BARE divider rules —
+// `// ─────────────` with nothing after them — which start no section.
 function topLevelBanners(src, functionBodies) {
   if (typeof src !== 'string') throw new Error('EXTRACTION_SEAM_BAD_SOURCE');
   const bodies = functionBodies || [];
   const inFn = (i) => bodies.some((r) => i >= r.start && i <= r.end);
   const marks = [];
-  for (const re of [/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ── /gm]) {
+  for (const re of [/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ─{2,}[ \t]+\S/gm]) {
     let m;
     while ((m = re.exec(src))) if (!inFn(m.index)) marks.push(m.index);
   }
-  return marks.sort((a, b) => a - b);
+  return Array.from(new Set(marks)).sort((a, b) => a - b);
 }
 
 // WHAT COUNTS AS A BINDING A REGION MIGHT WRITE. The outbound coupling check
