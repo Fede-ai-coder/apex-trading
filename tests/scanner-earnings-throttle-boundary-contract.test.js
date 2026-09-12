@@ -82,8 +82,11 @@ const AUDIT_REL = 'tests/temporary-scanner-earnings-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/scanner-earnings-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-earnings-contract.spec.js';
 
-// The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 72;
 const MODULE_POSITION = 71;
 

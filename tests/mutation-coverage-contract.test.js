@@ -93,6 +93,13 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // pins are load-bearing. That is the cost, and it is the cheapest one available:
 // the alternative is an unbounded ceiling.
 //
+// RETIREMENT HAS RUN IN CHAIN ORDER EVER SINCE — #448 took layer #25's spec, and
+// #450 took #26's AND #27's. Two in one cycle, because one does not always pay:
+// the retirement has to cover the temporary audit spec that arrives with it, and
+// #450's audit carries ninety-six pins. The rate over two cycles is unchanged, and
+// the audit ASSERTS the arithmetic — base, less the retirements, plus its own
+// spec — rather than asserting the total it happens to reach.
+//
 // THE COUNT IS A PROXY AND A POOR ONE, which is worth recording next to it. Cost
 // is dominated by TARGET RUNTIME, not by mutant count — measured best-of-three,
 // alone, with nothing else running:
@@ -103,14 +110,22 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // strategy-templates carries MORE mutants than dxlink-greeks and costs a third
 // less. A first pass at these timings, taken while other work was in flight,
 // read roughly double across the board; concurrency makes this measurement lie,
-// so take it alone or not at all.
+// so take it alone or not at all. All four of those specs have since been
+// retired — the table is kept as the measurement of the proxy, not as an
+// inventory of what ships.
 //
 // The other lever stays the target. #446's audit sweeps all 96 regions, and a
 // sweep that calls the unabridged profile runs 2,035 ms; indexed, and capped so
 // each region stops at the score that would rank it, it runs 1,156 ms — both
 // best-of-three and alone. Across its 76 mutants that is 155 s of CI down to
 // 88 s, with no assertion removed and no region left unscreened.
-const DECLARED_MUTANTS = 237;
+//
+// #450's audit is the same lever pulled again, and it could not be capped: it
+// needs the EXACT edge totals of all 92 regions, not just enough of each score
+// to rank it. Indexing the sibling scan and binary-searching the occurrence
+// lists took it from 2,004 ms to 1,301 ms, so its 102 mutants cost 133 s instead
+// of 204 s — again with nothing unscreened.
+const DECLARED_MUTANTS = 234;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
@@ -246,6 +261,21 @@ for (const { file, spec } of loaded) {
     '…and the real declaration that hit it is a pin again');
   eq(SPECS.pinNames("const D = [\n  'a',\n  'b',\n];\n"), ['D'],
     'control — a multi-line array literal is one pin, not none');
+
+  // A VALUE THAT STARTS ON THE NEXT LINE MUST NOT UN-PIN A CONSTANT EITHER.
+  // The same silent failure from the other direction: the scanner required a
+  // SPACE after `=`, so a declaration wrapped after the `=` was invisible, and
+  // an invisible pin is never asked for coverage. Eighteen declarations across
+  // eight files were in that state when #450 found it — two of them in the
+  // audit that found it, which is the only reason it surfaced.
+  eq(SPECS.pinNames("const F =\n  ['a', 'b'];\n"), ['F'],
+    'a value that begins on the following line is still a pin');
+  eq(SPECS.pinNames("const G = ['a', 'b'];\n"), ['G'],
+    'control — the same value on one line is a pin, so the case above measures');
+  ok(SPECS.pinNames(fs.readFileSync(
+    path.join(ROOT, 'tests/journal-migration-boundary-contract.test.js'), 'utf8'))
+    .indexOf('MIGRATION_MARKER') >= 0,
+  '…and a real declaration that was invisible this way is a pin now');
   eq(SPECS.pinNames('  const E = 5;\n'), [],
     'control — an indented const is not top level, so it is not a pin');
   // And the coverage arithmetic itself, driven on a synthetic spec.

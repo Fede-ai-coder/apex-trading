@@ -71,9 +71,11 @@ const ANCHOR_TAG = '<script src="./js/portfolio/portfolio-expiry-manual.js"></sc
 const INLINE_OPEN = '<script>';
 
 const BASE_SHA = 'ea34e52fe9655caa45c41d272f3a61ab9fe00eeb';
-// Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
-// count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 63;
 const AUDIT_REL = 'tests/temporary-portfolio-traffic-light-boundary-audit.test.js';
 

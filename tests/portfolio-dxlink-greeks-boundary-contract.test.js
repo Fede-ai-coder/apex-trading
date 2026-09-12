@@ -82,10 +82,11 @@ const UNDO_REL = 'tests/lib/portfolio-dxlink-greeks-undo.js';
 const AUDIT_REL = 'tests/temporary-portfolio-dxlink-greeks-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-contract.spec.js';
-// The audit is deleted and its contract added, so the suite size is unchanged;
-// only the mutation spec is renamed. That is the first cycle where the count
-// does NOT move, which is why it is pinned rather than ratcheted.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 68;
 const MODULE_POSITION = 67;
 

@@ -76,9 +76,11 @@ const BASE_UTF8 = 1799021;
 const BASE_LF = 30869;
 const BASE_INDEX_SHA256 = '4c37a2ac130c753a1100d6633df688bc6f97ae429535f0b3d86a64fa7bf96be9';
 const BASE_LOCAL_SCRIPTS = 59;
-// Ratchet. The temporary audit is replaced ONE FOR ONE by this contract, so the
-// count does not move: the undo helper is not a .test.js file.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 
 // ── The moved fragment, in base coordinates ──────────────────────────────────
 const RAW_AT = 196604;

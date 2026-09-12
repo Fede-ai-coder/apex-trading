@@ -81,8 +81,11 @@ const AUDIT_REL = 'tests/temporary-scanner-ivr-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-contract.spec.js';
 
-// The suite does NOT ratchet: the audit leaves as this contract arrives.
-const TEST_FILE_COUNT = 157;
+// Ratchet. The suite file count as it stands TODAY, not as it stood when this
+// contract shipped: a Phase 1 audit adds its temporary file and advances this
+// pin in every contract that carries it, and Phase 2 deletes that audit as the
+// next contract arrives, leaving the count where it is.
+const TEST_FILE_COUNT = 158;
 const LOCAL_SCRIPT_COUNT = 71;
 const MODULE_POSITION = 70;
 
@@ -655,7 +658,15 @@ section('8. Exact production scope, and the temporary audit is gone');
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '',
     '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED IN #450, deliberately, alongside layer #26's. Retirement runs in
+  // chain order — #446 took layer #24's spec, #448 layer #25's — and this cycle
+  // took the next TWO because one does not pay for the audit spec that arrives
+  // with it. Every assertion in this contract still runs on every push; what
+  // stopped is the mutation pass re-proving those pins are load-bearing.
+  // Restoring it is a matter of writing the spec again and raising
+  // DECLARED_MUTANTS by its count.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED in #450 to hold the mutant budget flat');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
