@@ -75,7 +75,7 @@ const BASE_SHA = 'ea34e52fe9655caa45c41d272f3a61ab9fe00eeb';
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 63;
 const AUDIT_REL = 'tests/temporary-portfolio-traffic-light-boundary-audit.test.js';
 

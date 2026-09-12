@@ -86,7 +86,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-earnings-contract.spec.j
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 72;
 const MODULE_POSITION = 71;
 
@@ -96,7 +96,7 @@ const CODE_CHARS = 1450076;
 const RAW_AT_IN_CODE = 80720;
 const RAW_END_IN_CODE = 85602;
 const BODY_END_IN_CODE = 85601;
-const TOP_LEVEL_BANNERS = 181;
+const TOP_LEVEL_BANNERS = 230;
 const RESIDUAL_MONOLITH = 1445194;
 const TAG_GAP = 80728;
 const NET_REDUCTION = 4815;
@@ -354,7 +354,7 @@ section('3. The boundary and the seam');
     'EXTRACTION_SEAM_BODY_ENDS_ON_NON_CODE', 'control — extending onto the banner is refused');
 
   eq(topLevelBanners(BASE_CODE, FN_BODIES).length, TOP_LEVEL_BANNERS,
-    'the base monolith carried 181 top-level banner marks');
+    'the base monolith carried the pinned number of top-level banner marks');
   const last = OWNERS[OWNERS.length - 1];
   eq(last.start + last.chars + 1, MODULE.length,
     'the last declaration runs to the body\'s final newline: no trailing IIFE, no trailing statement');
@@ -703,7 +703,16 @@ section('8. Exact production scope, and the temporary audit is gone');
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '',
     '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED IN #452, deliberately. The mutant budget's floor rises by one
+  // contract spec every cycle; raising the ceiling buys exactly one cycle, and
+  // retiring one older spec per new layer keeps the count flat. #446 retired
+  // layer #24's spec, #448 layer #25's, #450 both #26's and #27's, and this
+  // layer — #28 — is the next in that order. Every assertion in this contract
+  // still runs on every push; what stopped is the mutation pass re-proving
+  // those pins are load-bearing. Restoring it is a matter of writing the spec
+  // again and raising DECLARED_MUTANTS by its count.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED in #452 to hold the mutant budget flat');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above, which a new Phase 1 audit ratchets by one');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),

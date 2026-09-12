@@ -86,7 +86,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-contract
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 68;
 const MODULE_POSITION = 67;
 
@@ -116,7 +116,7 @@ const WRITE_BASES = ['liveData', 'p', 'symMap', 'ws'];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 
 // The screen, and the floor that hid this region for five cycles.
-const REGIONS_WITH_OWNERS = 101;
+const REGIONS_WITH_OWNERS = 133;
 const ZERO_CROSSING_REGIONS = [68843, 69409, 351714, 730440, 1249375];
 const ZERO_CROSSING_DEPS = [0, 1, 4, 8, 11];
 const LEGACY_SIZE_FLOOR = 8000;
@@ -435,7 +435,7 @@ section('6. What the screen saw, and the floor that hid it');
     if (c.owners === 0) continue;
     scored.push({ s, e, units: e - s, total: c.total });
   }
-  eq(scored.length, REGIONS_WITH_OWNERS, '101 banner-to-banner regions own declarations');
+  eq(scored.length, REGIONS_WITH_OWNERS, 'the pinned number of banner-to-banner regions own declarations');
   const zero = scored.filter((r) => r.total === 0).sort((a, b) => a.s - b.s);
   eq(zero.map((r) => r.s), ZERO_CROSSING_REGIONS, 'exactly these five score ZERO crossings');
   // THE FINDING. Not "this region ranked low" — it was not on the screen.

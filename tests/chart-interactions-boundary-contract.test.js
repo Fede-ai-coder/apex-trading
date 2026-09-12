@@ -80,7 +80,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/chart-interactions-contract.spec
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 73;
 const MODULE_POSITION = 72;
 
@@ -90,7 +90,7 @@ const CODE_CHARS = 1445194;
 const RAW_AT_IN_CODE = 164995;
 const RAW_END_IN_CODE = 184045;
 const BODY_END_IN_CODE = 184044;
-const TOP_LEVEL_BANNERS = 180;
+const TOP_LEVEL_BANNERS = 229;
 const RESIDUAL_MONOLITH = 1426144;
 const TAG_GAP = 165003;
 const NET_REDUCTION = 18996;
@@ -369,7 +369,7 @@ section('3. The boundary and the seam');
     'EXTRACTION_SEAM_NOT_LINE_START', 'control — a start one unit in is refused');
 
   eq(topLevelBanners(BASE_CODE, FN_BODIES).length, TOP_LEVEL_BANNERS,
-    'the base monolith carried 180 top-level banner marks');
+    'the base monolith carried the pinned number of top-level banner marks');
   const last = OWNERS[OWNERS.length - 1];
   eq(last.start + last.chars + 1, MODULE.length,
     'the last declaration runs to the body\'s final newline: no trailing IIFE, no trailing statement');

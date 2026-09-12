@@ -91,7 +91,7 @@ const BASE_LOCAL_SCRIPTS = 57;
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 
 // ── The two moved fragments, in base coordinates ─────────────────────────────
 const HANDLERS = {
