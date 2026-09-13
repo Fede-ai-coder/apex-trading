@@ -267,23 +267,61 @@ const OTHER_INLINE = TAGS.filter((t) => !t.src && t.inline !== CODE).map((t) => 
 const MODULE_OWNERS = new Map();
 for (const s of SIBLINGS) for (const n of s.owners) if (!MODULE_OWNERS.has(n)) MODULE_OWNERS.set(n, s.rel);
 
+// AN OCCURRENCE INDEX, BUILT ONCE. The obvious way to write `profile` rescans
+// the 1.4-million-unit monolith for every one of 950 declaration names, for
+// every region — and §5 asks about 122 regions. That cost 235 SECONDS a run,
+// which the mutation pass pays 74 times over. Every position of every
+// identifier is therefore collected once, and a range query becomes two binary
+// searches. The tokenisation is the same one `refSites` uses — an identifier
+// not preceded by `.` or a word character — so the numbers are unchanged, and
+// the 108 assertions below are what says so.
+function occurrenceIndex(text) {
+  const idx = new Map();
+  const re = /(^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const at = m.index + m[1].length;
+    const bucket = idx.get(m[2]);
+    if (bucket) bucket.push(at); else idx.set(m[2], [at]);
+  }
+  return idx;
+}
+const OCC_CODE = occurrenceIndex(MASKED);
+const OCC_STRINGS = occurrenceIndex(STRINGS);
+const OCC_MARKUP = occurrenceIndex(STATIC_MARKUP);
+const SIB_REFS = new Map();
+{
+  const per = SIBLINGS.map((s) => ({ bound: s.bound, idx: occurrenceIndex(s.masked) }));
+  for (const d of DECLS) {
+    let n = 0;
+    for (const m of per) if (!m.bound.has(d.name)) n += (m.idx.get(d.name) || []).length;
+    SIB_REFS.set(d.name, n);
+  }
+}
+const at0 = (idx, n) => idx.get(n) || [];
+function lowerBound(sorted, x) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] < x) a = m + 1; else b = m; }
+  return a;
+}
+const countIn = (sites, lo, hi) => lowerBound(sites, hi) - lowerBound(sites, lo);
+
 function profile(range) {
   const names = DECLS.filter((d) => d.start >= range[0] && d.end < range[1]).map((d) => d.name);
   const nameSet = new Set(names);
   const outside = (i) => i < range[0] || i >= range[1];
-  const inside = (i) => i >= range[0] && i < range[1];
   const bodyMasked = MASKED.slice(range[0], range[1]);
   let inbound = 0, inWrites = 0, inPropWrites = 0, gen = 0, sib = 0, mkp = 0;
   const sites = [];
   for (const n of names) {
-    for (const at of refSites(MASKED, n).filter(outside)) {
+    for (const at of at0(OCC_CODE, n).filter(outside)) {
       inbound++; sites.push(at);
       if (/^\s*(?:=[^=]|\+\+|--|\+=|-=|\*=|\/=)/.test(MASKED.slice(at + n.length, at + n.length + 30))) inWrites++;
       if (isPropertyWriteAt(MASKED, at, n)) inPropWrites++;
     }
-    gen += refSites(STRINGS, n).filter(outside).length;
-    for (const s of SIBLINGS) if (!s.bound.has(n)) sib += refSites(s.masked, n).length;
-    mkp += refSites(STATIC_MARKUP, n).length;
+    gen += at0(OCC_STRINGS, n).filter(outside).length;
+    sib += SIB_REFS.get(n);
+    mkp += at0(OCC_MARKUP, n).length;
   }
   const outWrites = Array.from(new Set(propertyWriteBases(bodyMasked)
     .filter((b) => !nameSet.has(b) && BY_NAME.has(b)))).sort();
@@ -291,17 +329,17 @@ function profile(range) {
   const deps = new Set();
   for (const d of DECLS) {
     if (nameSet.has(d.name) || local.has(d.name)) continue;
-    if (refSites(bodyMasked, d.name).length) deps.add(d.name);
+    if (countIn(at0(OCC_CODE, d.name), range[0], range[1])) deps.add(d.name);
   }
   let outGen = 0;
   for (const d of DECLS) {
     if (nameSet.has(d.name)) continue;
-    outGen += refSites(STRINGS, d.name).filter(inside).length;
+    outGen += countIn(at0(OCC_STRINGS, d.name), range[0], range[1]);
   }
   let outModule = 0;
   for (const [n] of MODULE_OWNERS) {
     if (nameSet.has(n) || local.has(n)) continue;
-    outModule += refSites(MASKED, n).filter(inside).length;
+    outModule += countIn(at0(OCC_CODE, n), range[0], range[1]);
   }
   const seven = inbound + inWrites + inPropWrites + outWrites.length + deps.size + sib + mkp + gen;
   return {
@@ -324,7 +362,20 @@ function mergedRegions(marks) {
   return out.filter((x) => DECLS.some((d) => d.start >= x.start && d.end < x.end));
 }
 
-const REC = profile([RAW_AT, RAW_END]);
+// MEMOISED. §5 asks for the best score at four size floors, and §7 walks the
+// ends; computed naively that profiles all 122 regions four times over, and the
+// audit took 235 SECONDS per run — which the mutation pass then pays 74 times.
+// The ranges repeat exactly, so the answer is cached rather than recomputed.
+// Same inputs, same numbers, and nothing about what is asserted changes.
+const PROFILE_CACHE = new Map();
+const profileOf = (range) => {
+  const key = range[0] + ':' + range[1];
+  let hit = PROFILE_CACHE.get(key);
+  if (!hit) { hit = profile(range); PROFILE_CACHE.set(key, hit); }
+  return hit;
+};
+
+const REC = profileOf([RAW_AT, RAW_END]);
 const BODY = CODE.slice(RAW_AT, BODY_END);
 const MASKED_BODY = maskLiterals(BODY);
 const BODY_FNS = functionBodyRanges(BODY);
@@ -399,9 +450,9 @@ section('3. Coupling, in all nine directions');
   // The controls those zeros need, from inputs where the answer differs.
   ok(refSites(STRINGS, 'rsApplyFilters').length > 0,
     'control — the literal view DOES find rsApplyFilters, so the generated-markup zero measures');
-  ok(profile([678945, 686316]).outGen > 0,
+  ok(profileOf([678945, 686316]).outGen > 0,
     'control — the ticker-search region DOES generate markup naming names that stay behind');
-  ok(profile([338277, 342591]).outModule > 0,
+  ok(profileOf([338277, 342591]).outModule > 0,
     'control — the SPY-rewarm region DOES name things that already left, so the ninth zero measures');
   {
     const anySibling = DECLS.filter((d) => SIBLINGS.some((s) => !s.bound.has(d.name) &&
@@ -480,16 +531,16 @@ section('5. The stretch #452 opened is still paying');
   // it behind a 4,000-unit floor. What is true — and what decides the cycle —
   // is that 8 is the best score available in the WHOLE monolith once regions
   // too small to be worth a layer are excluded, and this region is it.
-  const best = Math.min.apply(null, inBlob.map((r) => profile([r.start, r.end]).nine));
+  const best = Math.min.apply(null, inBlob.map((r) => profileOf([r.start, r.end]).nine));
   eq(best, BLOB_BEST_NINE, 'the best-scoring region inside that stretch scores 1, not 8…');
   {
-    const smallest = inBlob.filter((r) => profile([r.start, r.end]).nine === BLOB_BEST_NINE);
+    const smallest = inBlob.filter((r) => profileOf([r.start, r.end]).nine === BLOB_BEST_NINE);
     eq(smallest.map((r) => r.end - r.start), [BLOB_BEST_UNITS],
       '…over 948 units, which is a seventh of this one and too little to carry a layer');
   }
   const allRegions = mergedRegions(MARKS);
   const bestAbove = (floor) => Math.min.apply(null, allRegions
-    .filter((r) => r.end - r.start >= floor).map((r) => profile([r.start, r.end]).nine));
+    .filter((r) => r.end - r.start >= floor).map((r) => profileOf([r.start, r.end]).nine));
   eq(BEST_BY_FLOOR.map(([floor]) => [floor, bestAbove(floor)]), BEST_BY_FLOOR,
     'at every size floor from 3,000 units up, the best score in the whole monolith is 8');
   eq(REC.nine, BEST_BY_FLOOR[0][1], '…and this region is the region that scores it');
@@ -543,7 +594,7 @@ section('7. Four ends, and the value question stated as a ratio');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const measured = ENDS.map(({ end }) => {
-    const p = profile([RAW_AT, end]);
+    const p = profileOf([RAW_AT, end]);
     return { end, units: end - RAW_AT, owners: p.names.length, nine: p.nine };
   });
   eq(measured, ENDS, 'three legal ends, their sizes, their owners and their nine-direction scores');
@@ -565,7 +616,7 @@ section('7. Four ends, and the value question stated as a ratio');
   ok(ENDS[1].nine - ENDS[0].nine === 1 && ENDS[1].units - ENDS[0].units === 948,
     'the second end costs one more point for 948 more units — close enough to need a reason');
   {
-    const second = profile([RAW_AT, ENDS[1].end]);
+    const second = profileOf([RAW_AT, ENDS[1].end]);
     eq(second.names.filter((n) => OWNERS_EXPECTED.indexOf(n) < 0), [SECOND_END_OWNER],
       '…the owner it adds being _swingScore');
     ok(MARKS.indexOf(ENDS[0].end) >= 0,
