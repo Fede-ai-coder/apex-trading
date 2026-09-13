@@ -524,6 +524,12 @@ section('4. Three ends, the screen that could not see them, and the chain');
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
   eq(CHAIN.length, CHAIN_LENGTH, 'thirty-one layers ship today');
+  // NO DUPLICATES. Without this, replacing one entry with a copy of another
+  // passes every other clause — the length is unchanged, both paths resolve to
+  // an undo helper, and the size table simply counts one file twice. A mutant
+  // that did exactly that survived in CI.
+  eq(Array.from(new Set(CHAIN)).length, CHAIN_LENGTH,
+    '…and each of them exactly once: a chain with a duplicated entry is a chain missing a layer');
   eq(CHAIN.length - (CHAIN.indexOf(REJECTED_LAYER) + 1), LAYERS_SINCE_REJECTION,
     'thirteen layers have shipped since #424 rejected the block this one came out of');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
@@ -670,9 +676,21 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
   eq(dead.reduce((n, d) => n + d.chars, 0), DEAD_UNITS, '…5,318 units of them');
   eq(dead.filter((d) => OWNERS_EXPECTED.indexOf(d.name) >= 0), [],
     'and none of this layer\'s owners is among them');
-  ok(!BY_NAME.has(DEPARTED_DEAD),
-    '…while _buildSnapshot, the 6,608 dead units the previous layer moved, is no longer in the '
-    + 'monolith at all: it is a named file anyone can delete in one line, which is its own PR');
+  // THIS PIN USED TO CHECK NOTHING. It asserted only `!BY_NAME.has(name)`, which
+  // is true of EVERY name that has ever left the monolith — a mutant naming a
+  // different departed function survived it in CI. The claim is about one
+  // specific declaration, so it is now measured as such: it left the monolith,
+  // the previous layer owns it, and NOTHING in production calls it.
+  ok(!BY_NAME.has(DEPARTED_DEAD), '…while _buildSnapshot is no longer in the monolith…');
+  eq(MODULE_OWNERS.get(DEPARTED_DEAD), 'js/services/journal-snapshot-helpers.js',
+    '…it belongs to the layer that shipped before this one…');
+  eq(refSites(MASKED, DEPARTED_DEAD).length +
+     refSites(STRINGS, DEPARTED_DEAD).length +
+     refSites(STATIC_MARKUP, DEPARTED_DEAD).length +
+     SIBLINGS.filter((x) => x.rel !== 'js/services/journal-snapshot-helpers.js')
+       .reduce((n, x) => n + refSites(x.masked, DEPARTED_DEAD).length, 0), 0,
+  '…and nothing anywhere in production names it: 6,608 units this chain relocated but cannot '
+  + 'delete, now a named file anyone can remove in one line, which is its own PR');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
