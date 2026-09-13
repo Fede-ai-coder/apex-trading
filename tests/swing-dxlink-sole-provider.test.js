@@ -477,10 +477,20 @@ const key = (s, tf) => s + '|' + tf;
   {
     // The Swing block, comments stripped: prose may DOCUMENT the removed endpoint, code may not
     // call it. Bounded by the two markers already used by the existing SWING suites.
-    const start = HTML.indexOf('// ─── Weekly candle derivation');
+    //
+    // THE BLOCK NOW SPANS TWO FILES. #453 moved its first half — the weekly
+    // candle derivation, opening on `// ─── Weekly candle derivation` — into
+    // js/services/swing-weekly-candles.js. The guard has to cover the same bytes
+    // it always did, so it scans the module and the residual block together;
+    // scanning index.html alone would silently stop watching 9,360 units.
+    const MODULE_BLOCK = fs.readFileSync(
+      path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8');
+    ok(MODULE_BLOCK.indexOf('// ─── Weekly candle derivation') === 0,
+      '8: the extracted half of the SWING block was located in its module');
+    const start = HTML.indexOf('// ─── Trend context from a candle series');
     const end = HTML.indexOf('async function _swingRenderSpyContext');
-    ok(start > 0 && end > start, '8: the SWING block was located in index.html');
-    const block = HTML.slice(start, end);
+    ok(start > 0 && end > start, '8: the residual half of the SWING block was located in index.html');
+    const block = MODULE_BLOCK + HTML.slice(start, end);
     const code = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     const banned = [
       [/\/market\/candles\//, 'the Railway/Yahoo candles endpoint'],

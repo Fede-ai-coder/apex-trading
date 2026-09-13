@@ -243,16 +243,21 @@ console.log('relocation only · audited #440 · base=' + BASE_SHA.slice(0, 7));
 // The vega monitor ratios were cut AFTER this layer, so the live document is no
 // longer the one this contract shipped. Peel them first; the helper re-verifies
 // its own output by length and SHA-256, so the hop is proved, not assumed.
+const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(LIVE_INDEX)
-  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
+const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(LIVE_INDEX)
+  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(PRE_SWING_WEEKLY_CANDLES)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      PRE_SWING_WEEKLY_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
+  : PRE_SWING_WEEKLY_CANDLES;
 const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
   ? CHART_INTERACTIONS_U.undoChartInteractions(
       PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
@@ -305,11 +310,11 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // state is pinned against the layer that now owns it. Without this pair the
 // live document would be checked by nothing here — the gap the assertion-call
 // census caught, because this file gained a peel and no assertions.
-eq(LIVE_INDEX.length, JOURNAL_SNAPSHOT_HELPERS_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, SWING_WEEKLY_CANDLES_U.EXTRACTED_CHARS,
   'the live document is the NEWEST layer\'s extracted length — the message names the\n   // role, not a layer, because naming the layer went stale the next cycle');
-eq(sha256(LIVE_INDEX), JOURNAL_SNAPSHOT_HELPERS_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), SWING_WEEKLY_CANDLES_U.EXTRACTED_SHA256, '…and its digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 5, '…carrying one more local script for every layer cut since');
+  LOCAL_SCRIPT_COUNT + 6, '…carrying one more local script for every layer cut since');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -720,7 +725,7 @@ section('10. Exact production scope, and the temporary audit is gone');
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
     ['index.html', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js',
-      'js/services/scanner-ivr-throttle.js', 'js/ui/chart-interactions.js',
+      'js/services/scanner-ivr-throttle.js', 'js/services/swing-weekly-candles.js', 'js/ui/chart-interactions.js',
       'js/services/journal-snapshot-helpers.js', MODULE_REL].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
@@ -754,6 +759,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/scanner-earnings-throttle.js' ||
     rel === 'js/ui/chart-interactions.js' ||
     rel === 'js/services/journal-snapshot-helpers.js' ||
+    rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/portfolio/portfolio-vega-monitor.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');

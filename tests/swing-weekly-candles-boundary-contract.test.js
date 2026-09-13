@@ -1,62 +1,57 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// JOURNAL SNAPSHOT HELPERS — PERMANENT BOUNDARY CONTRACT.
+// SWING WEEKLY CANDLES — PERMANENT BOUNDARY CONTRACT.
 //
-// Phase 2 of the cycle audit #450 opened. RELOCATION ONLY: the module is the
-// audited block's bytes verbatim, tests/lib/journal-snapshot-helpers-undo.js
+// Phase 2 of the cycle audit #452 opened. RELOCATION ONLY: the module is the
+// audited block's bytes verbatim, tests/lib/swing-weekly-candles-undo.js
 // reconstructs the pre-extraction document byte for byte, and §8 asserts the
 // production footprint is index.html plus the one new file.
 //
-// WHAT MOVED. [1210818,1221613) in monolith coordinates — 10,795 units holding
-// THREE top-level owners, all functions: `_buildSnapshot`, `_logSnapshot` and
-// `_greeksMergeFromCache`. 199 lines of code, zero top-level statements.
+// WHAT MOVED. [401574,410935) in monolith coordinates — 9,361 units: the
+// region's own banner and a 3,841-unit header, three top-level owners, one
+// closing newline. Three functions, zero top-level statements, and 82 lines of
+// code out of 158.
 //
-// SIX EDGES REACHED IN, AND THEY WERE THREE COPIES OF ONE IDIOM. Every inbound
-// reference sat inside `positionManager`, `submitClosePosition` or
-// `submitTrade`, and each of those three makes the same three calls in the same
-// order: merge the cached greeks, build the rich snapshot, log it. §5 derives
-// that rather than asserting it. The middle call, `_buildRichSnapshot`, is not
-// in the monolith at all — it shipped as js/services/journal-rich-snapshot.js in
-// an earlier cycle, so this layer is the two ends of an idiom whose centre had
-// already left.
+// HOW IT WAS FOUND is the part worth keeping. Audit #452 did not out-screen the
+// previous cycles; it found the screen could not SEE this region. The banner
+// rule matched `// ── ` — two dashes — and this region opens on three. Forty-
+// nine titled banners were invisible, twenty-nine of them inside one stretch the
+// screen therefore reported as a single 243,851-unit region: the swing block
+// #424 had already proved unextractable because it assigns `S.swing` at load. So
+// the screen spent twelve layers offering a block it knew it could not take and
+// hiding the pieces inside it — §4 counts that distance off the chain, where it
+// reads as THIRTEEN because the count includes this layer, the one that finally
+// took a piece. The corrected rule ships in
+// tests/lib/extraction-boundary.js with its own controls; this is the first
+// thing it found, and §4 re-measures the improvement rather than citing it.
 //
-// THIS MODULE SHIPS 6,608 UNITS THAT NOTHING CALLS, and that is on the record
-// rather than hidden. `_buildSnapshot` is named nowhere in production — not in
-// the monolith's code, not in its literals, not in any of the seventy-three
-// other local scripts, not in the static markup — and §4 re-measures that here
-// rather than citing the deleted audit. Relocation cannot delete it: "byte-exact
-// or it is not done" is the rule that makes the undo helper possible. Deleting
-// it is a production change and belongs in its own PR. What this move buys is
-// that the dead weight is now a named file instead of 6,608 units buried in a
-// 1,415,349-unit inline script.
+// THE SEAM RUNS THROUGH A MUTUAL REFERENCE, which is this layer's one genuinely
+// unusual property and §5 pins it as such. `_etWeekBucket` stays in the monolith
+// and names `_swingWeekBucket`, which leaves; this module calls `_etWeekBucket`
+// twice in the other direction. A cycle across a file boundary is only safe when
+// neither side needs the other while it evaluates, so §5 proves both directions
+// resolve at CALL time, inside function bodies, rather than assuming it from the
+// shape. §6 then loads the module in a COMPLETELY empty VM, which is the same
+// claim from the other end.
 //
-// AND THAT IS WHY THE SCREEN COULD NOT PICK THIS BOUNDARY ALONE. #450 measured
-// four ends from this start; all four are valid seams — `assertSeam` accepts
-// every one, so the mechanical check broke no tie here, unlike the cycle before
-// — and the nine-direction score rises monotonically with size:
+// ONE OWNER IS NAMED NOWHERE ELSE IN THE APPLICATION. `_swingLogWeeklySource` is
+// declared here and called three times here, and zero times anywhere else. That
+// is not dead code — its own family calls it — it is a global that never needed
+// to be one. Relocation does not change its scope, because these are classic
+// scripts; what it changes is that every reference now lives in one greppable
+// file. §5 measures that rather than asserting it in prose.
 //
-//     end        units   seven  eight  nine   seam
-//     1217580    6,762       4      4     5   accepted
-//     1218266    7,448       8      8     9   accepted
-//     1221613   10,795      12     12    14   accepted   ← this one
-//     1223775   12,957      17     17    19   accepted
+// SIXTEENTH OF THIRTY-ONE BY SIZE, measured in §4 and not described here. At
+// 9,360 units this layer changes no superlative: the vega monitor (1,761) keeps
+// smallest and the traffic light (71,811) keeps largest, so this change re-pins
+// nothing in any earlier contract.
 //
-// So a screen left to itself takes the NARROW cut, which is `_buildSnapshot`
-// alone: it scores best because nothing calls it. Zero inbound is what a
-// well-encapsulated leaf looks like and also what dead code looks like, and no
-// direction of the screen tells them apart. §4 keeps both halves running — the
-// four ends, and the reachability that decides between them.
-//
-// TWO DIRECTIONS THE OLDER CONTRACTS DO NOT HAVE, added by #450 and kept here:
-// markup a region GENERATES naming something that stays behind, and code naming
-// something that has ALREADY LEFT the monolith. This layer carries zero of the
-// first and two of the second, both `buildStreamerSymbol` from
-// js/utils/option-symbols.js. §5 measures them with controls.
-//
-// SEVENTEENTH OF THIRTY BY SIZE. At 10,794 units it displaces no superlative —
-// the vega monitor (1,761) keeps smallest, the traffic light (71,811) keeps
-// largest — so this change re-pins nothing in any earlier contract.
+// IT IS MOSTLY PROSE AND THAT WAS ON THE RECORD BEFORE THE CUT. 76 of its 158
+// lines are comment or blank. The audit stated it as a ratio instead of burying
+// it, and §4 keeps it executed: the monolith loses the units either way, and the
+// explanation of why weekly candles are derived in the frontend at all now
+// travels with the code it explains.
 // ═════════════════════════════════════════════════════════════════════════════
 
 const assert = require('assert');
@@ -75,89 +70,99 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
-const UNDO = require('./lib/journal-snapshot-helpers-undo.js');
+const UNDO = require('./lib/swing-weekly-candles-undo.js');
 
-const MODULE_REL = 'js/services/journal-snapshot-helpers.js';
-const TAG = '<script src="./js/services/journal-snapshot-helpers.js"></script>\n';
-const ANCHOR_TAG = '<script src="./js/ui/chart-interactions.js"></script>\n';
+const MODULE_REL = 'js/services/swing-weekly-candles.js';
+const TAG = '<script src="./js/services/swing-weekly-candles.js"></script>\n';
+const ANCHOR_TAG = '<script src="./js/services/journal-snapshot-helpers.js"></script>\n';
 const INLINE_OPEN = '<script>';
 
 // ── The base this layer was cut from, and the files of this change ───────────
-const BASE_SHA = '78e60b2';
-const CONTRACT_REL = 'tests/journal-snapshot-helpers-boundary-contract.test.js';
-const UNDO_REL = 'tests/lib/journal-snapshot-helpers-undo.js';
-const AUDIT_REL = 'tests/temporary-snapshot-helpers-boundary-audit.test.js';
-const AUDIT_SPEC_REL = 'tests/mutation-specs/snapshot-helpers-audit.spec.js';
-const CONTRACT_SPEC_REL = 'tests/mutation-specs/journal-snapshot-helpers-contract.spec.js';
+const BASE_SHA = 'f2145de';
+const CONTRACT_REL = 'tests/swing-weekly-candles-boundary-contract.test.js';
+const UNDO_REL = 'tests/lib/swing-weekly-candles-undo.js';
+const AUDIT_REL = 'tests/temporary-swing-weekly-candles-boundary-audit.test.js';
+const AUDIT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-audit.spec.js';
+const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-contract.spec.js';
 
-// Ratchet. The suite file count as it stands TODAY, not as it stood when this
-// contract shipped: a Phase 1 audit adds its temporary file and advances this
-// pin in every contract that carries it, and Phase 2 deletes that audit as the
-// next contract arrives, leaving the count where it is.
+// Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
+// in every contract that carries it; Phase 2 deletes that audit as the next
+// contract arrives, so this cycle leaves the count exactly where #452 put it.
 const TEST_FILE_COUNT = 159;
-const LOCAL_SCRIPT_COUNT = 74;
-const MODULE_POSITION = 73;
+const LOCAL_SCRIPT_COUNT = 75;
+const MODULE_POSITION = 74;
 
 // ── The boundary, in MONOLITH coordinates ────────────────────────────────────
-const CODE_AT = 114212;
-const CODE_CHARS = 1426144;
-const RAW_AT_IN_CODE = 1210818;
-const RAW_END_IN_CODE = 1221613;
-const BODY_END_IN_CODE = 1221612;
-const TOP_LEVEL_BANNERS = 226;
-const RESIDUAL_MONOLITH = 1415349;
-const TAG_GAP = 1210826;
-const NET_REDUCTION = 10729;
+const CODE_AT = 114278;
+const CODE_CHARS = 1415349;
+const RAW_AT_IN_CODE = 401574;
+const RAW_END_IN_CODE = 410935;
+const BODY_END_IN_CODE = 410934;
+const TOP_LEVEL_BANNERS = 225;
+const RESIDUAL_MONOLITH = 1405988;
+const TAG_GAP = 401582;
+const NET_REDUCTION = 9299;
 
 // ── The three owners ─────────────────────────────────────────────────────────
-const OWNERS_EXPECTED = ['_buildSnapshot', '_logSnapshot', '_greeksMergeFromCache'];
+const OWNERS_EXPECTED = ['_swingWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles'];
 const OWNER_COUNT = 3;
 const FUNCTION_OWNERS = 3;
-const CODE_LINES = 199;
 const BODY_ENDING = '}\n';
-const HEAD_BANNER = '// ── SNAPSHOT HELPER — reads only already-available state ────────';
+const HEAD_BANNER = '// ─── Weekly candle derivation (frontend; no backend weekly series exists) ─────';
+const CODE_LINES = 82;
+const TOTAL_LINES = 158;
+const COMMENT_LINES = 76;
+const HEADER_UNITS = 3841;
 
 // ── Coupling, in all NINE directions ─────────────────────────────────────────
-const EXTERNAL_EDGES = 6;
-const EDGE_SITES = [747851, 747987, 1209468, 1209658, 1410339, 1410905];
-const CALLERS = ['positionManager', 'submitClosePosition', 'submitTrade'];
-const IDIOM_MIDDLE = '_buildRichSnapshot';
-const IDIOM_MIDDLE_MODULE = 'js/services/journal-rich-snapshot.js';
-const IDIOM_MIDDLE_SITES = [747931, 1209577, 1410412];
-// Five directions that measure zero, asserted as ONE object against one derived
-// object: five separate `eq(…, 0)` calls are five chances to lose one quietly.
+const EXTERNAL_EDGES = 4;
+const EDGE_SITES = [616643, 619792, 619836, 632064];
+const CALLERS = ['_etWeekBucket', '_swingPreparePriceAlignedCandles', '_swingRenderSpyContext'];
+const MONOLITH_DEPENDENCIES = ['_candleTradingSessionDate', '_etWeekBucket', '_swingCandleTimeMs'];
 const ZERO_DIRECTIONS = {
   inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,
-  staticMarkup: 0, generatedMarkup: 0, outboundGenerated: 0,
+  siblingModules: 0, staticMarkup: 0, generatedMarkup: 0,
+  outboundGenerated: 0, outboundModule: 0,
 };
-const MONOLITH_DEPENDENCIES =
-  ['S', '_portfolioLegEffectiveQty', 'debugLog', 'getCanonicalIvr', 'isActivePortfolioLeg'];
-const SIBLING_REFERENCES = 1;
-const SIBLING_REFERRER = 'js/ui/journal-trade-forms.js';
-const OUTBOUND_MODULE_NAMES = ['buildStreamerSymbol'];
-const OUTBOUND_MODULE_EDGES = 2;
-const OUTBOUND_MODULE_OWNER = 'js/utils/option-symbols.js';
+const FULL_NINE = 7;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 3;
 
-// ── The four ends, kept measured rather than remembered ──────────────────────
+// ── The mutual reference across the seam ─────────────────────────────────────
+const MUTUAL_NAME = '_etWeekBucket';
+const MUTUAL_INBOUND_SITE = 616643;
+const MUTUAL_TARGET = '_swingWeekBucket';
+const MUTUAL_OUTBOUND_CALLS = 2;
+
+// ── The owner nothing outside this file names ────────────────────────────────
+const PRIVATE_OWNER = '_swingLogWeeklySource';
+const PRIVATE_OWNER_REFS_INSIDE = 4;
+const PRIVATE_OWNER_REFS_OUTSIDE = 0;
+
+// ── The three ends audit #452 measured ───────────────────────────────────────
 const ENDS = [
-  { end: 1217580, units: 6762, owners: 1, nine: 5 },
-  { end: 1218266, units: 7448, owners: 2, nine: 9 },
-  { end: 1221613, units: 10795, owners: 3, nine: 14 },
-  { end: 1223775, units: 12957, owners: 7, nine: 19 },
+  { end: 410935, units: 9361, owners: 3, nine: 7 },
+  { end: 412550, units: 10976, owners: 4, nine: 15 },
+  { end: 413503, units: 11929, owners: 5, nine: 20 },
 ];
-const RECOMMENDED_ROW = 2;
+const SHIPPED_ROW = 0;
+const FOURTH_OWNER = '_swingTrendContextFromCandles';
 
-// ── Reachability: the half of the decision the score cannot make ─────────────
-const DEAD_DECLS = 19;
-const DEAD_UNITS = 11926;
-const DEAD_LARGEST = '_buildSnapshot';
-const DEAD_LARGEST_CHARS = 6608;
-const DEAD_LARGEST_CODE_LINES = 113;
+// ── What the corrected screen changed about the ranking ──────────────────────
+const BEST_NINE_ABOVE_8K_BEFORE = 15;
+const BEST_NINE_ABOVE_8K_AFTER = 7;
+const BLOB = [391565, 635416];
+const BLOB_SUBREGIONS = 30;
+const BANNER_DELTA = 49;
+const BLOB_HIDDEN_BANNERS = 29;
 
-// ── The chain this joins ─────────────────────────────────────────────────────
+// ── Reachability in the base monolith ────────────────────────────────────────
+const DEAD_DECLS = 18;
+const DEAD_UNITS = 5318;
+const DEPARTED_DEAD = '_buildSnapshot';
+
+// ── The chain ────────────────────────────────────────────────────────────────
 const CHAIN = [
   'js/services/journal-core.js',
   'js/services/mcx-regime-policy.js',
@@ -188,18 +193,22 @@ const CHAIN = [
   'js/services/scanner-ivr-throttle.js',
   'js/services/scanner-earnings-throttle.js',
   'js/ui/chart-interactions.js',
+  'js/services/journal-snapshot-helpers.js',
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
 ];
-const CHAIN_LENGTH = 30;
+const CHAIN_LENGTH = 31;
 const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';
 const SMALLEST_CHARS = 1761;
 const LARGEST_CHARS = 71811;
-const MODULE_SIZE_RANK = 17;
-const LAYERS_ENDING_BRACE = 27;
-const LAYERS_WITH_SEPARATOR = 22;
-const LAYERS_WITH_RAW_PAIR = 19;
+const MODULE_SIZE_RANK = 16;
+const LAYERS_ENDING_BRACE = 28;
+const LAYERS_WITH_SEPARATOR = 23;
+const LAYERS_WITH_RAW_PAIR = 20;
 const LAYERS_WITHOUT_SEPARATOR = 8;
+// #424's Phase 2, which rejected the block this layer came out of.
+const REJECTED_LAYER = 'js/portfolio/portfolio-expiry-manual.js';
+const LAYERS_SINCE_REJECTION = 13;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -236,16 +245,9 @@ function locallyBound(src) {
 function codeLines(src) { return src.split('\n').filter((l) => !isBlankOrComment(l)).length; }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-console.log('JOURNAL SNAPSHOT HELPERS — PERMANENT BOUNDARY CONTRACT');
+console.log('SWING WEEKLY CANDLES — PERMANENT BOUNDARY CONTRACT');
 
-const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// The swing weekly-candle layer was cut AFTER this one, so it is the newest of
-// all: peel it FIRST, and everything below measures this layer's own document.
-const INDEX = SWING_WEEKLY_CANDLES_U.isApplied(LIVE_INDEX)
-  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
-  : LIVE_INDEX;
+const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -254,7 +256,7 @@ const LIVE_CODE = TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline
 // EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
 // copy of it: the undo helper runs first, so every coordinate here is proved by
 // the reconstruction that shipped.
-const BASE = UNDO.undoJournalSnapshotHelpers(INDEX, MODULE);
+const BASE = UNDO.undoSwingWeeklyCandles(INDEX, MODULE);
 const BASE_CODE = APP_LOADER.parseScriptTags(BASE).filter((t) => !t.src && t.inline.length > 1000)[0].inline;
 const MASKED = maskLiterals(BASE_CODE);
 const STRINGS = literalView(BASE_CODE, maskLiterals, stripComments);
@@ -265,6 +267,8 @@ const insideFunction = (i) => FN_BODIES.some((r) => i >= r.start && i <= r.end);
 const MARKS = topLevelBanners(BASE_CODE, FN_BODIES);
 const OWNERS = scanTopLevelDeclarations(MODULE);
 const MASKED_MODULE = maskLiterals(MODULE);
+const MODULE_FNS = functionBodyRanges(MODULE);
+const insideModuleFunction = (i) => MODULE_FNS.some((r) => i >= r.start && i <= r.end);
 
 const SIBLINGS = LOCALS.filter((rel) => rel !== MODULE_REL).map((rel) => {
   const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -321,13 +325,12 @@ function profile(range) {
     if (nameSet.has(n) || local.has(n)) continue;
     for (const at of refSites(MASKED, n).filter(inside)) outModule.push([n, at]);
   }
-  const five = inbound + inWrites + outWrites.length + deps.size + sib + mkp;
-  const seven = five + inPropWrites + gen;
+  const seven = inbound + inWrites + inPropWrites + outWrites.length + deps.size + sib + mkp + gen;
   return {
     names, inbound, inWrites, inPropWrites, gen, sib, mkp, outWrites,
     deps: Array.from(deps).sort(), sites: sites.sort((a, b) => a - b),
     outGen, outModule,
-    five, seven, eight: seven + outGen.length, nine: seven + outGen.length + outModule.length,
+    seven, nine: seven + outGen.length + outModule.length,
   };
 }
 
@@ -337,47 +340,47 @@ const REC = profile([RAW_AT_IN_CODE, RAW_END_IN_CODE]);
 section('1. The shipped document, and the base it came from');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(INDEX.length, UNDO.EXTRACTED_CHARS, 'index.html is 1,529,653 units');
-  eq(Buffer.byteLength(INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…1,558,636 bytes');
-  eq((INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…26,485 line feeds');
+  eq(INDEX.length, UNDO.EXTRACTED_CHARS, 'index.html is 1,520,354 units');
+  eq(Buffer.byteLength(INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…1,549,271 bytes');
+  eq((INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…26,328 line feeds');
   eq(sha256(INDEX), UNDO.EXTRACTED_SHA256, '…and hashes to the shipped digest');
-  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'seventy-four local scripts ship');
+  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'seventy-five local scripts ship');
   eq(LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS, '…which is what the undo helper pins');
   eq(LOCALS.indexOf(MODULE_REL), MODULE_POSITION, 'this module is the LAST of them');
   eq(LOCALS.length - 1, UNDO.BASE_LOCAL_SCRIPTS, '…one more than the base carried');
 
-  eq(BASE.length, UNDO.BASE_CHARS, 'the reconstructed base is 1,540,382 units');
+  eq(BASE.length, UNDO.BASE_CHARS, 'the reconstructed base is 1,529,653 units');
   eq(sha256(BASE), UNDO.BASE_SHA256, '…and hashes to the base digest');
   eq(BASE, git(['show', BASE_SHA + ':index.html']),
     'and it is byte-identical to index.html at the base commit — the reconstruction is checked '
     + 'against git, not against a copy this file carries');
-  eq(INDEX, git(['show', 'HEAD:index.html']).length ? INDEX : INDEX,
-    'control — the live document is read from the working tree');
   eq(BASE.length - INDEX.length, NET_REDUCTION,
-    'the document lost 10,729 units net: 10,795 of monolith out, 66 of tag in');
+    'the document lost 9,299 units net: 9,361 of monolith out, 62 of tag in');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('2. The module is the block, verbatim');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 10,794 units');
-  eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…10,821 bytes');
-  eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…229 line feeds');
-  eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and hashes to the digest #450 pinned BEFORE the move');
+  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 9,360 units');
+  eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…9,426 bytes');
+  eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…157 line feeds');
+  eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and hashes to the digest #452 pinned BEFORE the move');
   eq(MODULE, BASE_CODE.slice(RAW_AT_IN_CODE, BODY_END_IN_CODE),
     'it is the base monolith\'s bytes, verbatim, with nothing added and nothing renamed');
   eq(MODULE.slice(-2), BODY_ENDING, 'it ends `}\\n`');
   ok(!MODULE.endsWith('\n\n'), '…and not on a blank line: the separator stayed in the reconstruction');
   eq(BASE_CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE), MODULE + UNDO.SEPARATOR,
     'raw IS module plus exactly one structural line feed');
-  eq(sha256(BASE_CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE)), UNDO.RAW_SHA256, '…and that raw pair hashes as pinned');
-  eq(MODULE.slice(0, MODULE.indexOf('\n')), HEAD_BANNER, 'it opens on the snapshot-helper banner');
+  eq(sha256(BASE_CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE)), UNDO.RAW_SHA256,
+    '…and that raw pair hashes as pinned');
+  eq(MODULE.slice(0, MODULE.indexOf('\n')), HEAD_BANNER,
+    'it opens on the three-dash banner the old screening rule could not see');
 
   // The fragment is GONE from the live monolith, not duplicated into the module.
-  eq(LIVE_CODE.length, RESIDUAL_MONOLITH, 'the residual monolith is 1,415,349 units');
+  eq(LIVE_CODE.length, RESIDUAL_MONOLITH, 'the residual monolith is 1,405,988 units');
   eq(BASE_CODE.length - LIVE_CODE.length, RAW_END_IN_CODE - RAW_AT_IN_CODE,
-    '…exactly 10,795 units shorter than the base monolith');
+    '…exactly 9,361 units shorter than the base monolith');
   eq(LIVE_CODE.indexOf(MODULE.slice(0, 400)), -1, 'no part of the module is left inline');
   for (const n of OWNERS_EXPECTED) {
     eq(scanTopLevelDeclarations(LIVE_CODE).filter((d) => d.name === n).length, 0,
@@ -391,10 +394,10 @@ section('2. The module is the block, verbatim');
 section('3. The boundary and the seam');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(BASE.indexOf(BASE_CODE), CODE_AT, 'the base monolith started at 114,212');
-  eq(BASE_CODE.length, CODE_CHARS, '…and was 1,426,144 units');
-  eq(CODE_AT + RAW_AT_IN_CODE, UNDO.RAW_AT, 'the fragment sat at 1,325,030 in base document coordinates');
-  eq(CODE_AT + RAW_END_IN_CODE, UNDO.RAW_END, '…ending at 1,335,825');
+  eq(BASE.indexOf(BASE_CODE), CODE_AT, 'the base monolith started at 114,278');
+  eq(BASE_CODE.length, CODE_CHARS, '…and was 1,415,349 units');
+  eq(CODE_AT + RAW_AT_IN_CODE, UNDO.RAW_AT, 'the fragment sat at 515,852 in base document coordinates');
+  eq(CODE_AT + RAW_END_IN_CODE, UNDO.RAW_END, '…ending at 525,213');
   ok(BASE_CODE[RAW_AT_IN_CODE - 1] === '\n', 'the region opened on a line start');
   eq(snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, RAW_END_IN_CODE), BODY_END_IN_CODE,
     'snapBodyEnd lands one unit short of the next line');
@@ -407,24 +410,27 @@ section('3. The boundary and the seam');
   eq(MARKS.filter((m) => m > RAW_AT_IN_CODE && m < RAW_END_IN_CODE).length, 0,
     'the region spans no column-0 banner of its own');
   eq(MARKS.length, TOP_LEVEL_BANNERS, 'the base monolith carried the pinned number of them');
+  ok(MARKS.indexOf(RAW_AT_IN_CODE) >= 0,
+    '…and the corrected rule marks THIS region\'s opening banner, which is why it could be chosen');
 
   // The tag, and what it sits between.
   eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
-    'the tag loads immediately after chart-interactions.js and immediately before the monolith');
+    'the tag loads immediately after journal-snapshot-helpers.js and immediately before the monolith');
   eq(UNDO.RAW_AT - INDEX.indexOf(TAG), TAG_GAP,
-    'the tag line begins 1,210,826 units before the fragment it replaced');
-  eq(TAG.length, 66, 'the tag line is 66 units');
-  eq(NET_REDUCTION, (RAW_END_IN_CODE - RAW_AT_IN_CODE) - TAG.length, '…which is the whole of the net difference');
+    'the tag line begins 401,582 units before the fragment it replaced');
+  eq(TAG.length, 62, 'the tag line is 62 units');
+  eq(NET_REDUCTION, (RAW_END_IN_CODE - RAW_AT_IN_CODE) - TAG.length,
+    '…which is the whole of the net difference');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. Four ends, and the reachability the score could not see');
+section('4. Three ends, the screen that could not see them, and the chain');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   eq(OWNERS.length, OWNER_COUNT, 'the module declares three names at top level');
   eq(OWNERS.map((d) => d.name), OWNERS_EXPECTED, '…in this order');
   eq(OWNERS.filter((d) => d.form === 'function').length, FUNCTION_OWNERS, '…all three functions');
-  eq(codeLines(MODULE), CODE_LINES, 'it carries 199 lines of code');
+  eq(codeLines(MODULE), CODE_LINES, 'it carries 82 lines of code');
   {
     const ch = Array.from(MODULE);
     for (const d of OWNERS) for (let i = d.start; i <= d.end; i++) ch[i] = ' ';
@@ -432,70 +438,107 @@ section('4. Four ends, and the reachability the score could not see');
       'zero top-level statement lines: nothing outside the declarations');
   }
 
-  // THE FOUR ENDS, re-measured here rather than cited from the audit this PR
+  // THE RATIO, kept executed rather than left in the header. This is the trade
+  // the cycle made, and it should stay visible after the audit that made it is
+  // deleted.
+  const lines = MODULE.split('\n');
+  eq(lines.length, TOTAL_LINES, 'the module is 158 lines');
+  eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…76 of them comment or blank');
+  eq(OWNERS[0].start, HEADER_UNITS,
+    'the first owner begins 3,841 units in: the region opens with a documentation header');
+  ok(UNDO.MODULE_CHARS > CODE_LINES * 100,
+    '…so this is 9,360 units for 82 lines of code, and the explanation travels with the code');
+
+  // THE THREE ENDS, re-measured here rather than cited from the audit this PR
   // deletes. The whole table against one derived table, so a dropped row cannot
   // simply run one assertion fewer.
   const measured = ENDS.map(({ end }) => {
     const p = profile([RAW_AT_IN_CODE, end]);
     return { end, units: end - RAW_AT_IN_CODE, owners: p.names.length, nine: p.nine };
   });
-  eq(measured, ENDS, 'four ends, their sizes, their owners and their nine-direction scores');
-  eq(ENDS[RECOMMENDED_ROW].end, RAW_END_IN_CODE, '…the third being the one that shipped');
-  const scores = ENDS.map((r) => r.nine);
-  eq(scores.slice().sort((a, b) => a - b), scores, 'the score rises monotonically with the size of the cut');
+  eq(measured, ENDS, 'three ends, their sizes, their owners and their nine-direction scores');
+  eq(ENDS[SHIPPED_ROW].end, RAW_END_IN_CODE, '…the first being the one that shipped');
   const accepted = ENDS.map(({ end }) => {
     try { return assertSeam(BASE_CODE, RAW_AT_IN_CODE, snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, end)) === end; }
     catch (e) { return e.message; }
   });
-  eq(accepted, [true, true, true, true],
-    'assertSeam accepts ALL FOUR — the mechanical check broke no tie here');
+  eq(accepted, [true, true, true],
+    'assertSeam accepts ALL THREE — the mechanical check broke no tie here either');
+  ok(ENDS[1].nine > ENDS[0].nine * 2 && ENDS[1].units < ENDS[0].units * 1.2,
+    'the next end costs more than TWICE the coupling for under 20% more size');
+  {
+    const fourth = profile([RAW_AT_IN_CODE, ENDS[1].end]);
+    eq(fourth.names.filter((n) => OWNERS_EXPECTED.indexOf(n) < 0), [FOURTH_OWNER],
+      '…and the one owner it adds is _swingTrendContextFromCandles');
+  }
 
-  // WHY THE NARROW CUT WAS NOT TAKEN, which is the cycle's finding and so keeps
-  // running: it scores best because nothing calls what it contains.
-  const dead = ALL_DECLS.filter((d) => {
-    const self = (i) => i >= d.start && i <= d.end;
-    return refSites(MASKED, d.name).filter((i) => !self(i)).length === 0 &&
-      refSites(STRINGS, d.name).length === 0 &&
-      refSites(STATIC_MARKUP, d.name).length === 0 &&
-      refSites(OTHER_INLINE, d.name).length === 0 &&
-      SIBLINGS.every((s) => refSites(s.masked, d.name).length === 0 &&
-        refSites(s.strings, d.name).length === 0);
-  }).sort((a, b) => b.chars - a.chars);
-  eq(dead.length, DEAD_DECLS, 'nineteen of the base monolith\'s declarations were named nowhere in production');
-  eq(dead.reduce((n, d) => n + d.chars, 0), DEAD_UNITS, '…11,926 units of them');
-  eq(dead[0].name, DEAD_LARGEST, 'the largest was _buildSnapshot');
-  eq(dead[0].chars, DEAD_LARGEST_CHARS, '…6,608 units');
-  ok(dead[0].chars * 2 > DEAD_UNITS, '…more than half of all the dead weight in one declaration');
-  const narrow = profile([RAW_AT_IN_CODE, ENDS[0].end]);
-  eq(narrow.names, [DEAD_LARGEST], 'the narrow cut was that declaration and nothing else');
-  eq(narrow.inbound, 0, '…with zero inbound edges — the best score any direction can give');
-  ok(narrow.nine < REC.nine, '…so on score alone the screen preferred it to what shipped');
-
-  // AND IT IS STILL UNREACHED NOW THAT IT IS A MODULE. Relocation changed the
-  // file it lives in, not the fact that nothing calls it.
-  const stillDead = refSites(maskLiterals(LIVE_CODE), DEAD_LARGEST).length === 0 &&
-    refSites(literalView(LIVE_CODE, maskLiterals, stripComments), DEAD_LARGEST).length === 0 &&
-    SIBLINGS.every((s) => refSites(s.masked, DEAD_LARGEST).length === 0);
-  ok(stillDead, 'nothing in the shipped document calls it either: the move relocated dead code, '
-    + 'deliberately, and deleting it is a production change for its own PR');
-  eq(codeLines(MODULE.slice(OWNERS[0].start, OWNERS[0].end + 1)), DEAD_LARGEST_CODE_LINES,
-    '…113 of the module\'s 199 lines');
+  // THE SCREEN DEFECT, which is why this region was available at all. The old
+  // rule is reconstructed here so the improvement is measured on the shipped
+  // tree rather than quoted from a deleted audit.
+  {
+    const oldMarks = [];
+    for (const re of [/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ── /gm]) {
+      let m;
+      while ((m = re.exec(BASE_CODE))) if (!insideFunction(m.index)) oldMarks.push(m.index);
+    }
+    oldMarks.sort((a, b) => a - b);
+    ok(oldMarks.indexOf(RAW_AT_IN_CODE) < 0, 'the OLD rule did not mark this region\'s banner…');
+    ok(MARKS.indexOf(RAW_AT_IN_CODE) >= 0, '…and the corrected one does');
+    // THE SIZE OF THE BLIND SPOT, kept executed. The audit that measured it is
+    // deleted by this PR, and these two numbers appear in prose in three files;
+    // a number written in prose and nowhere else is one that drifts, so it is
+    // re-measured here against the reconstructed base rather than quoted.
+    eq(MARKS.length - oldMarks.length, BANNER_DELTA,
+      'the corrected rule recognises FORTY-NINE banners the old one could not see');
+    const seenBefore = new Set(oldMarks);
+    const hiddenInBlob = MARKS.filter((i) => !seenBefore.has(i) && i >= BLOB[0] && i < BLOB[1]);
+    eq(hiddenInBlob.length, BLOB_HIDDEN_BANNERS,
+      '…TWENTY-NINE of them inside the one block, which is why the screen saw it whole');
+    ok(hiddenInBlob.indexOf(RAW_AT_IN_CODE) >= 0,
+      '…and this layer\'s own banner is one of the twenty-nine');
+    const merge = (marks) => {
+      const raw = marks.map((s, i) => ({ start: s, end: i + 1 < marks.length ? marks[i + 1] : BASE_CODE.length }));
+      const out = [];
+      for (let i = 0; i < raw.length; i++) {
+        let r = raw[i];
+        while (i + 1 < raw.length &&
+          !BASE_CODE.slice(r.start, raw[i + 1].start).split('\n').some((l) => !isBlankOrComment(l))) {
+          r = { start: r.start, end: raw[i + 1].end }; i++;
+        }
+        out.push(r);
+      }
+      return out.filter((x) => ALL_DECLS.some((d) => d.start >= x.start && d.end < x.end));
+    };
+    const blob = merge(oldMarks).find((r) => r.start === BLOB[0]);
+    ok(!!blob && blob.end === BLOB[1],
+      'the old rule saw the 243,851-unit swing block as ONE region, which #424 had already rejected');
+    eq(merge(MARKS).filter((r) => r.start >= BLOB[0] && r.start < BLOB[1]).length, BLOB_SUBREGIONS,
+      '…and the corrected rule resolves it into thirty owner-carrying regions, this one among them');
+    const bestAbove = (marks, floor) => Math.min.apply(null, merge(marks)
+      .filter((r) => r.end - r.start >= floor).map((r) => profile([r.start, r.end]).nine));
+    eq(bestAbove(oldMarks, 8000), BEST_NINE_ABOVE_8K_BEFORE,
+      'the best score among regions of 8,000 units or more was 15 under the old rule');
+    eq(bestAbove(MARKS, 8000), BEST_NINE_ABOVE_8K_AFTER, '…and 7 under the corrected one');
+    eq(bestAbove(MARKS, 8000), REC.nine, '…which is exactly this layer: the screen found what shipped');
+  }
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'thirty layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'thirty-one layers ship today');
+  eq(CHAIN.length - (CHAIN.indexOf(REJECTED_LAYER) + 1), LAYERS_SINCE_REJECTION,
+    'thirteen layers have shipped since #424 rejected the block this one came out of');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
   eq(bySize[0].rel, SMALLEST_MODULE, 'the vega monitor is still the smallest');
   eq(bySize[0].units, SMALLEST_CHARS, '…at 1,761 units');
   eq(bySize.findIndex((x) => x.rel === MODULE_REL) + 1, MODULE_SIZE_RANK,
-    'this layer is SEVENTEENTH of thirty by size');
-  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…at 10,794 units');
+    'this layer is SIXTEENTH of thirty-one by size');
+  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…at 9,360 units');
   eq(bySize[bySize.length - 1].units, LARGEST_CHARS, 'the chain\'s largest is still 71,811');
   ok(bySize[0].units < UNDO.MODULE_CHARS && bySize[bySize.length - 1].units > UNDO.MODULE_CHARS,
     '…so this layer displaces no superlative, and re-pins no earlier contract');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
-    'LAYERS_ENDING_BRACE of the chain end `}\n`, this one among them');
+    'LAYERS_ENDING_BRACE of the chain end `}\\n`, this one among them');
 
   // The bridge's separator claims, executed. Helpers are matched by the module
   // path in their own TAG, not by filename: a basename matcher does not derive
@@ -508,7 +551,7 @@ section('4. Four ends, and the reachability the score could not see');
     return hit.length === 1 ? hit[0] : null;
   });
   eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the thirty resolves to exactly one undo helper by its own TAG');
+    'every one of the thirty-one resolves to exactly one undo helper by its own TAG');
   const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
   eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
     'LAYERS_WITH_SEPARATOR carry a SEPARATOR export, this one among them');
@@ -520,43 +563,51 @@ section('4. Four ends, and the reachability the score could not see');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('5. Coupling, in all nine directions — three copies of one idiom');
+section('5. Coupling in all nine directions, and the cycle across the seam');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(REC.sites, EDGE_SITES, 'SIX references reached in from the rest of the monolith');
-  eq(REC.inbound, EXTERNAL_EDGES, '…exactly six');
+  eq(REC.sites, EDGE_SITES, 'FOUR references reached in from the rest of the monolith');
+  eq(REC.inbound, EXTERNAL_EDGES, '…exactly four');
   ok(REC.sites.every(insideFunction), '…every one inside a function body, so none ran at load');
 
   // THE HOSTS ARE DERIVED, not listed and looped over.
   const hostOf = (i) => ALL_DECLS.filter((d) => i >= d.start && i <= d.end).pop();
   const hosts = Array.from(new Set(REC.sites.map((i) => hostOf(i).name))).sort();
-  eq(hosts, CALLERS.slice().sort(), 'all six sat inside exactly THREE functions');
+  eq(hosts, CALLERS.slice().sort(), 'all four sat inside exactly THREE functions, all of which stay behind');
+  for (const name of CALLERS) {
+    ok(BY_NAME.has(name), name + ' is a monolith declaration…');
+    eq(scanTopLevelDeclarations(LIVE_CODE).filter((d) => d.name === name).length, 1,
+      '…and it is still declared in the shipped monolith');
+  }
 
-  // …and each of the three makes the same three calls, in the same order.
-  eq(refSites(MASKED, IDIOM_MIDDLE), IDIOM_MIDDLE_SITES,
-    '_buildRichSnapshot is named three times in the base monolith');
-  const idiom = CALLERS.map((name) => {
-    const host = BY_NAME.get(name);
-    const within = (sites) => sites.filter((i) => i >= host.start && i <= host.end);
-    const merge = within(refSites(MASKED, '_greeksMergeFromCache'));
-    const rich = within(refSites(MASKED, IDIOM_MIDDLE));
-    const log = within(refSites(MASKED, '_logSnapshot'));
-    return merge.length === 1 && rich.length === 1 && log.length === 1 &&
-      merge[0] < rich[0] && rich[0] < log[0];
-  });
-  eq(idiom, [true, true, true],
-    'each caller merges the cached greeks, builds the rich snapshot, then logs it — in that order');
-  ok(!BY_NAME.has(IDIOM_MIDDLE), '…and the middle call is NOT in the monolith…');
-  eq(MODULE_OWNERS.get(IDIOM_MIDDLE), IDIOM_MIDDLE_MODULE,
-    '…it belongs to js/services/journal-rich-snapshot.js, a layer already shipped');
+  // THE MUTUAL REFERENCE. One of those three hosts is also one of this module's
+  // own dependencies, so the seam cuts through a cycle. Both directions are
+  // proved to be CALL-time, because that is the only thing that makes it safe.
+  eq(hostOf(MUTUAL_INBOUND_SITE).name, MUTUAL_NAME,
+    'the first inbound edge is hosted by _etWeekBucket, which STAYS in the monolith');
+  eq(BASE_CODE.slice(MUTUAL_INBOUND_SITE, MUTUAL_INBOUND_SITE + MUTUAL_TARGET.length), MUTUAL_TARGET,
+    '…and what it names there is _swingWeekBucket, which LEAVES');
+  ok(REC.deps.indexOf(MUTUAL_NAME) >= 0, '…while this module calls _etWeekBucket in the other direction');
+  eq(refSites(MASKED_MODULE, MUTUAL_NAME).length, MUTUAL_OUTBOUND_CALLS, '…twice');
+  ok(insideFunction(MUTUAL_INBOUND_SITE),
+    'the monolith\'s reference to the module is inside a function body…');
+  ok(refSites(MASKED_MODULE, MUTUAL_NAME).every(insideModuleFunction),
+    '…and both of the module\'s references back are inside function bodies too');
+  ok(!BY_NAME.get(MUTUAL_NAME) || insideFunction(MUTUAL_INBOUND_SITE),
+    'so neither file needs the other to exist while it evaluates: the cycle resolves at CALL time, '
+    + 'which is the only reason a seam may cut through one');
 
   eq({
     inboundWrites: REC.inWrites, inboundPropertyWrites: REC.inPropWrites,
-    outboundWrites: REC.outWrites.length, staticMarkup: REC.mkp,
-    generatedMarkup: REC.gen, outboundGenerated: REC.outGen.length,
+    outboundWrites: REC.outWrites.length, siblingModules: REC.sib,
+    staticMarkup: REC.mkp, generatedMarkup: REC.gen,
+    outboundGenerated: REC.outGen.length, outboundModule: REC.outModule.length,
   }, ZERO_DIRECTIONS,
-  'six of the nine directions measure zero: no write in, none through, none out, and no markup either way');
-  // The controls those zeros need, from regions where the answer differs.
+  'EIGHT of the nine directions measure zero: no write in, none through, none out, '
+  + 'no markup either way, no sibling module, and nothing that already left');
+  eq(REC.nine, FULL_NINE, 'nine directions, total score 7 — four edges in and three dependencies out');
+
+  // The controls those zeros need, from inputs where the answer differs.
   {
     const CANDLES = [75943, 80720];
     const cn = ALL_DECLS.filter((d) => d.start >= CANDLES[0] && d.end < CANDLES[1]).map((d) => d.name);
@@ -564,54 +615,64 @@ section('5. Coupling, in all nine directions — three copies of one idiom');
     for (const n of cn) for (const at of refSites(MASKED, n).filter((i) => i < CANDLES[0] || i >= CANDLES[1])) {
       if (isPropertyWriteAt(MASKED, at, n)) cp++;
     }
-    eq(cp, 4, 'control — the candle-fetch region takes FOUR writes through a name it owns');
+    ok(cp > 0, 'control — the candle-fetch region DOES take writes through a name it owns');
     ok(refSites(STRINGS, 'rsApplyFilters').length > 0,
       'control — the literal view DOES find rsApplyFilters, so the generated-markup zero measures');
-    const ticker = profile([688306, 695677]);
-    eq(ticker.outGen.length, 4,
-      'control — the ticker-search region generates markup naming FOUR names that stay behind, '
-      + 'so the outbound-generated zero above is a measurement and not a `return 0`');
+    ok(profile([688306, 695677]).outGen.length > 0,
+      'control — the ticker-search region DOES generate markup naming names that stay behind');
+    // THE OUTBOUND-MODULE ZERO needs an input where it is not zero, and the
+    // sharpest one is this same region with the next end: extend it by one owner
+    // and the count becomes two. Same start, same code path, different answer.
+    eq(profile([RAW_AT_IN_CODE, ENDS[1].end]).outModule.length, 2,
+      'control — extend the region by one owner and the outbound-module count is no longer zero');
+    ok(MODULE_OWNERS.size > 0, '…over a module-owner map that is populated');
   }
 
-  eq(REC.deps, MONOLITH_DEPENDENCIES, 'it names five things the monolith declares');
-  {
-    const moduleFns = functionBodyRanges(MODULE);
-    const runtimeOnly = REC.deps.every((d) => refSites(MASKED_MODULE, d)
-      .every((i) => moduleFns.some((r) => i >= r.start && i <= r.end)));
-    ok(runtimeOnly, '…every one from inside a function body: runtime dependencies, not load-time ones');
+  eq(REC.deps, MONOLITH_DEPENDENCIES, 'it names three things the monolith declares');
+  ok(REC.deps.every((d) => refSites(MASKED_MODULE, d).every(insideModuleFunction)),
+    '…every one from inside a function body: runtime dependencies, not load-time ones');
+  for (const d of MONOLITH_DEPENDENCIES) {
+    eq(scanTopLevelDeclarations(LIVE_CODE).filter((x) => x.name === d).length, 1,
+      d + ' is still declared in the shipped monolith, which loads last of all');
   }
 
-  eq(REC.sib, SIBLING_REFERENCES, 'exactly one sibling module names it');
-  {
-    const referrers = SIBLINGS.filter((s) => REC.names.some(
-      (n) => !s.bound.has(n) && refSites(s.masked, n).length)).map((s) => s.rel);
-    eq(referrers, [SIBLING_REFERRER], '…journal-trade-forms.js, calling _greeksMergeFromCache');
-    const forms = SIBLINGS.find((s) => s.rel === SIBLING_REFERRER);
-    const formsFns = functionBodyRanges(fs.readFileSync(path.join(ROOT, SIBLING_REFERRER), 'utf8'));
-    ok(refSites(forms.masked, '_greeksMergeFromCache')
-      .every((i) => formsFns.some((r) => i >= r.start && i <= r.end)),
-    '…from inside a function, so load order does not matter even though that module loads FIRST');
-  }
-  eq(SIBLINGS.length, LOCAL_SCRIPT_COUNT - 1, 'there are seventy-three siblings to have named it');
+  eq(SIBLINGS.length, LOCAL_SCRIPT_COUNT - 1, 'there are seventy-four siblings to have named it');
+  eq(SIBLINGS.filter((s) => REC.names.some((n) => !s.bound.has(n) && refSites(s.masked, n).length)).map((s) => s.rel),
+    [], '…and not one of them does');
 
-  // THE NINTH: what this region names that had already left.
-  eq(Array.from(new Set(REC.outModule.map(([n]) => n))), OUTBOUND_MODULE_NAMES,
-    'it names exactly one thing a shipped module owns: buildStreamerSymbol');
-  eq(REC.outModule.length, OUTBOUND_MODULE_EDGES, '…twice');
-  eq(MODULE_OWNERS.get(OUTBOUND_MODULE_NAMES[0]), OUTBOUND_MODULE_OWNER, '…owned by js/utils/option-symbols.js');
-  ok(REC.deps.indexOf(OUTBOUND_MODULE_NAMES[0]) < 0,
-    '…and the monolith-dependency scan does NOT carry it, which is why the ninth direction exists');
-  ok(LOCALS.indexOf(OUTBOUND_MODULE_OWNER) < LOCALS.indexOf(MODULE_REL),
-    '…and that module loads BEFORE this one, so the call resolves however late it runs');
-  {
-    // The load-order claim rests on this being a CALL, not a load-time read —
-    // the same thing §5 proves for the five monolith dependencies, and it has to
-    // be proved for this one too rather than assumed from the pattern.
-    const moduleFns = functionBodyRanges(MODULE);
-    ok(refSites(MASKED_MODULE, OUTBOUND_MODULE_NAMES[0])
-      .every((i) => moduleFns.some((r) => i >= r.start && i <= r.end)),
-    '…and both its sites are inside a function body: a runtime call, never read at load');
-  }
+  // THE OWNER NOTHING OUTSIDE THIS FILE NAMES.
+  eq(refSites(MASKED_MODULE, PRIVATE_OWNER).length, PRIVATE_OWNER_REFS_INSIDE,
+    '_swingLogWeeklySource is named four times inside the module — its declaration and three calls');
+  eq(refSites(maskLiterals(LIVE_CODE), PRIVATE_OWNER).length +
+     refSites(literalView(LIVE_CODE, maskLiterals, stripComments), PRIVATE_OWNER).length +
+     refSites(STATIC_MARKUP, PRIVATE_OWNER).length +
+     SIBLINGS.reduce((n, s) => n + refSites(s.masked, PRIVATE_OWNER).length +
+       refSites(s.strings, PRIVATE_OWNER).length, 0),
+  PRIVATE_OWNER_REFS_OUTSIDE,
+  '…and zero times anywhere else in the application: a global that never needed to be one, '
+  + 'now with every reference in one greppable file');
+  ok(refSites(MASKED_MODULE, PRIVATE_OWNER).length > 1,
+    '…and it is not dead — its own family calls it, which is what tells the two apart');
+
+  // REACHABILITY IN THE BASE, carried forward from the cycle that found it: the
+  // previous layer shipped 6,608 units nothing calls, and it is still nothing
+  // this one can fix, because relocation is not deletion.
+  const dead = ALL_DECLS.filter((d) => {
+    const self = (i) => i >= d.start && i <= d.end;
+    return refSites(MASKED, d.name).filter((i) => !self(i)).length === 0 &&
+      refSites(STRINGS, d.name).length === 0 &&
+      refSites(STATIC_MARKUP, d.name).length === 0 &&
+      refSites(OTHER_INLINE, d.name).length === 0 &&
+      SIBLINGS.every((s) => refSites(s.masked, d.name).length === 0 &&
+        refSites(s.strings, d.name).length === 0);
+  });
+  eq(dead.length, DEAD_DECLS, 'eighteen of the base monolith\'s declarations are named nowhere in production');
+  eq(dead.reduce((n, d) => n + d.chars, 0), DEAD_UNITS, '…5,318 units of them');
+  eq(dead.filter((d) => OWNERS_EXPECTED.indexOf(d.name) >= 0), [],
+    'and none of this layer\'s owners is among them');
+  ok(!BY_NAME.has(DEPARTED_DEAD),
+    '…while _buildSnapshot, the 6,608 dead units the previous layer moved, is no longer in the '
+    + 'monolith at all: it is a named file anyone can delete in one line, which is its own PR');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -628,9 +689,8 @@ section('6. It loads bare, and does nothing at load');
   for (const dep of MONOLITH_DEPENDENCIES) {
     ok(!(dep in ctx), '…and ' + dep + ' is not among them: the dependency is called, never defined');
   }
-  ok(!(IDIOM_MIDDLE in ctx), '…nor is _buildRichSnapshot, which belongs to another layer');
-  eq(typeof ctx._greeksMergeFromCache, 'function', 'the entry point the sibling module calls is there');
-  eq(typeof ctx._logSnapshot, 'function', '…as is the one the three callers log through');
+  eq(typeof ctx._swingDeriveWeeklyCandles, 'function', 'the entry point the two callers use is there');
+  eq(typeof ctx._swingWeekBucket, 'function', '…as is the one _etWeekBucket reaches back for');
 
   const watched = [];
   const ctx2 = {
@@ -652,33 +712,33 @@ section('6. It loads bare, and does nothing at load');
 section('7. Every documented failure, with its exact message');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(null, MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_BAD_INPUT', 'a non-string document is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX, null),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_BAD_INPUT', '…and a non-string module');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX, MODULE.slice(0, -1)),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_MODULE_IDENTITY', 'a truncated module is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(null, MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_BAD_INPUT', 'a non-string document is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, null),
+    'SWING_WEEKLY_CANDLES_UNDO_BAD_INPUT', '…and a non-string module');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE.slice(0, -1)),
+    'SWING_WEEKLY_CANDLES_UNDO_MODULE_IDENTITY', 'a truncated module is refused');
   // WHICH GUARD CATCHES A RE-ABSORBED SEPARATOR, measured rather than assumed:
-  // such a module is 10,795 units with 230 line feeds, so the SIZE guard fires
+  // such a module is 9,361 units with 158 line feeds, so the SIZE guard fires
   // first and MODULE_SEPARATOR never sees it.
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX, MODULE + '\n'),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_MODULE_IDENTITY',
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE + '\n'),
+    'SWING_WEEKLY_CANDLES_UNDO_MODULE_IDENTITY',
     'a module that re-absorbed the separator is caught by SIZE, not the separator clause');
   eq((MODULE + '\n').length, UNDO.MODULE_CHARS + 1, '…because it is one unit too long');
   eq(((MODULE + '\n').match(/\n/g) || []).length, UNDO.MODULE_LF + 1, '…and one line feed too many');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX, MODULE.slice(0, -2) + 'x\n'),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_MODULE_SEPARATOR', 'a module not ending `}\\n` is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(BASE, MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_TAG_IDENTITY', 'an already-unextracted document is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX.replace(TAG, TAG + TAG), MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_TAG_IDENTITY', 'a duplicated tag is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX.replace(ANCHOR_TAG + TAG, TAG + ANCHOR_TAG), MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_TAG_ADJACENCY', 'a reordered tag is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX.replace(INLINE_OPEN, '<!-- x -->' + INLINE_OPEN), MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_TAG_ADJACENCY', 'content wedged between the tag and the monolith is refused');
-  throwsWith(() => UNDO.undoJournalSnapshotHelpers(INDEX.replace('</body>', '<!-- foreign --></body>'), MODULE),
-    'JOURNAL_SNAPSHOT_HELPERS_UNDO_EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
-  eq(UNDO.undoJournalSnapshotHelpers(INDEX, MODULE), BASE,
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE.slice(0, -2) + 'x\n'),
+    'SWING_WEEKLY_CANDLES_UNDO_MODULE_SEPARATOR', 'a module not ending `}\\n` is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(BASE, MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_TAG_IDENTITY', 'an already-unextracted document is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(TAG, TAG + TAG), MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_TAG_IDENTITY', 'a duplicated tag is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(ANCHOR_TAG + TAG, TAG + ANCHOR_TAG), MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_TAG_ADJACENCY', 'a reordered tag is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(INLINE_OPEN, '<!-- x -->' + INLINE_OPEN), MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_TAG_ADJACENCY', 'content wedged between the tag and the monolith is refused');
+  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace('</body>', '<!-- foreign --></body>'), MODULE),
+    'SWING_WEEKLY_CANDLES_UNDO_EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
+  eq(UNDO.undoSwingWeeklyCandles(INDEX, MODULE), BASE,
     'and the accepted path reconstructs the base exactly');
   ok(UNDO.isApplied(INDEX), 'isApplied sees this layer in the shipped document');
   ok(!UNDO.isApplied(BASE), '…and does not see it in the base');
@@ -693,8 +753,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/swing-weekly-candles.js'].sort(),
-    'production footprint is index.html, this module, and every layer cut after it');
+    ['index.html', MODULE_REL],
+    'production footprint is exactly index.html plus the one new module');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -713,10 +773,9 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }
 
 console.log('\n' + pass + ' assertions passed.');
-console.log('JOURNAL_SNAPSHOT_HELPERS_BOUNDARY_OK');
+console.log('SWING_WEEKLY_CANDLES_BOUNDARY_OK');
