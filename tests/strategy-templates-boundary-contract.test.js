@@ -102,7 +102,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/strategy-templates-contract.spec
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 69;
 const MODULE_POSITION = 68;
 
@@ -138,12 +138,12 @@ const EXTERNAL_REFERENCES = 12;
 const VM_GLOBALS = 1;
 
 // ── The screen, and the third of it that starts on a closing rule ────────────
-const TOP_LEVEL_BANNERS = 185;
+const TOP_LEVEL_BANNERS = 234;
 const RULE_MARKS = 94;
 const OPENING_RULES = 50;
 const CLOSING_RULES = 44;
-const REGIONS_WITH_OWNERS = 99;
-const REGIONS_ON_CLOSING_RULE = 33;
+const REGIONS_WITH_OWNERS = 131;
+const REGIONS_ON_CLOSING_RULE = 32;
 const ORPHAN_UNITS_MIN = 73;
 const ORPHAN_UNITS_MAX = 1435;
 
@@ -369,7 +369,7 @@ section('2. The module is the block, verbatim');
 section('3. The boundary — and the third of the screen that starts mid-header');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(MARKS.length, TOP_LEVEL_BANNERS, '185 banner marks sit at top level');
+  eq(MARKS.length, TOP_LEVEL_BANNERS, 'the pinned number of banner marks sit at top level');
   ok(MARKS.indexOf(RAW_AT_IN_CODE) >= 0, 'the region opens on one of them');
   ok(MARKS.indexOf(RAW_END_IN_CODE) >= 0, '…and its seam is another');
   ok(BASE_CODE.slice(RAW_END_IN_CODE, RAW_END_IN_CODE + 120).indexOf('STATE') > 0,
@@ -411,7 +411,7 @@ section('3. The boundary — and the third of the screen that starts mid-header'
   // CLOSES one when it is not. Both are banner marks, so a banner-to-banner
   // screen produces regions of both kinds.
   const rules = MARKS.filter((m) => /^\/\/ ═══/.test(lineAt(m)));
-  eq(rules.length, RULE_MARKS, '94 of the 185 marks are `// ═══` rules');
+  eq(rules.length, RULE_MARKS, 'the pinned number of marks are `// ═══` rules');
   const opens = rules.filter((m) => /^\s*\/\//.test(lineAt(nextLine(m))));
   const closes = rules.filter((m) => !/^\s*\/\//.test(lineAt(nextLine(m))));
   eq(opens.length, OPENING_RULES, '50 of them open a header');
@@ -425,10 +425,11 @@ section('3. The boundary — and the third of the screen that starts mid-header'
     const s = MARKS[i], e = i + 1 < MARKS.length ? MARKS[i + 1] : BASE_CODE.length;
     if (ownersIn(s, e).length) withOwners.push(s);
   }
-  eq(withOwners.length, REGIONS_WITH_OWNERS, 'the screen produces 99 owner-carrying regions');
+  eq(withOwners.length, REGIONS_WITH_OWNERS, 'the screen produces the pinned number of owner-carrying regions');
   const midHeader = withOwners.filter((s) => closes.indexOf(s) >= 0);
   eq(midHeader.length, REGIONS_ON_CLOSING_RULE,
-    '…and THIRTY-THREE of them start on a closing rule, not a feature');
+    '…and the pinned number of them start on a closing rule, not a feature — one fewer\n' +
+    '   since #452 taught the screen the three-dash banner style, which splits one of them');
   const orphans = midHeader.map((s) => s - MARKS[MARKS.indexOf(s) - 1]);
   eq(Math.min.apply(null, orphans), ORPHAN_UNITS_MIN, 'the smallest header they would strand is 73 units');
   eq(Math.max.apply(null, orphans), ORPHAN_UNITS_MAX, '…the largest 1,435');

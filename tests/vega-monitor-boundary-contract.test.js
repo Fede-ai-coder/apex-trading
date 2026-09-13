@@ -70,7 +70,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/vega-monitor-contract.spec.js';
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 70;
 const MODULE_POSITION = 69;
 
@@ -80,7 +80,7 @@ const CODE_CHARS = 1455889;
 const RAW_AT_IN_CODE = 891660;
 const RAW_END_IN_CODE = 893422;
 const BODY_END_IN_CODE = 893421;
-const TOP_LEVEL_BANNERS = 183;
+const TOP_LEVEL_BANNERS = 232;
 const RESIDUAL_MONOLITH = 1454127;
 const TAG_GAP = 891668;
 
@@ -338,7 +338,7 @@ section('2. The module is the block, verbatim');
 section('3. The boundary and the seam');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(MARKS.length, TOP_LEVEL_BANNERS, '183 banner marks sat at top level in the base');
+  eq(MARKS.length, TOP_LEVEL_BANNERS, 'the pinned number of banner marks sat at top level in the base');
   ok(MARKS.indexOf(RAW_AT_IN_CODE) >= 0, 'the region opened on one of them');
   ok(MARKS.indexOf(RAW_END_IN_CODE) >= 0, '…and its seam was another');
   ok(/^\/\/ ── VEGA MONITOR RATIOS/.test(BASE_CODE.slice(RAW_AT_IN_CODE, BASE_CODE.indexOf('\n', RAW_AT_IN_CODE))),

@@ -94,7 +94,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/journal-snapshot-helpers-contrac
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 158;
+const TEST_FILE_COUNT = 159;
 const LOCAL_SCRIPT_COUNT = 74;
 const MODULE_POSITION = 73;
 
@@ -104,7 +104,7 @@ const CODE_CHARS = 1426144;
 const RAW_AT_IN_CODE = 1210818;
 const RAW_END_IN_CODE = 1221613;
 const BODY_END_IN_CODE = 1221612;
-const TOP_LEVEL_BANNERS = 177;
+const TOP_LEVEL_BANNERS = 226;
 const RESIDUAL_MONOLITH = 1415349;
 const TAG_GAP = 1210826;
 const NET_REDUCTION = 10729;
@@ -399,7 +399,7 @@ section('3. The boundary and the seam');
     'EXTRACTION_SEAM_BODY_NOT_LINE_TERMINATED', 'control — a body end one unit short is refused');
   eq(MARKS.filter((m) => m > RAW_AT_IN_CODE && m < RAW_END_IN_CODE).length, 0,
     'the region spans no column-0 banner of its own');
-  eq(MARKS.length, TOP_LEVEL_BANNERS, 'the base monolith carried 177 of them');
+  eq(MARKS.length, TOP_LEVEL_BANNERS, 'the base monolith carried the pinned number of them');
 
   // The tag, and what it sits between.
   eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
