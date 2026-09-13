@@ -94,9 +94,11 @@
 // Its boundary also corrects the one audit #440 published. `topLevelBanners`
 // marks every `// ═══` rule, so a four-line header yields TWO marks; the audit
 // took the second, which is the header's CLOSING rule, and would have stranded
-// the title in the monolith. THIRTY-THREE of the screen's ninety-nine
-// owner-carrying regions start on a closing rule, so this is a property of the
-// screen and not a slip — the contract measures it.
+// the title in the monolith. A whole group of the screen's owner-carrying
+// regions start on a closing rule, so this is a property of the screen and not
+// a slip — the strategy-templates contract measures both counts, and they MOVED
+// in #452 when the banner rule learned the three-dash style, which is why
+// neither number is written out here any more.
 //
 // VEGA MONITOR RATIOS was the newest layer until #445; the SCANNER IVR
 // THROTTLE now sits on top of it, peeled first above. The VEGA MONITOR is
@@ -172,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const SWING_WEEKLY_CANDLES = require('./swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS = require('./journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS = require('./chart-interactions-undo.js');
 const SCANNER_EARNINGS = require('./scanner-earnings-throttle-undo.js');
@@ -204,6 +207,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const SWING_WEEKLY_CANDLES_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-weekly-candles.js'),
+  'utf8'
+);
 const JOURNAL_SNAPSHOT_HELPERS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-snapshot-helpers.js'),
   'utf8'
@@ -326,9 +333,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preJournalSnapshotHelpers = JOURNAL_SNAPSHOT_HELPERS.isApplied(html)
-    ? JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(html, JOURNAL_SNAPSHOT_HELPERS_SOURCE)
+  const preSwingWeeklyCandles = SWING_WEEKLY_CANDLES.isApplied(html)
+    ? SWING_WEEKLY_CANDLES.undoSwingWeeklyCandles(html, SWING_WEEKLY_CANDLES_SOURCE)
     : html;
+  const preJournalSnapshotHelpers = JOURNAL_SNAPSHOT_HELPERS.isApplied(preSwingWeeklyCandles)
+    ? JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(preSwingWeeklyCandles, JOURNAL_SNAPSHOT_HELPERS_SOURCE)
+    : preSwingWeeklyCandles;
   const preChartInteractions = CHART_INTERACTIONS.isApplied(preJournalSnapshotHelpers)
     ? CHART_INTERACTIONS.undoChartInteractions(preJournalSnapshotHelpers, CHART_INTERACTIONS_SOURCE)
     : preJournalSnapshotHelpers;

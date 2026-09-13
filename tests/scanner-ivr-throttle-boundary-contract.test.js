@@ -251,13 +251,18 @@ console.log('relocation only · audited #444 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
-const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(LIVE_INDEX)
-  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
+const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(LIVE_INDEX)
+  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(PRE_SWING_WEEKLY_CANDLES)
+  ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
+      PRE_SWING_WEEKLY_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
+  : PRE_SWING_WEEKLY_CANDLES;
 const PRE_CHART_INTERACTIONS = CHART_INTERACTIONS_U.isApplied(PRE_JOURNAL_SNAPSHOT_HELPERS)
   ? CHART_INTERACTIONS_U.undoChartInteractions(
       PRE_JOURNAL_SNAPSHOT_HELPERS, fs.readFileSync(path.join(ROOT, 'js/ui/chart-interactions.js'), 'utf8'))
@@ -647,7 +652,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   // rather than being loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
     ['index.html', MODULE_REL, 'js/services/scanner-earnings-throttle.js',
-      'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js'].sort(),
+      'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -680,6 +685,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/scanner-earnings-throttle.js' ||
     rel === 'js/ui/chart-interactions.js' ||
     rel === 'js/services/journal-snapshot-helpers.js' ||
+    rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }
