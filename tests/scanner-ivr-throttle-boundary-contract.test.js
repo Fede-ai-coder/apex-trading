@@ -85,7 +85,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/scanner-ivr-contract.spec.js';
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 159;
+const TEST_FILE_COUNT = 160;
 const LOCAL_SCRIPT_COUNT = 71;
 const MODULE_POSITION = 70;
 
