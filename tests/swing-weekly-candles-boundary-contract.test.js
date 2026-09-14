@@ -88,7 +88,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-contract.sp
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
 // contract arrives, so this cycle leaves the count exactly where #452 put it.
-const TEST_FILE_COUNT = 159;
+const TEST_FILE_COUNT = 160;
 const LOCAL_SCRIPT_COUNT = 75;
 const MODULE_POSITION = 74;
 
@@ -287,6 +287,45 @@ const MODULE_OWNERS = new Map();
 for (const s of SIBLINGS) for (const n of s.owners) if (!MODULE_OWNERS.has(n)) MODULE_OWNERS.set(n, s.rel);
 
 // The nine-direction profile of a range of the BASE monolith.
+// AN OCCURRENCE INDEX, BUILT ONCE. Written the obvious way, `profile` rescans
+// the whole 1.4-million-unit monolith for each of ~950 declaration names, for
+// every range it is asked about — and §4 asks about every region in the
+// monolith, twice. That made this contract take NINETY-SIX SECONDS a run, which
+// the mutation pass then pays 73 times: the single largest cost in CI. Every
+// identifier position is collected once here instead, and a range query becomes
+// two binary searches. The tokenisation is the one `refSites` already uses, so
+// every number is unchanged — the assertions below are what proves it.
+function occurrenceIndex(text) {
+  const idx = new Map();
+  const re = /(^|[^.\w$])([A-Za-z_$][A-Za-z0-9_$]*)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    const at = m.index + m[1].length;
+    const bucket = idx.get(m[2]);
+    if (bucket) bucket.push(at); else idx.set(m[2], [at]);
+  }
+  return idx;
+}
+const OCC_CODE = occurrenceIndex(MASKED);
+const OCC_STRINGS = occurrenceIndex(STRINGS);
+const OCC_MARKUP = occurrenceIndex(STATIC_MARKUP);
+const SIB_REFS = new Map();
+{
+  const per = SIBLINGS.map((x) => ({ bound: x.bound, idx: occurrenceIndex(x.masked) }));
+  for (const d of ALL_DECLS) {
+    let n = 0;
+    for (const m of per) if (!m.bound.has(d.name)) n += (m.idx.get(d.name) || []).length;
+    SIB_REFS.set(d.name, n);
+  }
+}
+const at0 = (idx, n) => idx.get(n) || [];
+function lowerBound(sorted, x) {
+  let a = 0, b = sorted.length;
+  while (a < b) { const m = (a + b) >> 1; if (sorted[m] < x) a = m + 1; else b = m; }
+  return a;
+}
+const sliceIn = (sites, lo, hi) => sites.slice(lowerBound(sites, lo), lowerBound(sites, hi));
+
 function profile(range) {
   const names = ALL_DECLS.filter((d) => d.start >= range[0] && d.end < range[1]).map((d) => d.name);
   const nameSet = new Set(names);
@@ -296,14 +335,14 @@ function profile(range) {
   let inbound = 0, inWrites = 0, inPropWrites = 0, gen = 0, sib = 0, mkp = 0;
   const sites = [];
   for (const n of names) {
-    for (const at of refSites(MASKED, n).filter(outside)) {
+    for (const at of at0(OCC_CODE, n).filter(outside)) {
       inbound++; sites.push(at);
       if (/^\s*(?:=[^=]|\+\+|--|\+=|-=|\*=|\/=)/.test(MASKED.slice(at + n.length, at + n.length + 30))) inWrites++;
       if (isPropertyWriteAt(MASKED, at, n)) inPropWrites++;
     }
-    gen += refSites(STRINGS, n).filter(outside).length;
-    for (const s of SIBLINGS) if (!s.bound.has(n)) sib += refSites(s.masked, n).length;
-    mkp += refSites(STATIC_MARKUP, n).length;
+    gen += at0(OCC_STRINGS, n).filter(outside).length;
+    sib += SIB_REFS.get(n);
+    mkp += at0(OCC_MARKUP, n).length;
   }
   const outWrites = Array.from(new Set(propertyWriteBases(bodyMasked)
     .filter((b) => !nameSet.has(b) && BY_NAME.has(b)))).sort();
@@ -311,19 +350,19 @@ function profile(range) {
   const deps = new Set();
   for (const d of ALL_DECLS) {
     if (nameSet.has(d.name) || local.has(d.name)) continue;
-    if (refSites(bodyMasked, d.name).length) deps.add(d.name);
+    if (sliceIn(at0(OCC_CODE, d.name), range[0], range[1]).length) deps.add(d.name);
   }
   // EIGHTH — markup this range generates, naming something that stays behind.
   const outGen = [];
   for (const d of ALL_DECLS) {
     if (nameSet.has(d.name)) continue;
-    for (const at of refSites(STRINGS, d.name).filter(inside)) outGen.push([d.name, at]);
+    for (const at of sliceIn(at0(OCC_STRINGS, d.name), range[0], range[1])) outGen.push([d.name, at]);
   }
   // NINTH — code in this range naming something that already left.
   const outModule = [];
   for (const [n] of MODULE_OWNERS) {
     if (nameSet.has(n) || local.has(n)) continue;
-    for (const at of refSites(MASKED, n).filter(inside)) outModule.push([n, at]);
+    for (const at of sliceIn(at0(OCC_CODE, n), range[0], range[1])) outModule.push([n, at]);
   }
   const seven = inbound + inWrites + inPropWrites + outWrites.length + deps.size + sib + mkp + gen;
   return {
