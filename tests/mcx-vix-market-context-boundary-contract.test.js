@@ -404,11 +404,13 @@ const afterSeTag = afterSeEnd >= 0 ? INDEX.slice(afterSeAt, afterSeEnd + 1) : ''
 // that the newest layer — whichever it is — is the one abutting the monolith.
 const chartInteractionsTag = '<script src="./js/ui/chart-interactions.js"></script>';
 const snapshotHelpersTag = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
-const newestLayerTag = '<script src="./js/services/swing-weekly-candles.js"></script>';
+const swingWeeklyCandlesTag = '<script src="./js/services/swing-weekly-candles.js"></script>';
+const newestLayerTag = '<script src="./js/services/swing-direction.js"></script>';
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(snapshotHelpersTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(swingWeeklyCandlesTag)
+  && INDEX.indexOf(swingWeeklyCandlesTag) > INDEX.indexOf(snapshotHelpersTag)
   && INDEX.indexOf(snapshotHelpersTag) > INDEX.indexOf(chartInteractionsTag)
   && INDEX.indexOf(chartInteractionsTag) > INDEX.indexOf(scannerEarningsTag)
   && INDEX.indexOf(scannerEarningsTag) > INDEX.indexOf(scannerIvrTag)

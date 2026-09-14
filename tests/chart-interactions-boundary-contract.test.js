@@ -236,12 +236,17 @@ console.log('relocation only · audited #448 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
-const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(LIVE_INDEX)
-  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
+  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
+      PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
+  : PRE_SWING_DIRECTION;
 const INDEX = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(PRE_SWING_WEEKLY_CANDLES)
   ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
       PRE_SWING_WEEKLY_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
@@ -621,7 +626,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js'].sort(),
+    ['index.html', MODULE_REL, 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -652,6 +657,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'js/services/swing-weekly-candles.js' ||
+    rel === 'js/services/swing-direction.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }

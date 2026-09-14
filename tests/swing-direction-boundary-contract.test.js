@@ -1,7 +1,7 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// SWING WEEKLY CANDLES — PERMANENT BOUNDARY CONTRACT.
+// SWING DIRECTION RESOLVER — PERMANENT BOUNDARY CONTRACT.
 //
 // Phase 2 of the cycle audit #452 opened. RELOCATION ONLY: the module is the
 // audited block's bytes verbatim, tests/lib/swing-weekly-candles-undo.js
@@ -70,97 +70,96 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
-const UNDO = require('./lib/swing-weekly-candles-undo.js');
+const UNDO = require('./lib/swing-direction-undo.js');
 
-const MODULE_REL = 'js/services/swing-weekly-candles.js';
-const TAG = '<script src="./js/services/swing-weekly-candles.js"></script>\n';
-const ANCHOR_TAG = '<script src="./js/services/journal-snapshot-helpers.js"></script>\n';
+const MODULE_REL = 'js/services/swing-direction.js';
+const TAG = '<script src="./js/services/swing-direction.js"></script>\n';
+const ANCHOR_TAG = '<script src="./js/services/swing-weekly-candles.js"></script>\n';
 const INLINE_OPEN = '<script>';
 
 // ── The base this layer was cut from, and the files of this change ───────────
-const BASE_SHA = 'f2145de';
-const CONTRACT_REL = 'tests/swing-weekly-candles-boundary-contract.test.js';
-const UNDO_REL = 'tests/lib/swing-weekly-candles-undo.js';
-const AUDIT_REL = 'tests/temporary-swing-weekly-candles-boundary-audit.test.js';
-const AUDIT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-audit.spec.js';
-const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-contract.spec.js';
+const BASE_SHA = '4622657';
+const CONTRACT_REL = 'tests/swing-direction-boundary-contract.test.js';
+const UNDO_REL = 'tests/lib/swing-direction-undo.js';
+const AUDIT_REL = 'tests/temporary-swing-direction-boundary-audit.test.js';
+const AUDIT_SPEC_REL = 'tests/mutation-specs/swing-direction-audit.spec.js';
+const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-direction-contract.spec.js';
 
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
 // contract arrives, so this cycle leaves the count exactly where #452 put it.
 const TEST_FILE_COUNT = 160;
-const LOCAL_SCRIPT_COUNT = 75;
-const MODULE_POSITION = 74;
+const LOCAL_SCRIPT_COUNT = 76;
+const MODULE_POSITION = 75;
 
 // ── The boundary, in MONOLITH coordinates ────────────────────────────────────
-const CODE_AT = 114278;
-const CODE_CHARS = 1415349;
-const RAW_AT_IN_CODE = 401574;
-const RAW_END_IN_CODE = 410935;
-const BODY_END_IN_CODE = 410934;
-const TOP_LEVEL_BANNERS = 225;
-const RESIDUAL_MONOLITH = 1405988;
-const TAG_GAP = 401582;
-const NET_REDUCTION = 9299;
+const CODE_AT = 114340;
+const CODE_CHARS = 1405988;
+const RAW_AT_IN_CODE = 406512;
+const RAW_END_IN_CODE = 413015;
+const BODY_END_IN_CODE = 413014;
+const TOP_LEVEL_BANNERS = 224;
+const RESIDUAL_MONOLITH = 1399485;
+const TAG_GAP = 406520;
+const NET_REDUCTION = 6446;
 
 // ── The three owners ─────────────────────────────────────────────────────────
-const OWNERS_EXPECTED = ['_swingWeekBucket', '_swingLogWeeklySource', '_swingDeriveWeeklyCandles'];
+const OWNERS_EXPECTED = ['_swingResolveDirection', '_swingRsContext', '_swingVixSuitability'];
 const OWNER_COUNT = 3;
 const FUNCTION_OWNERS = 3;
 const BODY_ENDING = '}\n';
-const HEAD_BANNER = '// ─── Weekly candle derivation (frontend; no backend weekly series exists) ─────';
-const CODE_LINES = 82;
-const TOTAL_LINES = 158;
-const COMMENT_LINES = 76;
-const HEADER_UNITS = 3841;
+const HEAD_BANNER = '// ─── Final multi-timeframe Swing direction (PURE, testable) ───────────────────';
+const CODE_LINES = 49;
+const TOTAL_LINES = 93;
+const COMMENT_LINES = 44;
+const HEADER_UNITS = 1604;
 
 // ── Coupling, in all NINE directions ─────────────────────────────────────────
-const EXTERNAL_EDGES = 4;
-const EDGE_SITES = [616643, 619792, 619836, 632064];
-const CALLERS = ['_etWeekBucket', '_swingPreparePriceAlignedCandles', '_swingRenderSpyContext'];
-const MONOLITH_DEPENDENCIES = ['_candleTradingSessionDate', '_etWeekBucket', '_swingCandleTimeMs'];
+const EXTERNAL_EDGES = 5;
+const EDGE_SITES = [417497, 528964, 571560, 574912, 621943];
+const CALLERS = ['_swingBuildCandidate', '_swingEnrichOneOperationalRow', '_swingLazyEnrich4h',
+  '_swingRenderRegime', '_swingRunActiveTab'];
+const MONOLITH_DEPENDENCIES = ['S', 'SWING_VIX_MAX_SUITABLE', '_swingNormDir'];
 const ZERO_DIRECTIONS = {
   inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,
   siblingModules: 0, staticMarkup: 0, generatedMarkup: 0,
   outboundGenerated: 0, outboundModule: 0,
 };
-const FULL_NINE = 7;
+const FULL_NINE = 8;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 3;
 
-// ── The mutual reference across the seam ─────────────────────────────────────
-const MUTUAL_NAME = '_etWeekBucket';
-const MUTUAL_INBOUND_SITE = 616643;
-const MUTUAL_TARGET = '_swingWeekBucket';
-const MUTUAL_OUTBOUND_CALLS = 2;
+// ── `S`, and the rule audit #424 left too broad ─────────────────────────────
+const S_NAME = 'S';
+const S_REFS_IN_BODY = 3;
+const S_PROPERTY_WRITES = 0;
+const S_FORM = 'const';
+const EXPIRY_CONTRACT = 'tests/portfolio-expiry-manual-boundary-contract.test.js';
+const RECORDED_UNITS = '242,294';
+const LAYERS_WITH_A_DEPENDENCY = 10;
+// The stretch #424 rejected, in THIS base's coordinates.
+const BLOB = [391565, 626055];
+const BLOB_OPENING = '// ═══════════════════════════════════════════════════════════════════════════════';
+const BLOB_UNITS = 234489;
 
-// ── The owner nothing outside this file names ────────────────────────────────
-const PRIVATE_OWNER = '_swingLogWeeklySource';
-const PRIVATE_OWNER_REFS_INSIDE = 4;
-const PRIVATE_OWNER_REFS_OUTSIDE = 0;
-
-// ── The three ends audit #452 measured ───────────────────────────────────────
+// ── The four ends audit #454 measured ────────────────────────────────────────
 const ENDS = [
-  { end: 410935, units: 9361, owners: 3, nine: 7 },
-  { end: 412550, units: 10976, owners: 4, nine: 15 },
-  { end: 413503, units: 11929, owners: 5, nine: 20 },
+  { end: 413015, units: 6503, owners: 3, nine: 8 },
+  { end: 413963, units: 7451, owners: 4, nine: 9 },
+  { end: 422877, units: 16365, owners: 6, nine: 23 },
 ];
 const SHIPPED_ROW = 0;
-const FOURTH_OWNER = '_swingTrendContextFromCandles';
-
-// ── What the corrected screen changed about the ranking ──────────────────────
-const BEST_NINE_ABOVE_8K_BEFORE = 15;
-const BEST_NINE_ABOVE_8K_AFTER = 7;
-const BLOB = [391565, 635416];
-const BLOB_SUBREGIONS = 30;
-const BANNER_DELTA = 49;
-const BLOB_HIDDEN_BANNERS = 29;
+const FOURTH_END = 425438;
+const FOURTH_END_ERROR = 'EXTRACTION_SEAM_NO_STRUCTURAL_SEPARATOR';
+const SECOND_END_OWNER = '_swingScore';
+const OWNER_SIZES = [3661, 651, 501];
 
 // ── Reachability in the base monolith ────────────────────────────────────────
 const DEAD_DECLS = 18;
 const DEAD_UNITS = 5318;
 const DEPARTED_DEAD = '_buildSnapshot';
+const DEPARTED_DEAD_OWNER = 'js/services/journal-snapshot-helpers.js';
 
 // ── The chain ────────────────────────────────────────────────────────────────
 const CHAIN = [
@@ -194,21 +193,22 @@ const CHAIN = [
   'js/services/scanner-earnings-throttle.js',
   'js/ui/chart-interactions.js',
   'js/services/journal-snapshot-helpers.js',
+  'js/services/swing-weekly-candles.js',
   // Newest last: CHAIN is CHRONOLOGICAL, not sorted.
   MODULE_REL,
 ];
-const CHAIN_LENGTH = 31;
+const CHAIN_LENGTH = 32;
 const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';
 const SMALLEST_CHARS = 1761;
 const LARGEST_CHARS = 71811;
-const MODULE_SIZE_RANK = 16;
-const LAYERS_ENDING_BRACE = 28;
-const LAYERS_WITH_SEPARATOR = 23;
-const LAYERS_WITH_RAW_PAIR = 20;
+const MODULE_SIZE_RANK = 8;
+const LAYERS_ENDING_BRACE = 29;
+const LAYERS_WITH_SEPARATOR = 24;
+const LAYERS_WITH_RAW_PAIR = 21;
 const LAYERS_WITHOUT_SEPARATOR = 8;
 // #424's Phase 2, which rejected the block this layer came out of.
 const REJECTED_LAYER = 'js/portfolio/portfolio-expiry-manual.js';
-const LAYERS_SINCE_REJECTION = 13;
+const LAYERS_SINCE_REJECTION = 14;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -245,16 +245,9 @@ function locallyBound(src) {
 function codeLines(src) { return src.split('\n').filter((l) => !isBlankOrComment(l)).length; }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-console.log('SWING WEEKLY CANDLES — PERMANENT BOUNDARY CONTRACT');
+console.log('SWING DIRECTION RESOLVER — PERMANENT BOUNDARY CONTRACT');
 
-const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// The swing direction resolver was cut AFTER this one, so it is the newest of
-// all: peel it FIRST, and everything below measures this layer's own document.
-const INDEX = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
-  ? SWING_DIRECTION_U.undoSwingDirection(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
-  : LIVE_INDEX;
+const INDEX = APP_LOADER.loadIndexHtml();
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -263,7 +256,7 @@ const LIVE_CODE = TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline
 // EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
 // copy of it: the undo helper runs first, so every coordinate here is proved by
 // the reconstruction that shipped.
-const BASE = UNDO.undoSwingWeeklyCandles(INDEX, MODULE);
+const BASE = UNDO.undoSwingDirection(INDEX, MODULE);
 const BASE_CODE = APP_LOADER.parseScriptTags(BASE).filter((t) => !t.src && t.inline.length > 1000)[0].inline;
 const MASKED = maskLiterals(BASE_CODE);
 const STRINGS = literalView(BASE_CODE, maskLiterals, stripComments);
@@ -390,7 +383,7 @@ section('1. The shipped document, and the base it came from');
   eq(Buffer.byteLength(INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…1,549,271 bytes');
   eq((INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…26,328 line feeds');
   eq(sha256(INDEX), UNDO.EXTRACTED_SHA256, '…and hashes to the shipped digest');
-  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'seventy-five local scripts ship');
+  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'the shipped document carries LOCAL_SCRIPT_COUNT local scripts');
   eq(LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS, '…which is what the undo helper pins');
   eq(LOCALS.indexOf(MODULE_REL), MODULE_POSITION, 'this module is the LAST of them');
   eq(LOCALS.length - 1, UNDO.BASE_LOCAL_SCRIPTS, '…one more than the base carried');
@@ -408,7 +401,7 @@ section('1. The shipped document, and the base it came from');
 section('2. The module is the block, verbatim');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 9,360 units');
+  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 6,502 units');
   eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…9,426 bytes');
   eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…157 line feeds');
   eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and hashes to the digest #452 pinned BEFORE the move');
@@ -464,7 +457,7 @@ section('3. The boundary and the seam');
     'the tag loads immediately after journal-snapshot-helpers.js and immediately before the monolith');
   eq(UNDO.RAW_AT - INDEX.indexOf(TAG), TAG_GAP,
     'the tag line begins 401,582 units before the fragment it replaced');
-  eq(TAG.length, 62, 'the tag line is 62 units');
+  eq(TAG.length, 57, 'the tag line is 57 units');
   eq(NET_REDUCTION, (RAW_END_IN_CODE - RAW_AT_IN_CODE) - TAG.length,
     '…which is the whole of the net difference');
 }
@@ -476,6 +469,14 @@ section('4. Three ends, the screen that could not see them, and the chain');
   eq(OWNERS.length, OWNER_COUNT, 'the module declares three names at top level');
   eq(OWNERS.map((d) => d.name), OWNERS_EXPECTED, '…in this order');
   eq(OWNERS.filter((d) => d.form === 'function').length, FUNCTION_OWNERS, '…all three functions');
+  // OWNER_SIZES ran as a comment until the mutation pass reported it a survivor:
+  // it was declared and never read, and a pin nobody reads checks nothing. The
+  // three sizes are asserted in DECLARATION order, so a reordering fails too.
+  eq(OWNERS.map((d) => d.end - d.start + 1), OWNER_SIZES,
+    '…of 3,661, 651 and 501 units, in declaration order');
+  eq(OWNERS[OWNERS.length - 1].end + 2, UNDO.MODULE_CHARS,
+    '…and the last of them ends one unit before the module does: the only thing after it is the '
+    + 'terminating newline, which is why BODY_ENDING is what it is');
   eq(codeLines(MODULE), CODE_LINES, 'it carries 82 lines of code');
   {
     const ch = Array.from(MODULE);
@@ -488,12 +489,12 @@ section('4. Three ends, the screen that could not see them, and the chain');
   // the cycle made, and it should stay visible after the audit that made it is
   // deleted.
   const lines = MODULE.split('\n');
-  eq(lines.length, TOTAL_LINES, 'the module is 158 lines');
-  eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…76 of them comment or blank');
+  eq(lines.length, TOTAL_LINES, 'the module is 93 lines');
+  eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…44 of them comment or blank');
   eq(OWNERS[0].start, HEADER_UNITS,
-    'the first owner begins 3,841 units in: the region opens with a documentation header');
+    'the first owner begins 1,604 units in: the region opens with a documentation header');
   ok(UNDO.MODULE_CHARS > CODE_LINES * 100,
-    '…so this is 9,360 units for 82 lines of code, and the explanation travels with the code');
+    '…so this is 6,502 units for 49 lines of code, and the explanation travels with the code');
 
   // THE THREE ENDS, re-measured here rather than cited from the audit this PR
   // deletes. The whole table against one derived table, so a dropped row cannot
@@ -508,68 +509,29 @@ section('4. Three ends, the screen that could not see them, and the chain');
     try { return assertSeam(BASE_CODE, RAW_AT_IN_CODE, snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, end)) === end; }
     catch (e) { return e.message; }
   });
-  eq(accepted, [true, true, true],
-    'assertSeam accepts ALL THREE — the mechanical check broke no tie here either');
-  ok(ENDS[1].nine > ENDS[0].nine * 2 && ENDS[1].units < ENDS[0].units * 1.2,
-    'the next end costs more than TWICE the coupling for under 20% more size');
-  {
-    const fourth = profile([RAW_AT_IN_CODE, ENDS[1].end]);
-    eq(fourth.names.filter((n) => OWNERS_EXPECTED.indexOf(n) < 0), [FOURTH_OWNER],
-      '…and the one owner it adds is _swingTrendContextFromCandles');
-  }
+  eq(accepted, [true, true, true], 'assertSeam accepts all three…');
+  // AND REFUSES A FOURTH. The mechanical check is usually silent — the two
+  // cycles before this one had every candidate end accepted — so the one time
+  // it does reject a boundary is worth keeping rather than dropping from the
+  // table. 425438 is not a legal seam: nothing separates the body from what
+  // follows it.
+  throwsWith(() => assertSeam(BASE_CODE, RAW_AT_IN_CODE, snapBodyEnd(BASE_CODE, RAW_AT_IN_CODE, FOURTH_END)),
+    FOURTH_END_ERROR, '…and REFUSES the fourth, for want of a structural separator');
 
-  // THE SCREEN DEFECT, which is why this region was available at all. The old
-  // rule is reconstructed here so the improvement is measured on the shipped
-  // tree rather than quoted from a deleted audit.
+  // THE CLOSE CALL, argued rather than dismissed: one owner and one point away.
+  ok(ENDS[1].nine - ENDS[0].nine === 1 && ENDS[1].units - ENDS[0].units === 948,
+    'the second end costs one more point for 948 more units — close enough to need a reason');
   {
-    const oldMarks = [];
-    for (const re of [/^[ \t]*\/\/ ═══/gm, /^[ \t]*\/\/ ── /gm]) {
-      let m;
-      while ((m = re.exec(BASE_CODE))) if (!insideFunction(m.index)) oldMarks.push(m.index);
-    }
-    oldMarks.sort((a, b) => a - b);
-    ok(oldMarks.indexOf(RAW_AT_IN_CODE) < 0, 'the OLD rule did not mark this region\'s banner…');
-    ok(MARKS.indexOf(RAW_AT_IN_CODE) >= 0, '…and the corrected one does');
-    // THE SIZE OF THE BLIND SPOT, kept executed. The audit that measured it is
-    // deleted by this PR, and these two numbers appear in prose in three files;
-    // a number written in prose and nowhere else is one that drifts, so it is
-    // re-measured here against the reconstructed base rather than quoted.
-    eq(MARKS.length - oldMarks.length, BANNER_DELTA,
-      'the corrected rule recognises FORTY-NINE banners the old one could not see');
-    const seenBefore = new Set(oldMarks);
-    const hiddenInBlob = MARKS.filter((i) => !seenBefore.has(i) && i >= BLOB[0] && i < BLOB[1]);
-    eq(hiddenInBlob.length, BLOB_HIDDEN_BANNERS,
-      '…TWENTY-NINE of them inside the one block, which is why the screen saw it whole');
-    ok(hiddenInBlob.indexOf(RAW_AT_IN_CODE) >= 0,
-      '…and this layer\'s own banner is one of the twenty-nine');
-    const merge = (marks) => {
-      const raw = marks.map((s, i) => ({ start: s, end: i + 1 < marks.length ? marks[i + 1] : BASE_CODE.length }));
-      const out = [];
-      for (let i = 0; i < raw.length; i++) {
-        let r = raw[i];
-        while (i + 1 < raw.length &&
-          !BASE_CODE.slice(r.start, raw[i + 1].start).split('\n').some((l) => !isBlankOrComment(l))) {
-          r = { start: r.start, end: raw[i + 1].end }; i++;
-        }
-        out.push(r);
-      }
-      return out.filter((x) => ALL_DECLS.some((d) => d.start >= x.start && d.end < x.end));
-    };
-    const blob = merge(oldMarks).find((r) => r.start === BLOB[0]);
-    ok(!!blob && blob.end === BLOB[1],
-      'the old rule saw the 243,851-unit swing block as ONE region, which #424 had already rejected');
-    eq(merge(MARKS).filter((r) => r.start >= BLOB[0] && r.start < BLOB[1]).length, BLOB_SUBREGIONS,
-      '…and the corrected rule resolves it into thirty owner-carrying regions, this one among them');
-    const bestAbove = (marks, floor) => Math.min.apply(null, merge(marks)
-      .filter((r) => r.end - r.start >= floor).map((r) => profile([r.start, r.end]).nine));
-    eq(bestAbove(oldMarks, 8000), BEST_NINE_ABOVE_8K_BEFORE,
-      'the best score among regions of 8,000 units or more was 15 under the old rule');
-    eq(bestAbove(MARKS, 8000), BEST_NINE_ABOVE_8K_AFTER, '…and 7 under the corrected one');
-    eq(bestAbove(MARKS, 8000), REC.nine, '…which is exactly this layer: the screen found what shipped');
+    const second = profile([RAW_AT_IN_CODE, ENDS[1].end]);
+    eq(second.names.filter((n) => OWNERS_EXPECTED.indexOf(n) < 0), [SECOND_END_OWNER],
+      '…the owner it adds being _swingScore');
+    ok(MARKS.indexOf(ENDS[0].end) >= 0,
+      '…which opens its OWN banner, so the shipped end is where one feature stops and the next '
+      + 'begins: absorbing it would have taken a clean region as a rounding error');
   }
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'thirty-one layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'CHAIN_LENGTH layers ship today — the count lives in the pin, not in this sentence');
   // NO DUPLICATES. Without this, replacing one entry with a copy of another
   // passes every other clause — the length is unchanged, both paths resolve to
   // an undo helper, and the size table simply counts one file twice. A mutant
@@ -577,15 +539,15 @@ section('4. Three ends, the screen that could not see them, and the chain');
   eq(Array.from(new Set(CHAIN)).length, CHAIN_LENGTH,
     '…and each of them exactly once: a chain with a duplicated entry is a chain missing a layer');
   eq(CHAIN.length - (CHAIN.indexOf(REJECTED_LAYER) + 1), LAYERS_SINCE_REJECTION,
-    'thirteen layers have shipped since #424 rejected the block this one came out of');
+    'LAYERS_SINCE_REJECTION layers have shipped since #424 rejected the block this one came out of');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
   eq(bySize[0].rel, SMALLEST_MODULE, 'the vega monitor is still the smallest');
   eq(bySize[0].units, SMALLEST_CHARS, '…at 1,761 units');
   eq(bySize.findIndex((x) => x.rel === MODULE_REL) + 1, MODULE_SIZE_RANK,
-    'this layer is SIXTEENTH of thirty-one by size');
-  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…at 9,360 units');
+    'this layer sits at MODULE_SIZE_RANK in the chain by size');
+  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…and the module at that rank is this one, by its undo helper\'s own pin');
   eq(bySize[bySize.length - 1].units, LARGEST_CHARS, 'the chain\'s largest is still 71,811');
   ok(bySize[0].units < UNDO.MODULE_CHARS && bySize[bySize.length - 1].units > UNDO.MODULE_CHARS,
     '…so this layer displaces no superlative, and re-pins no earlier contract');
@@ -603,7 +565,7 @@ section('4. Three ends, the screen that could not see them, and the chain');
     return hit.length === 1 ? hit[0] : null;
   });
   eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the thirty-one resolves to exactly one undo helper by its own TAG');
+    'every layer in CHAIN resolves to exactly one undo helper by its own TAG');
   const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
   eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
     'LAYERS_WITH_SEPARATOR carry a SEPARATOR export, this one among them');
@@ -618,36 +580,72 @@ section('4. Three ends, the screen that could not see them, and the chain');
 section('5. Coupling in all nine directions, and the cycle across the seam');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(REC.sites, EDGE_SITES, 'FOUR references reached in from the rest of the monolith');
-  eq(REC.inbound, EXTERNAL_EDGES, '…exactly four');
+  eq(REC.sites, EDGE_SITES, 'EXTERNAL_EDGES references reached in from the rest of the monolith, at these exact sites');
+  eq(REC.inbound, EXTERNAL_EDGES, '…and that is their count');
   ok(REC.sites.every(insideFunction), '…every one inside a function body, so none ran at load');
 
   // THE HOSTS ARE DERIVED, not listed and looped over.
   const hostOf = (i) => ALL_DECLS.filter((d) => i >= d.start && i <= d.end).pop();
   const hosts = Array.from(new Set(REC.sites.map((i) => hostOf(i).name))).sort();
-  eq(hosts, CALLERS.slice().sort(), 'all four sat inside exactly THREE functions, all of which stay behind');
+  eq(hosts, CALLERS.slice().sort(), '…hosted by the CALLERS named above and no others, every one of which stays behind');
   for (const name of CALLERS) {
     ok(BY_NAME.has(name), name + ' is a monolith declaration…');
     eq(scanTopLevelDeclarations(LIVE_CODE).filter((d) => d.name === name).length, 1,
       '…and it is still declared in the shipped monolith');
   }
 
-  // THE MUTUAL REFERENCE. One of those three hosts is also one of this module's
-  // own dependencies, so the seam cuts through a cycle. Both directions are
-  // proved to be CALL-time, because that is the only thing that makes it safe.
-  eq(hostOf(MUTUAL_INBOUND_SITE).name, MUTUAL_NAME,
-    'the first inbound edge is hosted by _etWeekBucket, which STAYS in the monolith');
-  eq(BASE_CODE.slice(MUTUAL_INBOUND_SITE, MUTUAL_INBOUND_SITE + MUTUAL_TARGET.length), MUTUAL_TARGET,
-    '…and what it names there is _swingWeekBucket, which LEAVES');
-  ok(REC.deps.indexOf(MUTUAL_NAME) >= 0, '…while this module calls _etWeekBucket in the other direction');
-  eq(refSites(MASKED_MODULE, MUTUAL_NAME).length, MUTUAL_OUTBOUND_CALLS, '…twice');
-  ok(insideFunction(MUTUAL_INBOUND_SITE),
-    'the monolith\'s reference to the module is inside a function body…');
-  ok(refSites(MASKED_MODULE, MUTUAL_NAME).every(insideModuleFunction),
-    '…and both of the module\'s references back are inside function bodies too');
-  ok(!BY_NAME.get(MUTUAL_NAME) || insideFunction(MUTUAL_INBOUND_SITE),
-    'so neither file needs the other to exist while it evaluates: the cycle resolves at CALL time, '
-    + 'which is the only reason a seam may cut through one');
+  // `S`, AND THE RULE #424 LEFT TOO BROAD. This is the one thing about this
+  // layer worth carrying forward, so it is measured rather than described.
+  // THE HISTORY IS READ OUT OF THE SHIPPED CONTRACT, not restated from memory.
+  {
+    const expiry = fs.readFileSync(path.join(ROOT, EXPIRY_CONTRACT), 'utf8');
+    ok(expiry.indexOf(RECORDED_UNITS) >= 0,
+      '#424\'s rejection is still on the record in the manual-expiry contract…');
+    ok(/S\.swing/.test(expiry), '…and it records the reason: `S.swing` assigned at evaluation time');
+  }
+  ok(BY_NAME.has(S_NAME), 'S is a top-level declaration of the base monolith…');
+  eq(BY_NAME.get(S_NAME).form, S_FORM, '…and a const, which is what made #424 fatal');
+  // THE THREE HALVES OF THE DISTINCTION, each on its own. Together they are the
+  // difference between "names S" and "touches S while the file loads".
+  eq(refSites(MASKED_MODULE, S_NAME).length, S_REFS_IN_BODY, 'this module names S three times…');
+  ok(refSites(MASKED_MODULE, S_NAME).every(insideModuleFunction),
+    '…every one inside a function body, so not one of them runs at load…');
+  eq(propertyWriteBases(MASKED_MODULE).filter((x) => x === S_NAME).length, S_PROPERTY_WRITES,
+    '…and it writes NO property through S, which is the thing #424 could not survive');
+  // The negative case, or the rule is only a description of this one module.
+  {
+    // THE SPAN IS PINNED, NOT ONLY USED. Shifting BLOB[0] by one unit still
+    // slices a stretch that writes through S, so the range survived mutation
+    // while checking nothing about WHICH stretch #424 measured. Its first line
+    // is the `// ══` header the audit's region opened on, and the snapped body
+    // ends where it ends.
+    const blobEnd = snapBodyEnd(BASE_CODE, BLOB[0], BLOB[1]);
+    eq(BASE_CODE.slice(BLOB[0], BASE_CODE.indexOf('\n', BLOB[0])), BLOB_OPENING,
+      'control — the stretch #424 measured opens on its own `// ══` header, at exactly BLOB[0]');
+    eq(blobEnd - BLOB[0], BLOB_UNITS, '…and runs BLOB_UNITS units to a snapped body end');
+    const blob = BASE_CODE.slice(BLOB[0], blobEnd);
+    const blobMasked = maskLiterals(blob);
+    const blobFns = functionBodyRanges(blob);
+    ok(propertyWriteBases(blobMasked).filter((x) => x === S_NAME).length > 0,
+      'control — the stretch #424 measured DOES write through S…');
+    ok(refSites(blobMasked, S_NAME).some((i) => !blobFns.some((r) => i >= r.start && i <= r.end)),
+      '…at top level, outside every function body: the rule still rejects it, and should');
+  }
+  // Is a runtime dependency normal here? Counted over the chain, not inferred.
+  {
+    const withDep = fs.readdirSync(path.join(ROOT, 'tests'))
+      .filter((f) => /-boundary-contract\.test\.js$/.test(f))
+      .map((f) => fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))
+      .filter((src) => {
+        const m = src.match(/^const MONOLITH_DEPENDENCIES = (\[[^\]]*\]);$/m);
+        if (!m) return false;
+        try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
+      });
+    eq(withDep.length, LAYERS_WITH_A_DEPENDENCY,
+      'TEN shipped contracts pin a non-empty MONOLITH_DEPENDENCIES — this one included, which is '
+      + 'why the count moved: a runtime dependency is the common case in this chain, not an '
+      + 'exception argued for this layer');
+  }
 
   eq({
     inboundWrites: REC.inWrites, inboundPropertyWrites: REC.inPropWrites,
@@ -657,7 +655,7 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
   }, ZERO_DIRECTIONS,
   'EIGHT of the nine directions measure zero: no write in, none through, none out, '
   + 'no markup either way, no sibling module, and nothing that already left');
-  eq(REC.nine, FULL_NINE, 'nine directions, total score 7 — four edges in and three dependencies out');
+  eq(REC.nine, FULL_NINE, 'nine directions, total score 8 — five edges in and three dependencies out');
 
   // The controls those zeros need, from inputs where the answer differs.
   {
@@ -670,17 +668,16 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
     ok(cp > 0, 'control — the candle-fetch region DOES take writes through a name it owns');
     ok(refSites(STRINGS, 'rsApplyFilters').length > 0,
       'control — the literal view DOES find rsApplyFilters, so the generated-markup zero measures');
-    ok(profile([688306, 695677]).outGen.length > 0,
+    ok(profile([678945, 686316]).outGen.length > 0,
       'control — the ticker-search region DOES generate markup naming names that stay behind');
-    // THE OUTBOUND-MODULE ZERO needs an input where it is not zero, and the
-    // sharpest one is this same region with the next end: extend it by one owner
-    // and the count becomes two. Same start, same code path, different answer.
-    eq(profile([RAW_AT_IN_CODE, ENDS[1].end]).outModule.length, 2,
-      'control — extend the region by one owner and the outbound-module count is no longer zero');
-    ok(MODULE_OWNERS.size > 0, '…over a module-owner map that is populated');
+    // THE OUTBOUND-MODULE ZERO needs an input where the answer differs, not a
+    // restatement that the map is populated — which is true whatever the metric
+    // does. The SPY-rewarm region names things that have already left.
+    ok(profile([338277, 342591]).outModule.length > 0,
+      'control — the SPY-rewarm region DOES name what already left, so this zero is a measurement');
   }
 
-  eq(REC.deps, MONOLITH_DEPENDENCIES, 'it names three things the monolith declares');
+  eq(REC.deps, MONOLITH_DEPENDENCIES, 'it names three things the monolith declares — S among them');
   ok(REC.deps.every((d) => refSites(MASKED_MODULE, d).every(insideModuleFunction)),
     '…every one from inside a function body: runtime dependencies, not load-time ones');
   for (const d of MONOLITH_DEPENDENCIES) {
@@ -688,27 +685,14 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
       d + ' is still declared in the shipped monolith, which loads last of all');
   }
 
-  eq(SIBLINGS.length, LOCAL_SCRIPT_COUNT - 1, 'there are seventy-four siblings to have named it');
+  eq(SIBLINGS.length, LOCAL_SCRIPT_COUNT - 1, 'there are seventy-five siblings to have named it');
   eq(SIBLINGS.filter((s) => REC.names.some((n) => !s.bound.has(n) && refSites(s.masked, n).length)).map((s) => s.rel),
     [], '…and not one of them does');
 
-  // THE OWNER NOTHING OUTSIDE THIS FILE NAMES.
-  eq(refSites(MASKED_MODULE, PRIVATE_OWNER).length, PRIVATE_OWNER_REFS_INSIDE,
-    '_swingLogWeeklySource is named four times inside the module — its declaration and three calls');
-  eq(refSites(maskLiterals(LIVE_CODE), PRIVATE_OWNER).length +
-     refSites(literalView(LIVE_CODE, maskLiterals, stripComments), PRIVATE_OWNER).length +
-     refSites(STATIC_MARKUP, PRIVATE_OWNER).length +
-     SIBLINGS.reduce((n, s) => n + refSites(s.masked, PRIVATE_OWNER).length +
-       refSites(s.strings, PRIVATE_OWNER).length, 0),
-  PRIVATE_OWNER_REFS_OUTSIDE,
-  '…and zero times anywhere else in the application: a global that never needed to be one, '
-  + 'now with every reference in one greppable file');
-  ok(refSites(MASKED_MODULE, PRIVATE_OWNER).length > 1,
-    '…and it is not dead — its own family calls it, which is what tells the two apart');
-
-  // REACHABILITY IN THE BASE, carried forward from the cycle that found it: the
-  // previous layer shipped 6,608 units nothing calls, and it is still nothing
-  // this one can fix, because relocation is not deletion.
+  // REACHABILITY IN THE BASE. Carried forward because the number is a property
+  // of the monolith rather than of any one layer, and because the 6,608 dead
+  // units an earlier cycle relocated are still dead — relocation is not
+  // deletion, and deleting them is a production change of its own.
   const dead = ALL_DECLS.filter((d) => {
     const self = (i) => i >= d.start && i <= d.end;
     return refSites(MASKED, d.name).filter((i) => !self(i)).length === 0 &&
@@ -727,16 +711,18 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
   // different departed function survived it in CI. The claim is about one
   // specific declaration, so it is now measured as such: it left the monolith,
   // the previous layer owns it, and NOTHING in production calls it.
-  ok(!BY_NAME.has(DEPARTED_DEAD), '…while _buildSnapshot is no longer in the monolith…');
-  eq(MODULE_OWNERS.get(DEPARTED_DEAD), 'js/services/journal-snapshot-helpers.js',
-    '…it belongs to the layer that shipped before this one…');
+  // This pin used to assert only `!BY_NAME.has(name)`, which is true of EVERY
+  // departed name — a mutant naming a different one survived it in CI. It pins
+  // the identity now: gone from the monolith, owned by a known layer, called by
+  // nothing anywhere.
+  ok(!BY_NAME.has(DEPARTED_DEAD), '_buildSnapshot is no longer in the monolith…');
+  eq(MODULE_OWNERS.get(DEPARTED_DEAD), DEPARTED_DEAD_OWNER, '…it belongs to the snapshot-helpers layer…');
   eq(refSites(MASKED, DEPARTED_DEAD).length +
      refSites(STRINGS, DEPARTED_DEAD).length +
      refSites(STATIC_MARKUP, DEPARTED_DEAD).length +
-     SIBLINGS.filter((x) => x.rel !== 'js/services/journal-snapshot-helpers.js')
+     SIBLINGS.filter((x) => x.rel !== DEPARTED_DEAD_OWNER)
        .reduce((n, x) => n + refSites(x.masked, DEPARTED_DEAD).length, 0), 0,
-  '…and nothing anywhere in production names it: 6,608 units this chain relocated but cannot '
-  + 'delete, now a named file anyone can remove in one line, which is its own PR');
+  '…and nothing in production names it: 6,608 units this chain relocated but cannot delete');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -753,8 +739,9 @@ section('6. It loads bare, and does nothing at load');
   for (const dep of MONOLITH_DEPENDENCIES) {
     ok(!(dep in ctx), '…and ' + dep + ' is not among them: the dependency is called, never defined');
   }
-  eq(typeof ctx._swingDeriveWeeklyCandles, 'function', 'the entry point the two callers use is there');
-  eq(typeof ctx._swingWeekBucket, 'function', '…as is the one _etWeekBucket reaches back for');
+  eq(typeof ctx._swingResolveDirection, 'function', 'the resolver the five callers reach for is there');
+  eq(typeof ctx._swingRsContext, 'function', '…as is the RS context helper…');
+  eq(typeof ctx._swingVixSuitability, 'function', '…and the VIX suitability check');
 
   const watched = [];
   const ctx2 = {
@@ -776,33 +763,33 @@ section('6. It loads bare, and does nothing at load');
 section('7. Every documented failure, with its exact message');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(null, MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_BAD_INPUT', 'a non-string document is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, null),
-    'SWING_WEEKLY_CANDLES_UNDO_BAD_INPUT', '…and a non-string module');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE.slice(0, -1)),
-    'SWING_WEEKLY_CANDLES_UNDO_MODULE_IDENTITY', 'a truncated module is refused');
+  throwsWith(() => UNDO.undoSwingDirection(null, MODULE),
+    'SWING_DIRECTION_UNDO_BAD_INPUT', 'a non-string document is refused');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX, null),
+    'SWING_DIRECTION_UNDO_BAD_INPUT', '…and a non-string module');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX, MODULE.slice(0, -1)),
+    'SWING_DIRECTION_UNDO_MODULE_IDENTITY', 'a truncated module is refused');
   // WHICH GUARD CATCHES A RE-ABSORBED SEPARATOR, measured rather than assumed:
-  // such a module is 9,361 units with 158 line feeds, so the SIZE guard fires
+  // such a module is 6,503 units with 93 line feeds, so the SIZE guard fires
   // first and MODULE_SEPARATOR never sees it.
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE + '\n'),
-    'SWING_WEEKLY_CANDLES_UNDO_MODULE_IDENTITY',
+  throwsWith(() => UNDO.undoSwingDirection(INDEX, MODULE + '\n'),
+    'SWING_DIRECTION_UNDO_MODULE_IDENTITY',
     'a module that re-absorbed the separator is caught by SIZE, not the separator clause');
   eq((MODULE + '\n').length, UNDO.MODULE_CHARS + 1, '…because it is one unit too long');
   eq(((MODULE + '\n').match(/\n/g) || []).length, UNDO.MODULE_LF + 1, '…and one line feed too many');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX, MODULE.slice(0, -2) + 'x\n'),
-    'SWING_WEEKLY_CANDLES_UNDO_MODULE_SEPARATOR', 'a module not ending `}\\n` is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(BASE, MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_TAG_IDENTITY', 'an already-unextracted document is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(TAG, TAG + TAG), MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_TAG_IDENTITY', 'a duplicated tag is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(ANCHOR_TAG + TAG, TAG + ANCHOR_TAG), MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_TAG_ADJACENCY', 'a reordered tag is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace(INLINE_OPEN, '<!-- x -->' + INLINE_OPEN), MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_TAG_ADJACENCY', 'content wedged between the tag and the monolith is refused');
-  throwsWith(() => UNDO.undoSwingWeeklyCandles(INDEX.replace('</body>', '<!-- foreign --></body>'), MODULE),
-    'SWING_WEEKLY_CANDLES_UNDO_EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
-  eq(UNDO.undoSwingWeeklyCandles(INDEX, MODULE), BASE,
+  throwsWith(() => UNDO.undoSwingDirection(INDEX, MODULE.slice(0, -2) + 'x\n'),
+    'SWING_DIRECTION_UNDO_MODULE_SEPARATOR', 'a module not ending `}\\n` is refused');
+  throwsWith(() => UNDO.undoSwingDirection(BASE, MODULE),
+    'SWING_DIRECTION_UNDO_TAG_IDENTITY', 'an already-unextracted document is refused');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX.replace(TAG, TAG + TAG), MODULE),
+    'SWING_DIRECTION_UNDO_TAG_IDENTITY', 'a duplicated tag is refused');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX.replace(ANCHOR_TAG + TAG, TAG + ANCHOR_TAG), MODULE),
+    'SWING_DIRECTION_UNDO_TAG_ADJACENCY', 'a reordered tag is refused');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX.replace(INLINE_OPEN, '<!-- x -->' + INLINE_OPEN), MODULE),
+    'SWING_DIRECTION_UNDO_TAG_ADJACENCY', 'content wedged between the tag and the monolith is refused');
+  throwsWith(() => UNDO.undoSwingDirection(INDEX.replace('</body>', '<!-- foreign --></body>'), MODULE),
+    'SWING_DIRECTION_UNDO_EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
+  eq(UNDO.undoSwingDirection(INDEX, MODULE), BASE,
     'and the accepted path reconstructs the base exactly');
   ok(UNDO.isApplied(INDEX), 'isApplied sees this layer in the shipped document');
   ok(!UNDO.isApplied(BASE), '…and does not see it in the base');
@@ -817,8 +804,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/swing-direction.js'].sort(),
-    'production footprint is index.html, this module, and every layer cut after it');
+    ['index.html', MODULE_REL],
+    'production footprint is exactly index.html plus the one new module');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -837,10 +824,9 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/swing-direction.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }
 
 console.log('\n' + pass + ' assertions passed.');
-console.log('SWING_WEEKLY_CANDLES_BOUNDARY_OK');
+console.log('SWING_DIRECTION_BOUNDARY_OK');

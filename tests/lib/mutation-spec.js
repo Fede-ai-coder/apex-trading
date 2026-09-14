@@ -50,12 +50,14 @@ function scanPins(src) {
     const valueAt = m.index + m[0].length;
     // Walk to the `;` that closes the declaration at bracket depth zero. A
     // multi-line array or object literal is one declaration, not several.
-    let depth = 0, end = -1, inStr = null;
+    // `code` is the same walk with literal CONTENTS dropped, so the call test
+    // below reads code rather than data. See the note on `pinned`.
+    let depth = 0, end = -1, inStr = null, code = '';
     for (let i = valueAt; i < src.length; i++) {
       const c = src[i];
       if (inStr) {
         if (c === '\\') { i++; continue; }
-        if (c === inStr) inStr = null;
+        if (c === inStr) { inStr = null; code += c; }
         continue;
       }
       // Skip line comments BEFORE tracking string state. An apostrophe in a
@@ -70,7 +72,8 @@ function scanPins(src) {
         if (nl < 0) break;
         i = nl; continue;
       }
-      if (c === '"' || c === "'" || c === '`') { inStr = c; continue; }
+      if (c === '"' || c === "'" || c === '`') { inStr = c; code += c; continue; }
+      code += c;
       if (c === '[' || c === '{' || c === '(') depth++;
       else if (c === ']' || c === '}' || c === ')') depth--;
       else if (c === ';' && depth === 0) { end = i; break; }
@@ -81,7 +84,16 @@ function scanPins(src) {
       name: m[1],
       rhs,
       line: src.slice(0, m.index).split('\n').length,
-      pinned: rhs.indexOf('(') < 0 && rhs.indexOf('=>') < 0,
+      // A `(` or `=>` marks a COMPUTED value, which is not a pin. The test has
+      // to read code, not data: a value that merely CONTAINS a parenthesis —
+      // a banner line, an error message, a marker — is a literal, and testing
+      // the raw text un-pinned it. That is the same silent failure as the two
+      // above, from a third direction: an un-pinned constant is absent from the
+      // coverage report, so no spec is ever asked to mutate it, and HEAD_BANNER
+      // sat that way in the one shipped contract that carries a spec. A `${`
+      // still disqualifies, because a template substitution IS a computation
+      // even though the walk above consumes it as literal text.
+      pinned: code.indexOf('(') < 0 && code.indexOf('=>') < 0 && rhs.indexOf('${') < 0,
     });
   }
   return out;

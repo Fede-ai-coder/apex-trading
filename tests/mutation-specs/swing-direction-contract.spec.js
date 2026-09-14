@@ -1,0 +1,297 @@
+'use strict';
+// ─────────────────────────────────────────────────────────────────────────────
+// Mutation spec — swing direction permanent boundary contract.
+//
+// One mutant per pinned constant. The coverage contract proves on every push
+// that each `find` still appears exactly once in the target and that no pin is
+// left uncovered, then applies all of them against a baseline it verifies green
+// first.
+//
+// `S` GETS SEVEN MUTANTS, because the distinction this layer establishes rests
+// on them: S_NAME, S_REFS_IN_BODY, S_PROPERTY_WRITES, S_FORM and the three that
+// pin #424's block — BLOB, BLOB_OPENING and BLOB_UNITS. The rule audit #424
+// wrote was "a region that names a monolith const is disqualified", and this
+// layer narrows it to "a region that READS one at evaluation time is". The
+// narrowing is only worth anything if the negative control still fails on #424's
+// own block, so the control has to run against the stretch it was written for,
+// not an arbitrary one — and ONE mutant on the range was not enough to prove
+// that: shifting BLOB by a unit still sliced a stretch that writes through S, so
+// the mutant survived while the pin checked nothing about WHICH stretch.
+// BLOB_OPENING and BLOB_UNITS are what the span is pinned by now, and both exist
+// because the full pass reported that survivor.
+//
+// ZERO-VALUED PINS get the mutation that matters for them. TOP_LEVEL_STATEMENT_-
+// LINES, S_PROPERTY_WRITES and the eight fields of ZERO_DIRECTIONS are all `0`,
+// and `0` is also what a metric that measures nothing returns — so each is
+// mutated UP, to prove the contract reads a measurement rather than a constant.
+// EVALUATION_TIME_READS is empty for the same reason and is mutated to ['S'],
+// which is the one name that would make the claim false if it were read at load
+// time. The controls that prove those metrics discriminate live in §5 and §6.
+//
+// DEPARTED_DEAD is mutated to ANOTHER REAL DEPARTED OWNER rather than to a
+// misspelling: the assertion says `_buildSnapshot` is unreachable in this base
+// AND that it now lives in the snapshot-helpers module, so only a name that is
+// really declared somewhere tests both halves. A misspelling would fail on
+// existence, which is the boring reason.
+//
+// OWNER_SIZES was a survivor for the other reason a pin can check nothing: it
+// was declared and never read. The pass reported it, §2 now asserts the three
+// sizes in DECLARATION order, and the mutant moves one of them by a unit.
+//
+// Range and object literals are mutated by MOVING a value, never by extending
+// them: an appended element perturbs nothing and survives. A mutant that edits
+// a line INSIDE a multi-line literal cannot name its pin in the find text, so it
+// declares `covers` instead, and the coverage contract checks that every
+// declared name is a real pin.
+//
+// CHAIN is mutated by REPLACING an entry, not by appending one: the array is
+// CHRONOLOGICAL, so an appended layer would also be a lie about the order, and a
+// replaced entry is the failure the list is there to prevent.
+//
+// SMALLEST_MODULE and REJECTED_LAYER are mutated to OTHER REAL MODULES in the
+// chain, for the same reason: a path that ships is what tests the claim, and a
+// path that does not would fail on existence rather than on rank or order.
+//
+// HEAD_BANNER carries a mutant of its own. Until #455 the pin scanner read the
+// `(` in the banner text as a call and reported the constant as no pin at all,
+// so nothing asked for it — the same silent hole as the comment-apostrophe and
+// next-line cases, from a third direction.
+// ─────────────────────────────────────────────────────────────────────────────
+module.exports = {
+  target: 'tests/swing-direction-boundary-contract.test.js',
+  runs: ['tests/swing-direction-boundary-contract.test.js'],
+  exempt: {},
+  mutants: [
+  { id: "MODULE_REL",
+    find: "const MODULE_REL = 'js/services/swing-direction.js';",
+    replace: "const MODULE_REL = 'js/services/swing-direction.jsX';", },
+  { id: "TAG",
+    find: "const TAG = '<script src=\"./js/services/swing-direction.js\"></script>\\n';",
+    replace: "const TAG = '<script src=\"./js/services/swing-directionX.js\"></script>\\n';", },
+  { id: "ANCHOR_TAG",
+    find: "const ANCHOR_TAG = '<script src=\"./js/services/swing-weekly-candles.js\"></script>\\n';",
+    replace: "const ANCHOR_TAG = '<script src=\"./js/services/swing-weekly-candlesX.js\"></script>\\n';", },
+  { id: "INLINE_OPEN",
+    find: "const INLINE_OPEN = '<script>';",
+    replace: "const INLINE_OPEN = '<scriptX>';", },
+  { id: "BASE_SHA",
+    find: "const BASE_SHA = '4622657';",
+    replace: "const BASE_SHA = '4622657X';", },
+  { id: "CONTRACT_REL",
+    find: "const CONTRACT_REL = 'tests/swing-direction-boundary-contract.test.js';",
+    replace: "const CONTRACT_REL = 'tests/swing-direction-boundary-contract.test.jsX';", },
+  { id: "UNDO_REL",
+    find: "const UNDO_REL = 'tests/lib/swing-direction-undo.js';",
+    replace: "const UNDO_REL = 'tests/lib/swing-direction-undo.jsX';", },
+  { id: "AUDIT_REL",
+    find: "const AUDIT_REL = 'tests/temporary-swing-direction-boundary-audit.test.js';",
+    replace: "const AUDIT_REL = 'tests/temporary-swing-direction-boundary-audit.test.jsX';", },
+  { id: "AUDIT_SPEC_REL",
+    find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/swing-direction-audit.spec.js';",
+    replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/swing-direction-audit.spec.jsX';", },
+  { id: "CONTRACT_SPEC_REL",
+    find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-direction-contract.spec.js';",
+    replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-direction-contract.spec.jsX';", },
+  { id: "TEST_FILE_COUNT",
+    find: "const TEST_FILE_COUNT = 160;",
+    replace: "const TEST_FILE_COUNT = 159;", },
+  { id: "LOCAL_SCRIPT_COUNT",
+    find: "const LOCAL_SCRIPT_COUNT = 76;",
+    replace: "const LOCAL_SCRIPT_COUNT = 75;", },
+  { id: "MODULE_POSITION",
+    find: "const MODULE_POSITION = 75;",
+    replace: "const MODULE_POSITION = 74;", },
+  { id: "CODE_AT",
+    find: "const CODE_AT = 114340;",
+    replace: "const CODE_AT = 114341;", },
+  { id: "CODE_CHARS",
+    find: "const CODE_CHARS = 1405988;",
+    replace: "const CODE_CHARS = 1405989;", },
+  { id: "RAW_AT_IN_CODE",
+    find: "const RAW_AT_IN_CODE = 406512;",
+    replace: "const RAW_AT_IN_CODE = 406513;", },
+  { id: "RAW_END_IN_CODE",
+    find: "const RAW_END_IN_CODE = 413015;",
+    replace: "const RAW_END_IN_CODE = 413016;", },
+  { id: "BODY_END_IN_CODE",
+    find: "const BODY_END_IN_CODE = 413014;",
+    replace: "const BODY_END_IN_CODE = 413013;", },
+  { id: "TOP_LEVEL_BANNERS",
+    find: "const TOP_LEVEL_BANNERS = 224;",
+    replace: "const TOP_LEVEL_BANNERS = 223;", },
+  { id: "RESIDUAL_MONOLITH",
+    find: "const RESIDUAL_MONOLITH = 1399485;",
+    replace: "const RESIDUAL_MONOLITH = 1399486;", },
+  { id: "TAG_GAP",
+    find: "const TAG_GAP = 406520;",
+    replace: "const TAG_GAP = 406521;", },
+  { id: "NET_REDUCTION",
+    find: "const NET_REDUCTION = 6446;",
+    replace: "const NET_REDUCTION = 6445;", },
+  { id: "OWNERS_EXPECTED",
+    find: "const OWNERS_EXPECTED = ['_swingResolveDirection', '_swingRsContext', '_swingVixSuitability'];",
+    replace: "const OWNERS_EXPECTED = ['_swingResolveDirection', '_swingRsContext', '_swingVixSuitabilityX'];", },
+  { id: "OWNER_COUNT",
+    find: "const OWNER_COUNT = 3;",
+    replace: "const OWNER_COUNT = 4;", },
+  { id: "FUNCTION_OWNERS",
+    find: "const FUNCTION_OWNERS = 3;",
+    replace: "const FUNCTION_OWNERS = 2;", },
+  { id: "BODY_ENDING",
+    find: "const BODY_ENDING = '}\\n';",
+    replace: "const BODY_ENDING = '};\\n';", },
+  { id: "HEAD_BANNER",
+    find: "const HEAD_BANNER = '// ─── Final multi-timeframe Swing direction (PURE, testable) ───────────────────';",
+    replace: "const HEAD_BANNER = '// ─── Final multi-timeframe Swing direction (PURE, testable) ──────────────────';", },
+  { id: "CODE_LINES",
+    find: "const CODE_LINES = 49;",
+    replace: "const CODE_LINES = 50;", },
+  { id: "TOTAL_LINES",
+    find: "const TOTAL_LINES = 93;",
+    replace: "const TOTAL_LINES = 92;", },
+  { id: "COMMENT_LINES",
+    find: "const COMMENT_LINES = 44;",
+    replace: "const COMMENT_LINES = 43;", },
+  { id: "HEADER_UNITS",
+    find: "const HEADER_UNITS = 1604;",
+    replace: "const HEADER_UNITS = 1605;", },
+  { id: "EXTERNAL_EDGES",
+    find: "const EXTERNAL_EDGES = 5;",
+    replace: "const EXTERNAL_EDGES = 4;", },
+  { id: "EDGE_SITES",
+    find: "const EDGE_SITES = [417497, 528964, 571560, 574912, 621943];",
+    replace: "const EDGE_SITES = [417497, 528964, 571560, 574912, 621944];", },
+  { id: "CALLERS",
+    find: "const CALLERS = ['_swingBuildCandidate', '_swingEnrichOneOperationalRow', '_swingLazyEnrich4h',",
+    replace: "const CALLERS = ['_swingBuildCandidate', '_swingEnrichOneOperationalRowX', '_swingLazyEnrich4h',", },
+  { id: "MONOLITH_DEPENDENCIES",
+    find: "const MONOLITH_DEPENDENCIES = ['S', 'SWING_VIX_MAX_SUITABLE', '_swingNormDir'];",
+    replace: "const MONOLITH_DEPENDENCIES = ['S', 'SWING_VIX_MAX_SUITABLE', '_swingNormDirX'];", },
+  { id: "ZERO_DIRECTIONS",
+    find: "  inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,",
+    replace: "  inboundWrites: 1, inboundPropertyWrites: 0, outboundWrites: 0,",
+    covers: ["ZERO_DIRECTIONS"], },
+  { id: "ZERO_DIRECTIONS_TAIL",
+    find: "  outboundGenerated: 0, outboundModule: 0,",
+    replace: "  outboundGenerated: 0, outboundModule: 1,",
+    covers: ["ZERO_DIRECTIONS"], },
+  { id: "FULL_NINE",
+    find: "const FULL_NINE = 8;",
+    replace: "const FULL_NINE = 7;", },
+  { id: "EVALUATION_TIME_READS",
+    find: "const EVALUATION_TIME_READS = [];",
+    replace: "const EVALUATION_TIME_READS = ['S'];", },
+  { id: "TOP_LEVEL_STATEMENT_LINES",
+    find: "const TOP_LEVEL_STATEMENT_LINES = 0;",
+    replace: "const TOP_LEVEL_STATEMENT_LINES = 1;", },
+  { id: "VM_GLOBALS",
+    find: "const VM_GLOBALS = 3;",
+    replace: "const VM_GLOBALS = 4;", },
+  { id: "S_NAME",
+    find: "const S_NAME = 'S';",
+    replace: "const S_NAME = 'SX';", },
+  { id: "S_REFS_IN_BODY",
+    find: "const S_REFS_IN_BODY = 3;",
+    replace: "const S_REFS_IN_BODY = 4;", },
+  { id: "S_PROPERTY_WRITES",
+    find: "const S_PROPERTY_WRITES = 0;",
+    replace: "const S_PROPERTY_WRITES = 1;", },
+  { id: "S_FORM",
+    find: "const S_FORM = 'const';",
+    replace: "const S_FORM = 'let';", },
+  { id: "EXPIRY_CONTRACT",
+    find: "const EXPIRY_CONTRACT = 'tests/portfolio-expiry-manual-boundary-contract.test.js';",
+    replace: "const EXPIRY_CONTRACT = 'tests/portfolio-traffic-light-boundary-contract.test.js';", },
+  { id: "RECORDED_UNITS",
+    find: "const RECORDED_UNITS = '242,294';",
+    replace: "const RECORDED_UNITS = '242,295';", },
+  { id: "LAYERS_WITH_A_DEPENDENCY",
+    find: "const LAYERS_WITH_A_DEPENDENCY = 10;",
+    replace: "const LAYERS_WITH_A_DEPENDENCY = 9;", },
+  { id: "BLOB",
+    find: "const BLOB = [391565, 626055];",
+    replace: "const BLOB = [391566, 626055];", },
+  { id: "BLOB_OPENING",
+    find: "const BLOB_OPENING = '// ═══════════════════════════════════════════════════════════════════════════════';",
+    replace: "const BLOB_OPENING = '// ══════════════════════════════════════════════════════════════════════════════';", },
+  { id: "BLOB_UNITS",
+    find: "const BLOB_UNITS = 234489;",
+    replace: "const BLOB_UNITS = 234488;", },
+  { id: "ENDS_SHIPPED",
+    find: "  { end: 413015, units: 6503, owners: 3, nine: 8 },",
+    replace: "  { end: 413015, units: 6503, owners: 3, nine: 9 },",
+    covers: ["ENDS"], },
+  { id: "ENDS_SECOND",
+    find: "  { end: 413963, units: 7451, owners: 4, nine: 9 },",
+    replace: "  { end: 413963, units: 7451, owners: 4, nine: 10 },",
+    covers: ["ENDS"], },
+  { id: "ENDS_THIRD",
+    find: "  { end: 422877, units: 16365, owners: 6, nine: 23 },",
+    replace: "  { end: 422877, units: 16365, owners: 6, nine: 24 },",
+    covers: ["ENDS"], },
+  { id: "SHIPPED_ROW",
+    find: "const SHIPPED_ROW = 0;",
+    replace: "const SHIPPED_ROW = 1;", },
+  { id: "FOURTH_END",
+    find: "const FOURTH_END = 425438;",
+    replace: "const FOURTH_END = 425439;", },
+  { id: "FOURTH_END_ERROR",
+    find: "const FOURTH_END_ERROR = 'EXTRACTION_SEAM_NO_STRUCTURAL_SEPARATOR';",
+    replace: "const FOURTH_END_ERROR = 'EXTRACTION_SEAM_BODY_NOT_LINE_TERMINATED';", },
+  { id: "SECOND_END_OWNER",
+    find: "const SECOND_END_OWNER = '_swingScore';",
+    replace: "const SECOND_END_OWNER = '_swingBuildCandidate';", },
+  { id: "OWNER_SIZES",
+    find: "const OWNER_SIZES = [3661, 651, 501];",
+    replace: "const OWNER_SIZES = [3661, 651, 502];", },
+  { id: "DEAD_DECLS",
+    find: "const DEAD_DECLS = 18;",
+    replace: "const DEAD_DECLS = 17;", },
+  { id: "DEAD_UNITS",
+    find: "const DEAD_UNITS = 5318;",
+    replace: "const DEAD_UNITS = 5319;", },
+  { id: "DEPARTED_DEAD",
+    find: "const DEPARTED_DEAD = '_buildSnapshot';",
+    replace: "const DEPARTED_DEAD = '_swingWeekBucket';", },
+  { id: "DEPARTED_DEAD_OWNER",
+    find: "const DEPARTED_DEAD_OWNER = 'js/services/journal-snapshot-helpers.js';",
+    replace: "const DEPARTED_DEAD_OWNER = 'js/services/swing-weekly-candles.js';", },
+  { id: "CHAIN",
+    find: "  'js/services/swing-weekly-candles.js',\n  // Newest last: CHAIN is CHRONOLOGICAL, not sorted.",
+    replace: "  'js/services/journal-snapshot-prefetch.js',\n  // Newest last: CHAIN is CHRONOLOGICAL, not sorted.",
+    covers: ["CHAIN"], },
+  { id: "CHAIN_LENGTH",
+    find: "const CHAIN_LENGTH = 32;",
+    replace: "const CHAIN_LENGTH = 31;", },
+  { id: "SMALLEST_MODULE",
+    find: "const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';",
+    replace: "const SMALLEST_MODULE = 'js/services/scanner-ivr-throttle.js';", },
+  { id: "SMALLEST_CHARS",
+    find: "const SMALLEST_CHARS = 1761;",
+    replace: "const SMALLEST_CHARS = 1762;", },
+  { id: "LARGEST_CHARS",
+    find: "const LARGEST_CHARS = 71811;",
+    replace: "const LARGEST_CHARS = 71812;", },
+  { id: "MODULE_SIZE_RANK",
+    find: "const MODULE_SIZE_RANK = 8;",
+    replace: "const MODULE_SIZE_RANK = 7;", },
+  { id: "LAYERS_ENDING_BRACE",
+    find: "const LAYERS_ENDING_BRACE = 29;",
+    replace: "const LAYERS_ENDING_BRACE = 30;", },
+  { id: "LAYERS_WITH_SEPARATOR",
+    find: "const LAYERS_WITH_SEPARATOR = 24;",
+    replace: "const LAYERS_WITH_SEPARATOR = 25;", },
+  { id: "LAYERS_WITH_RAW_PAIR",
+    find: "const LAYERS_WITH_RAW_PAIR = 21;",
+    replace: "const LAYERS_WITH_RAW_PAIR = 22;", },
+  { id: "LAYERS_WITHOUT_SEPARATOR",
+    find: "const LAYERS_WITHOUT_SEPARATOR = 8;",
+    replace: "const LAYERS_WITHOUT_SEPARATOR = 9;", },
+  { id: "REJECTED_LAYER",
+    find: "const REJECTED_LAYER = 'js/portfolio/portfolio-expiry-manual.js';",
+    replace: "const REJECTED_LAYER = 'js/portfolio/portfolio-traffic-light.js';", },
+  { id: "LAYERS_SINCE_REJECTION",
+    find: "const LAYERS_SINCE_REJECTION = 14;",
+    replace: "const LAYERS_SINCE_REJECTION = 13;", },
+  ],
+};

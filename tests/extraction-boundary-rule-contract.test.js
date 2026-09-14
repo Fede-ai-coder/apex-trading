@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const SWING_DIRECTION = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS = require('./lib/chart-interactions-undo.js');
@@ -187,6 +188,7 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = SWING_DIRECTION.undoSwingDirection(doc, read('js/services/swing-direction.js'));
   doc = SWING_WEEKLY_CANDLES.undoSwingWeeklyCandles(doc, read('js/services/swing-weekly-candles.js'));
   doc = JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(doc, read('js/services/journal-snapshot-helpers.js'));
   doc = CHART_INTERACTIONS.undoChartInteractions(doc, read('js/ui/chart-interactions.js'));
