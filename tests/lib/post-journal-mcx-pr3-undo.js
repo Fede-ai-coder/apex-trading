@@ -174,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const SWING_DIRECTION = require('./swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES = require('./swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS = require('./journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS = require('./chart-interactions-undo.js');
@@ -207,6 +208,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const SWING_DIRECTION_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-direction.js'),
+  'utf8'
+);
 const SWING_WEEKLY_CANDLES_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-weekly-candles.js'),
   'utf8'
@@ -333,9 +338,12 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preSwingWeeklyCandles = SWING_WEEKLY_CANDLES.isApplied(html)
-    ? SWING_WEEKLY_CANDLES.undoSwingWeeklyCandles(html, SWING_WEEKLY_CANDLES_SOURCE)
+  const preSwingDirection = SWING_DIRECTION.isApplied(html)
+    ? SWING_DIRECTION.undoSwingDirection(html, SWING_DIRECTION_SOURCE)
     : html;
+  const preSwingWeeklyCandles = SWING_WEEKLY_CANDLES.isApplied(preSwingDirection)
+    ? SWING_WEEKLY_CANDLES.undoSwingWeeklyCandles(preSwingDirection, SWING_WEEKLY_CANDLES_SOURCE)
+    : preSwingDirection;
   const preJournalSnapshotHelpers = JOURNAL_SNAPSHOT_HELPERS.isApplied(preSwingWeeklyCandles)
     ? JOURNAL_SNAPSHOT_HELPERS.undoJournalSnapshotHelpers(preSwingWeeklyCandles, JOURNAL_SNAPSHOT_HELPERS_SOURCE)
     : preSwingWeeklyCandles;

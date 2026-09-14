@@ -268,5 +268,13 @@ module.exports = {
   { id: "BLOB_HIDDEN_BANNERS",
     find: "const BLOB_HIDDEN_BANNERS = 29;",
     replace: "const BLOB_HIDDEN_BANNERS = 30;", },
+  // HEAD_BANNER became visible to the pin scanner in #455: the `(` in
+  // "(frontend; …)" was being read as a call, so the constant was reported as
+  // no pin at all and no spec was ever asked to mutate it. The mutation moves
+  // one dash, because the assertion compares the module's FIRST LINE verbatim
+  // and a changed word would also be caught by a weaker reading of it.
+  { id: "HEAD_BANNER",
+    find: "const HEAD_BANNER = '// ─── Weekly candle derivation (frontend; no backend weekly series exists) ─────';",
+    replace: "const HEAD_BANNER = '// ─── Weekly candle derivation (frontend; no backend weekly series exists) ────';", },
   ],
 };

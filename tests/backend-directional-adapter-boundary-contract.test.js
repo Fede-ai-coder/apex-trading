@@ -672,9 +672,9 @@ eq(adapterTagIdx, previewTagIdx - 1, 'tag order: the adapter is the external cla
   ok(ttReconnectTagIdx >= 0, 'tag order: the TT reconnect owner is present');
   eq(apexPostAuthTagIdx, ttReconnectTagIdx - 1,
      'tag order: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(ttReconnectTagIdx, inlineTagIdx - 20,
-     'tag order: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail,\n' +
-     '     portfolio data-fetch, backend-portfolios, manual-expiry and traffic-light owners');
+  eq(ttReconnectTagIdx, inlineTagIdx - 21,
+     'tag order: the TT reconnect owner precedes every layer cut after it — the gap is counted\n' +
+     '     off the inline tag rather than listed here, because it grows by one each cycle');
 }
 
 const APP_PARTS = PARTS.filter(function (p) { return p.isAppJs && p.code != null; });
@@ -720,9 +720,9 @@ ok(previewPart.length === 1 && previewPart[0].start >= adapterPart[0].end,
 // only its distance from the tail grew.
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter is the application script immediately before the preview module');
-eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 43,
+eq(PART_RANGES.indexOf(adapterPart[0]), PART_RANGES.length - 44,
    'ORDER: the adapter sits that many parts from the tail — the distance grows with every layer');
-eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 42,
+eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.length - 43,
    'ORDER: the preview module is the application script immediately before the DSB pure adapter');
 eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
    'ORDER: the adapter/preview adjacency is measured, not just their absolute slots');
@@ -813,8 +813,8 @@ eq(PART_RANGES.indexOf(previewPart[0]), PART_RANGES.indexOf(adapterPart[0]) + 1,
   eq(ttReconnectPart.length, 1, 'ORDER: the TT reconnect owner is present exactly once');
   eq(PART_RANGES.indexOf(apexPostAuthPart[0]), PART_RANGES.indexOf(ttReconnectPart[0]) - 1,
      'ORDER: the Apex post-auth owner is immediately before the TT reconnect owner');
-  eq(PART_RANGES.indexOf(ttReconnectPart[0]), PART_RANGES.length - 21,
-     'ORDER: the TT reconnect owner precedes the Journal Close Legs, trade-forms, trade-detail, portfolio and traffic-light owners');
+  eq(PART_RANGES.indexOf(ttReconnectPart[0]), PART_RANGES.length - 22,
+     'ORDER: the TT reconnect owner precedes every layer cut after it — the gap is counted off\n     PART_RANGES rather than listed here, because it grows by one each cycle');
   ok(dsbPanelPart[0].start >= dsbServicePart[0].end,
      'ORDER: the DSB panel is loaded AFTER the DSB service');
   ok(dsbAdapterPart[0].start >= previewPart[0].end,

@@ -278,6 +278,34 @@ for (const { file, spec } of loaded) {
   '…and a real declaration that was invisible this way is a pin now');
   eq(SPECS.pinNames('  const E = 5;\n'), [],
     'control — an indented const is not top level, so it is not a pin');
+
+  // A PARENTHESIS IN THE VALUE MUST NOT UN-PIN A CONSTANT. The same silent
+  // failure as the two above, from a third direction: `(` and `=>` mark a
+  // COMPUTED value, and the test read the raw declaration text, so a literal
+  // that merely CONTAINED a parenthesis — a banner line, a message, a marker —
+  // stopped being a pin. Seventy-four declarations across the suite were in
+  // that state, and the only ones in a file carrying a spec were the two
+  // HEAD_BANNER declarations the clause below names — which is why nothing
+  // surfaced it: a pin nobody reports is a pin nobody is asked to cover.
+  eq(SPECS.pinNames("const H = '// ─── Weekly candles (frontend) ───';\n"), ['H'],
+    'a parenthesis INSIDE a string literal does NOT un-pin the constant');
+  eq(SPECS.pinNames("const H = '// ─── Weekly candles ───';\n"), ['H'],
+    'control — the same value without the parenthesis is a pin too, so the case above measures');
+  eq(SPECS.pinNames('const H = f(1);\n'), [],
+    'control — a parenthesis in CODE still un-pins it: a call is not a pin');
+  eq(SPECS.pinNames("const H = 'a => b';\n"), ['H'],
+    '…and an arrow inside a literal is data, not an arrow function');
+  eq(SPECS.pinNames('const H = x => x;\n'), [],
+    'control — an arrow in code still un-pins it');
+  eq(SPECS.pinNames('const H = `a${f()}b`;\n'), [],
+    'a template SUBSTITUTION is a computation, so it un-pins even though the walk reads it as literal text');
+  eq(SPECS.pinNames('const H = `ab`;\n'), ['H'],
+    'control — a template with no substitution is a pin, so the case above measures');
+  for (const rel of ['tests/swing-weekly-candles-boundary-contract.test.js',
+    'tests/swing-direction-boundary-contract.test.js']) {
+    ok(SPECS.pinNames(fs.readFileSync(path.join(ROOT, rel), 'utf8')).indexOf('HEAD_BANNER') >= 0,
+      '…and the real declaration that sat invisible this way is a pin now: ' + rel);
+  }
   // And the coverage arithmetic itself, driven on a synthetic spec.
   const synthetic = { target: FIXTURE, mutants: [{ id: 'x', find: 'CHECKED_PIN = 7', replace: 'CHECKED_PIN = 8' }] };
   eq(SPECS.coverage(synthetic, src).uncovered, ['UNCHECKED_PIN'],

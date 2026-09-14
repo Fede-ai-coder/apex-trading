@@ -140,7 +140,7 @@ const VM_GLOBALS = 11;
 // for this layer. Counted, because the audit's first draft said "two" from the
 // layers nearest to hand and the real answer was six — this contract makes it
 // eight, the chart-interactions layer of #449 having joined them.
-const CONTRACTS_WITH_A_DEPENDENCY = 9;
+const CONTRACTS_WITH_A_DEPENDENCY = 10;
 
 // ── The family it was cut out of ─────────────────────────────────────────────
 const CANDLES = [75943, 80720];
@@ -249,13 +249,18 @@ console.log('relocation only · audited #446 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
-const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(LIVE_INDEX)
-  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
+  ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
+      PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
+  : PRE_SWING_DIRECTION;
 const PRE_JOURNAL_SNAPSHOT_HELPERS = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(PRE_SWING_WEEKLY_CANDLES)
   ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
       PRE_SWING_WEEKLY_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
@@ -521,7 +526,7 @@ section('5. Coupling, in all seven directions');
         return m && m[1].trim() !== '[]';
       });
     eq(withDeps.length, CONTRACTS_WITH_A_DEPENDENCY,
-      'EIGHT shipped contracts now pin a non-empty MONOLITH_DEPENDENCIES, this one included');
+      'the shipped contracts pinning a non-empty MONOLITH_DEPENDENCIES are counted over the\n       whole set, this one included — the count lives in CONTRACTS_WITH_A_DEPENDENCY, not in\n       this sentence, which every cycle would otherwise rewrite wrong');
     ok(withDeps.indexOf(path.basename(CONTRACT_REL)) >= 0, '…and this contract is one of them');
   }
 
@@ -692,7 +697,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   // base carries the module #449 cut as well. Re-terminated each time the chain
   // grows, rather than loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js'].sort(),
+    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js'].sort(),
     'production footprint is index.html, this module, and the layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -726,6 +731,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/ui/chart-interactions.js' ||
     rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'js/services/swing-weekly-candles.js' ||
+    rel === 'js/services/swing-direction.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }
