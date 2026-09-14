@@ -458,6 +458,21 @@ eq(BODY.slice(0, BODY.indexOf('\n')), OPENING_LINE, 'it opens on the function de
 ok(RAW_AT === 0 || CODE[RAW_AT - 1] === '\n', '…at a line start, as a relocatable span must');
 eq(CODE_AT + RAW_AT, 1044070, 'in index.html coordinates the span starts here');
 
+// WHAT THE CUT WOULD ACHIEVE. Both of these were declared and asserted by
+// NOTHING in the first draft, and the mutation pass said so — the same defect
+// it found in OWNER_SIZES last cycle, which is twice now that a pin written for
+// the Phase-2 handoff was never read by the phase that wrote it.
+{
+  const TAG = '<script src="./' + MODULE_REL_IF_CUT + '"></script>\n';
+  eq(RAW_CHARS - TAG.length, NET_REDUCTION,
+    'the span leaves, a 70-unit tag arrives: index.html falls by NET_REDUCTION units net');
+  eq(BASE_CHARS - NET_REDUCTION, 1510282, '…from 1,513,908 to 1,510,282');
+  eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH,
+    '…and the inline monolith is left at RESIDUAL_MONOLITH units');
+  ok(NET_REDUCTION < RAW_CHARS,
+    'control — the reduction is NET: it is smaller than the span, because the tag costs bytes too');
+}
+
 const OWNERS = DECLS.filter((d) => d.start >= RAW_AT && d.end < RAW_END);
 eq(OWNERS.map((d) => d.name), OWNERS_EXPECTED, 'the region declares exactly one name at top level');
 eq(OWNERS.length, OWNER_COUNT, '…OWNER_COUNT of them');

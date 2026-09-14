@@ -35,6 +35,13 @@
 // text, so it declares `covers` instead, and the coverage contract checks that
 // every declared name is a real pin.
 //
+// NET_REDUCTION and RESIDUAL_MONOLITH were SURVIVORS on the first full pass,
+// for the reason a pin most often checks nothing: both were declared for the
+// Phase-2 handoff and read by no assertion at all. That is the second cycle
+// running that a handoff pin shipped unread — OWNER_SIZES was the first — so §2
+// now derives both, including the tag Phase 2 would add, and the mutants move
+// each by one unit.
+//
 // SITE_ENDS carries three mutants, one per row. The table is what says the cut
 // stops at one owner and WHY, so a dropped or altered row is the failure it
 // exists to prevent, and each row is mutated in the column that decides it.
