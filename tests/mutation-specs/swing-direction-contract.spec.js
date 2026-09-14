@@ -7,13 +7,18 @@
 // left uncovered, then applies all of them against a baseline it verifies green
 // first.
 //
-// `S` GETS FIVE MUTANTS, because the distinction this layer establishes rests
-// on them: S_NAME, S_REFS_IN_BODY, S_PROPERTY_WRITES, S_FORM and BLOB. The rule
-// audit #424 wrote was "a region that names a monolith const is disqualified",
-// and this layer narrows it to "a region that READS one at evaluation time is".
-// The narrowing is only worth anything if the negative control still fails on
-// #424's own block, so BLOB is mutated to a different span: the control has to
-// be run against the stretch it was written for, not against an arbitrary one.
+// `S` GETS SEVEN MUTANTS, because the distinction this layer establishes rests
+// on them: S_NAME, S_REFS_IN_BODY, S_PROPERTY_WRITES, S_FORM and the three that
+// pin #424's block — BLOB, BLOB_OPENING and BLOB_UNITS. The rule audit #424
+// wrote was "a region that names a monolith const is disqualified", and this
+// layer narrows it to "a region that READS one at evaluation time is". The
+// narrowing is only worth anything if the negative control still fails on #424's
+// own block, so the control has to run against the stretch it was written for,
+// not an arbitrary one — and ONE mutant on the range was not enough to prove
+// that: shifting BLOB by a unit still sliced a stretch that writes through S, so
+// the mutant survived while the pin checked nothing about WHICH stretch.
+// BLOB_OPENING and BLOB_UNITS are what the span is pinned by now, and both exist
+// because the full pass reported that survivor.
 //
 // ZERO-VALUED PINS get the mutation that matters for them. TOP_LEVEL_STATEMENT_-
 // LINES, S_PROPERTY_WRITES and the eight fields of ZERO_DIRECTIONS are all `0`,
@@ -28,6 +33,10 @@
 // AND that it now lives in the snapshot-helpers module, so only a name that is
 // really declared somewhere tests both halves. A misspelling would fail on
 // existence, which is the boring reason.
+//
+// OWNER_SIZES was a survivor for the other reason a pin can check nothing: it
+// was declared and never read. The pass reported it, §2 now asserts the three
+// sizes in DECLARATION order, and the mutant moves one of them by a unit.
 //
 // Range and object literals are mutated by MOVING a value, never by extending
 // them: an appended element perturbs nothing and survives. A mutant that edits
@@ -202,6 +211,12 @@ module.exports = {
   { id: "BLOB",
     find: "const BLOB = [391565, 626055];",
     replace: "const BLOB = [391566, 626055];", },
+  { id: "BLOB_OPENING",
+    find: "const BLOB_OPENING = '// ═══════════════════════════════════════════════════════════════════════════════';",
+    replace: "const BLOB_OPENING = '// ══════════════════════════════════════════════════════════════════════════════';", },
+  { id: "BLOB_UNITS",
+    find: "const BLOB_UNITS = 234489;",
+    replace: "const BLOB_UNITS = 234488;", },
   { id: "ENDS_SHIPPED",
     find: "  { end: 413015, units: 6503, owners: 3, nine: 8 },",
     replace: "  { end: 413015, units: 6503, owners: 3, nine: 9 },",

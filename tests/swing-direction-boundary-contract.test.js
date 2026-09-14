@@ -140,6 +140,8 @@ const RECORDED_UNITS = '242,294';
 const LAYERS_WITH_A_DEPENDENCY = 10;
 // The stretch #424 rejected, in THIS base's coordinates.
 const BLOB = [391565, 626055];
+const BLOB_OPENING = '// ═══════════════════════════════════════════════════════════════════════════════';
+const BLOB_UNITS = 234489;
 
 // ── The four ends audit #454 measured ────────────────────────────────────────
 const ENDS = [
@@ -381,7 +383,7 @@ section('1. The shipped document, and the base it came from');
   eq(Buffer.byteLength(INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…1,549,271 bytes');
   eq((INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…26,328 line feeds');
   eq(sha256(INDEX), UNDO.EXTRACTED_SHA256, '…and hashes to the shipped digest');
-  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'seventy-five local scripts ship');
+  eq(LOCALS.length, LOCAL_SCRIPT_COUNT, 'the shipped document carries LOCAL_SCRIPT_COUNT local scripts');
   eq(LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS, '…which is what the undo helper pins');
   eq(LOCALS.indexOf(MODULE_REL), MODULE_POSITION, 'this module is the LAST of them');
   eq(LOCALS.length - 1, UNDO.BASE_LOCAL_SCRIPTS, '…one more than the base carried');
@@ -399,7 +401,7 @@ section('1. The shipped document, and the base it came from');
 section('2. The module is the block, verbatim');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 9,360 units');
+  eq(MODULE.length, UNDO.MODULE_CHARS, 'the module is 6,502 units');
   eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…9,426 bytes');
   eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…157 line feeds');
   eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and hashes to the digest #452 pinned BEFORE the move');
@@ -467,6 +469,14 @@ section('4. Three ends, the screen that could not see them, and the chain');
   eq(OWNERS.length, OWNER_COUNT, 'the module declares three names at top level');
   eq(OWNERS.map((d) => d.name), OWNERS_EXPECTED, '…in this order');
   eq(OWNERS.filter((d) => d.form === 'function').length, FUNCTION_OWNERS, '…all three functions');
+  // OWNER_SIZES ran as a comment until the mutation pass reported it a survivor:
+  // it was declared and never read, and a pin nobody reads checks nothing. The
+  // three sizes are asserted in DECLARATION order, so a reordering fails too.
+  eq(OWNERS.map((d) => d.end - d.start + 1), OWNER_SIZES,
+    '…of 3,661, 651 and 501 units, in declaration order');
+  eq(OWNERS[OWNERS.length - 1].end + 2, UNDO.MODULE_CHARS,
+    '…and the last of them ends one unit before the module does: the only thing after it is the '
+    + 'terminating newline, which is why BODY_ENDING is what it is');
   eq(codeLines(MODULE), CODE_LINES, 'it carries 82 lines of code');
   {
     const ch = Array.from(MODULE);
@@ -479,12 +489,12 @@ section('4. Three ends, the screen that could not see them, and the chain');
   // the cycle made, and it should stay visible after the audit that made it is
   // deleted.
   const lines = MODULE.split('\n');
-  eq(lines.length, TOTAL_LINES, 'the module is 158 lines');
-  eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…76 of them comment or blank');
+  eq(lines.length, TOTAL_LINES, 'the module is 93 lines');
+  eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…44 of them comment or blank');
   eq(OWNERS[0].start, HEADER_UNITS,
-    'the first owner begins 3,841 units in: the region opens with a documentation header');
+    'the first owner begins 1,604 units in: the region opens with a documentation header');
   ok(UNDO.MODULE_CHARS > CODE_LINES * 100,
-    '…so this is 9,360 units for 82 lines of code, and the explanation travels with the code');
+    '…so this is 6,502 units for 49 lines of code, and the explanation travels with the code');
 
   // THE THREE ENDS, re-measured here rather than cited from the audit this PR
   // deletes. The whole table against one derived table, so a dropped row cannot
@@ -521,7 +531,7 @@ section('4. Three ends, the screen that could not see them, and the chain');
   }
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
-  eq(CHAIN.length, CHAIN_LENGTH, 'thirty-one layers ship today');
+  eq(CHAIN.length, CHAIN_LENGTH, 'CHAIN_LENGTH layers ship today — the count lives in the pin, not in this sentence');
   // NO DUPLICATES. Without this, replacing one entry with a copy of another
   // passes every other clause — the length is unchanged, both paths resolve to
   // an undo helper, and the size table simply counts one file twice. A mutant
@@ -529,15 +539,15 @@ section('4. Three ends, the screen that could not see them, and the chain');
   eq(Array.from(new Set(CHAIN)).length, CHAIN_LENGTH,
     '…and each of them exactly once: a chain with a duplicated entry is a chain missing a layer');
   eq(CHAIN.length - (CHAIN.indexOf(REJECTED_LAYER) + 1), LAYERS_SINCE_REJECTION,
-    'thirteen layers have shipped since #424 rejected the block this one came out of');
+    'LAYERS_SINCE_REJECTION layers have shipped since #424 rejected the block this one came out of');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
   eq(bySize[0].rel, SMALLEST_MODULE, 'the vega monitor is still the smallest');
   eq(bySize[0].units, SMALLEST_CHARS, '…at 1,761 units');
   eq(bySize.findIndex((x) => x.rel === MODULE_REL) + 1, MODULE_SIZE_RANK,
-    'this layer is SIXTEENTH of thirty-one by size');
-  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…at 9,360 units');
+    'this layer sits at MODULE_SIZE_RANK in the chain by size');
+  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS, '…and the module at that rank is this one, by its undo helper\'s own pin');
   eq(bySize[bySize.length - 1].units, LARGEST_CHARS, 'the chain\'s largest is still 71,811');
   ok(bySize[0].units < UNDO.MODULE_CHARS && bySize[bySize.length - 1].units > UNDO.MODULE_CHARS,
     '…so this layer displaces no superlative, and re-pins no earlier contract');
@@ -555,7 +565,7 @@ section('4. Three ends, the screen that could not see them, and the chain');
     return hit.length === 1 ? hit[0] : null;
   });
   eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
-    'every one of the thirty-one resolves to exactly one undo helper by its own TAG');
+    'every layer in CHAIN resolves to exactly one undo helper by its own TAG');
   const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
   eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
     'LAYERS_WITH_SEPARATOR carry a SEPARATOR export, this one among them');
@@ -570,14 +580,14 @@ section('4. Three ends, the screen that could not see them, and the chain');
 section('5. Coupling in all nine directions, and the cycle across the seam');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  eq(REC.sites, EDGE_SITES, 'FOUR references reached in from the rest of the monolith');
-  eq(REC.inbound, EXTERNAL_EDGES, '…exactly four');
+  eq(REC.sites, EDGE_SITES, 'EXTERNAL_EDGES references reached in from the rest of the monolith, at these exact sites');
+  eq(REC.inbound, EXTERNAL_EDGES, '…and that is their count');
   ok(REC.sites.every(insideFunction), '…every one inside a function body, so none ran at load');
 
   // THE HOSTS ARE DERIVED, not listed and looped over.
   const hostOf = (i) => ALL_DECLS.filter((d) => i >= d.start && i <= d.end).pop();
   const hosts = Array.from(new Set(REC.sites.map((i) => hostOf(i).name))).sort();
-  eq(hosts, CALLERS.slice().sort(), 'all four sat inside exactly THREE functions, all of which stay behind');
+  eq(hosts, CALLERS.slice().sort(), '…hosted by the CALLERS named above and no others, every one of which stays behind');
   for (const name of CALLERS) {
     ok(BY_NAME.has(name), name + ' is a monolith declaration…');
     eq(scanTopLevelDeclarations(LIVE_CODE).filter((d) => d.name === name).length, 1,
@@ -604,7 +614,16 @@ section('5. Coupling in all nine directions, and the cycle across the seam');
     '…and it writes NO property through S, which is the thing #424 could not survive');
   // The negative case, or the rule is only a description of this one module.
   {
-    const blob = BASE_CODE.slice(BLOB[0], snapBodyEnd(BASE_CODE, BLOB[0], BLOB[1]));
+    // THE SPAN IS PINNED, NOT ONLY USED. Shifting BLOB[0] by one unit still
+    // slices a stretch that writes through S, so the range survived mutation
+    // while checking nothing about WHICH stretch #424 measured. Its first line
+    // is the `// ══` header the audit's region opened on, and the snapped body
+    // ends where it ends.
+    const blobEnd = snapBodyEnd(BASE_CODE, BLOB[0], BLOB[1]);
+    eq(BASE_CODE.slice(BLOB[0], BASE_CODE.indexOf('\n', BLOB[0])), BLOB_OPENING,
+      'control — the stretch #424 measured opens on its own `// ══` header, at exactly BLOB[0]');
+    eq(blobEnd - BLOB[0], BLOB_UNITS, '…and runs BLOB_UNITS units to a snapped body end');
+    const blob = BASE_CODE.slice(BLOB[0], blobEnd);
     const blobMasked = maskLiterals(blob);
     const blobFns = functionBodyRanges(blob);
     ok(propertyWriteBases(blobMasked).filter((x) => x === S_NAME).length > 0,
