@@ -94,7 +94,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/journal-snapshot-helpers-contrac
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 160;
+const TEST_FILE_COUNT = 161;
 const LOCAL_SCRIPT_COUNT = 74;
 const MODULE_POSITION = 73;
 
@@ -714,7 +714,14 @@ section('8. Exact production scope, and the temporary audit is gone');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '', '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED in #456, thirty layers down the chain: the mutation budget is finite,
+  // so specs retire in chain order once their layer is long settled. The CONTRACT
+  // is untouched and still runs every assertion on every push — what left is the
+  // per-pin mutation pass over it. The assertion that used to prove the spec
+  // EXISTS now proves it is GONE, so the retirement is executed rather than
+  // remembered.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec is retired: the budget moved on, the contract did not');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
