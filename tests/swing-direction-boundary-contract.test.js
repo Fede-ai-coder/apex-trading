@@ -247,15 +247,21 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('SWING DIRECTION RESOLVER — PERMANENT BOUNDARY CONTRACT');
 
+const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// The backend positions aggregate was cut AFTER this one, so it is the newest
-// of all: peel it FIRST, and everything below measures this layer's own
-// document.
-const INDEX = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
-  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+// TWO layers were cut AFTER this one. Peel them NEWEST-FIRST — the portfolio
+// technical merge is the newest of all — and everything below measures this
+// layer's own document.
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
   : LIVE_INDEX;
+const INDEX = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      PRE_PORTFOLIO_TECHNICAL_MERGE,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_MERGE;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -812,7 +818,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-positions-aggregate.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -826,13 +832,20 @@ section('8. Exact production scope, and the temporary audit is gone');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '', '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED in #459, thirty-two layers down the chain: the mutation budget is
+  // finite, so specs retire in chain order once their layer is long settled. The
+  // CONTRACT is untouched and still runs every assertion on every push — what
+  // left is the per-pin mutation pass over it. The assertion that used to prove
+  // the spec EXISTS now proves it is GONE, so the retirement is executed rather
+  // than remembered.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec is retired: the budget moved on, the contract did not');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/portfolio/backend-positions-aggregate.js' ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

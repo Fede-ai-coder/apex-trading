@@ -239,20 +239,28 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('JOURNAL SNAPSHOT HELPERS — PERMANENT BOUNDARY CONTRACT');
 
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
+const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// Two layers were cut AFTER this one. Peel them NEWEST-FIRST — the order is the
+// Several layers were cut AFTER this one — the peel chain below IS the count,
+// and it is not restated here because a narrated one goes stale. Peel them
+// NEWEST-FIRST — the order is the
 // reverse of the cut order, and getting it backwards throws rather than
 // silently measuring the wrong document — so everything below measures this
 // layer's own document.
-// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// NEWEST FIRST. The portfolio technical merge was cut after every layer this
 // file peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
-  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      PRE_PORTFOLIO_TECHNICAL_MERGE,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_MERGE;
 const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
   ? SWING_DIRECTION_U.undoSwingDirection(
       PRE_BACKEND_POSITIONS_AGGREGATE,
@@ -709,7 +717,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js', 'js/portfolio/backend-positions-aggregate.js'].sort(),
+    ['index.html', MODULE_REL, 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -738,7 +746,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
-    rel === 'js/portfolio/backend-positions-aggregate.js' ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

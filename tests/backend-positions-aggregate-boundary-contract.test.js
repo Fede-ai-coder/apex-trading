@@ -97,6 +97,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const UNDO = require('./lib/backend-positions-aggregate-undo.js');
 
 // ── The module and its tags ──────────────────────────────────────────────────
@@ -154,8 +155,8 @@ const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 1;
 const LAYERS_WITH_A_DEPENDENCY = 10;
-const CONTRACTS_PINNING_NINE = 3;
-const PINNED_NINE_SCORES = [1, 7, 8];
+const CONTRACTS_PINNING_NINE = 4;
+const PINNED_NINE_SCORES = [1, 2, 7, 8];
 
 // ── The banner region that hid it, and the screen that did not ───────────────
 const HOST_REGION = [921786, 1017315];
@@ -274,7 +275,13 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('BACKEND POSITIONS AGGREGATE — PERMANENT BOUNDARY CONTRACT');
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The portfolio technical merge was cut AFTER this one, so it is newer: peel it
+// FIRST and everything below measures this layer's own document.
+const INDEX = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -598,11 +605,11 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 1 — one inbound edge and
     .filter((f) => /-boundary-contract\.test\.js$/.test(f))
     .map((f) => fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8').match(/^const FULL_NINE = (\d+);/m))
     .filter(Boolean).map((x) => Number(x[1])).sort((a, b) => a - b);
-  eq(pinned.length, CONTRACTS_PINNING_NINE, 'only THREE shipped contracts pin a nine-direction score');
-  eq(pinned, PINNED_NINE_SCORES, '…and those three are 1, 7 and 8');
+  eq(pinned.length, CONTRACTS_PINNING_NINE, 'FOUR shipped contracts now pin a nine-direction score');
+  eq(pinned, PINNED_NINE_SCORES, '…and those four are 1, 2, 7 and 8');
   ok(FULL_NINE < pinned[1],
-    '…so all that can be said is that 1 is the lowest of the three, for three layers of '
-    + 'thirty-three. The metric is younger than the chain');
+    '…so all that can be said is that 1 is the lowest of the four, for four layers of '
+    + 'thirty-four. The metric is younger than the chain');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -870,8 +877,8 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL].sort(),
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-merge.js'].sort(),
+    'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -890,6 +897,7 @@ section('8. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/portfolio/portfolio-technical-merge.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }
