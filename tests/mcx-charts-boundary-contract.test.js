@@ -276,6 +276,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
@@ -286,13 +287,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// NEWEST FIRST. The portfolio technical merge was cut after every layer this
 // file peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
-  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      PRE_PORTFOLIO_TECHNICAL_MERGE,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_MERGE;
 const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
   ? SWING_DIRECTION_U.undoSwingDirection(
       PRE_BACKEND_POSITIONS_AGGREGATE,
@@ -620,8 +626,8 @@ eq(PRE_TT_RECONNECT.length, TT_RECONNECT_U.BASE_CHARS,
 eq(sha256(PRE_TT_RECONNECT), TT_RECONNECT_U.BASE_SHA256,
   'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
 eq(APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT), true, 'the post-#410 document carries the later Apex post-auth layer');
-eq(LIVE_INDEX.length, BACKEND_POSITIONS_AGGREGATE_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), BACKEND_POSITIONS_AGGREGATE_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(LIVE_INDEX.length, PORTFOLIO_TECHNICAL_MERGE_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), PORTFOLIO_TECHNICAL_MERGE_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
 // Re-terminated with the chain, again: the live pin moves up to the vega
 // monitor, and the strategy-templates document it used to name is asserted here
 // on the peeled state, so shifting the chain never leaves a slot pinned by
@@ -657,7 +663,7 @@ eq(PRE_RICH_SNAPSHOT.length, CANDLE_CHART_U.EXTRACTED_CHARS,
 eq(sha256(PRE_RICH_SNAPSHOT), CANDLE_CHART_U.EXTRACTED_SHA256,
   '…and its hash');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
-  77, 'the live shipped index carries 77 local application scripts');
+  78, 'the live shipped index carries 78 local application scripts');
 eq(PRE_TT_RECONNECT.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, '…peeling TT reconnect returns it to the post-Apex length');
 eq(sha256(PRE_TT_RECONNECT), APEX_POST_AUTH_U.EXTRACTED_SHA256, '…and to the post-Apex hash');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
@@ -922,8 +928,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
 // module is second-to-last rather than last. The invariant this line protects —
 // the charts owner evaluates before the inline monolith that consumes it — is
 // unchanged and asserted in its stronger, current form.
-eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-25),
-  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', '(inline)'],
+eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-26),
+  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', '(inline)'],
   'in execution order the module runs immediately before the Apex post-auth owner, which precedes the TT reconnect and Journal Close Legs owners and then the inline monolith');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1121,7 +1127,7 @@ function changedPaths() {
 }
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL, 'js/ui/tt-reconnect.js'].sort(),
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL, 'js/ui/tt-reconnect.js'].sort(),
   'production footprint is exactly index.html plus the MCX charts owner and the later Apex post-auth, TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent charts contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact charts undo helper is part of the change');
@@ -1141,7 +1147,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
-    rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'CLAUDE.md' ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
   rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),

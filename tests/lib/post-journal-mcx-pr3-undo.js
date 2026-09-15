@@ -174,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_TECHNICAL_MERGE = require('./portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE = require('./backend-positions-aggregate-undo.js');
 const SWING_DIRECTION = require('./swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES = require('./swing-weekly-candles-undo.js');
@@ -209,6 +210,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_TECHNICAL_MERGE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-merge.js'),
+  'utf8'
+);
 const BACKEND_POSITIONS_AGGREGATE_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'backend-positions-aggregate.js'),
   'utf8'
@@ -343,11 +348,15 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  // NEWEST FIRST: the backend positions aggregate was cut after everything below
+  // NEWEST FIRST: the portfolio technical merge was cut after everything below
   // it, so it peels before anything else touches the document.
-  const preBackendPositionsAggregate = BACKEND_POSITIONS_AGGREGATE.isApplied(html)
-    ? BACKEND_POSITIONS_AGGREGATE.undoBackendPositionsAggregate(html, BACKEND_POSITIONS_AGGREGATE_SOURCE)
+  const prePortfolioTechnicalMerge = PORTFOLIO_TECHNICAL_MERGE.isApplied(html)
+    ? PORTFOLIO_TECHNICAL_MERGE.undoPortfolioTechnicalMerge(html, PORTFOLIO_TECHNICAL_MERGE_SOURCE)
     : html;
+  const preBackendPositionsAggregate = BACKEND_POSITIONS_AGGREGATE.isApplied(prePortfolioTechnicalMerge)
+    ? BACKEND_POSITIONS_AGGREGATE.undoBackendPositionsAggregate(
+      prePortfolioTechnicalMerge, BACKEND_POSITIONS_AGGREGATE_SOURCE)
+    : prePortfolioTechnicalMerge;
   const preSwingDirection = SWING_DIRECTION.isApplied(preBackendPositionsAggregate)
     ? SWING_DIRECTION.undoSwingDirection(preBackendPositionsAggregate, SWING_DIRECTION_SOURCE)
     : preBackendPositionsAggregate;
