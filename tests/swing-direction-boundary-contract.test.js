@@ -247,7 +247,15 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('SWING DIRECTION RESOLVER — PERMANENT BOUNDARY CONTRACT');
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The backend positions aggregate was cut AFTER this one, so it is the newest
+// of all: peel it FIRST, and everything below measures this layer's own
+// document.
+const INDEX = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+  : LIVE_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -804,8 +812,8 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL],
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/portfolio/backend-positions-aggregate.js'].sort(),
+    'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
   ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
@@ -824,6 +832,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

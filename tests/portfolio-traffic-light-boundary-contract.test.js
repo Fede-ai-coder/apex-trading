@@ -180,6 +180,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
@@ -189,10 +190,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
-  ? SWING_DIRECTION_U.undoSwingDirection(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// file peels, so it comes off before any of them — peeling out of order throws
+// rather than silently measuring the wrong document.
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      PRE_BACKEND_POSITIONS_AGGREGATE,
+      fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_AGGREGATE;
 const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
   ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
       PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))

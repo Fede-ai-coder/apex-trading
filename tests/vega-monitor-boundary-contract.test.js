@@ -236,16 +236,25 @@ console.log('relocation only · audited #442 · base=' + BASE_SHA.slice(0, 7));
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
 const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
-const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
-  ? SWING_DIRECTION_U.undoSwingDirection(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// file peels, so it comes off before any of them — peeling out of order throws
+// rather than silently measuring the wrong document.
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      PRE_BACKEND_POSITIONS_AGGREGATE,
+      fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_AGGREGATE;
 const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
   ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
       PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
@@ -619,8 +628,8 @@ section('8. Exact production scope, and the temporary audit is gone');
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
     ['index.html', MODULE_REL, 'js/services/journal-snapshot-helpers.js',
-      'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
-      'js/ui/chart-interactions.js'],
+      'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
+      'js/ui/chart-interactions.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -652,6 +661,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
 }
