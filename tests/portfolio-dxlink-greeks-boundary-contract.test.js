@@ -195,6 +195,7 @@ console.log('relocation only · audited #437 · base=' + BASE_SHA.slice(0, 7));
 // its own output by length and SHA-256, so the hop is proved, not assumed.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
@@ -204,10 +205,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(LIVE_INDEX)
-  ? SWING_DIRECTION_U.undoSwingDirection(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// file peels, so it comes off before any of them — peeling out of order throws
+// rather than silently measuring the wrong document.
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      PRE_BACKEND_POSITIONS_AGGREGATE,
+      fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_AGGREGATE;
 const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
   ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
       PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
@@ -280,11 +289,11 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // above is proved to return this contract's EXACT shipped state, and the live
 // state is pinned against the layer that now owns it. Without the second pair
 // the live document would be checked by nothing here.
-eq(LIVE_INDEX.length, SWING_DIRECTION_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, BACKEND_POSITIONS_AGGREGATE_U.EXTRACTED_CHARS,
   'the live document is the NEWEST layer\'s extracted length — the message names the\n   // role, not a layer, because naming the layer went stale the next cycle');
-eq(sha256(LIVE_INDEX), SWING_DIRECTION_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), BACKEND_POSITIONS_AGGREGATE_U.EXTRACTED_SHA256, '…and its digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 8, '…carrying one more local script for every layer cut since');
+  LOCAL_SCRIPT_COUNT + 9, '…carrying one more local script for every layer cut since');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -633,7 +642,7 @@ section('10. Exact production scope, and the temporary audit is gone');
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
     ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/portfolio-vega-monitor.js',
-      'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
+      'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
       'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', MODULE_REL].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
@@ -671,6 +680,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/journal-snapshot-helpers.js' ||
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
+    rel === 'js/portfolio/backend-positions-aggregate.js' ||
     rel === 'js/config/strategy-templates.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');

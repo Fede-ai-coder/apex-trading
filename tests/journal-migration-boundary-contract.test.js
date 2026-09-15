@@ -136,6 +136,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS_U = require('./lib/journal-snapshot-helpers-undo.js');
@@ -145,10 +146,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(INDEX)
-  ? SWING_DIRECTION_U.undoSwingDirection(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// file peels, so it comes off before any of them — peeling out of order throws
+// rather than silently measuring the wrong document.
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(INDEX)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
   : INDEX;
+const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
+  ? SWING_DIRECTION_U.undoSwingDirection(
+      PRE_BACKEND_POSITIONS_AGGREGATE,
+      fs.readFileSync(path.join(ROOT, 'js/services/swing-direction.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_AGGREGATE;
 const PRE_SWING_WEEKLY_CANDLES = SWING_WEEKLY_CANDLES_U.isApplied(PRE_SWING_DIRECTION)
   ? SWING_WEEKLY_CANDLES_U.undoSwingWeeklyCandles(
       PRE_SWING_DIRECTION, fs.readFileSync(path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8'))
@@ -564,8 +573,8 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, 1513908, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), 'd48afcc004e2b165564b116260ab990c3e882be14ee05c8b68286ddf477ee366',
+eq(INDEX.length, 1510282, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), '43fdeeff33a11e3b3028bb94dca447f3f711beb8438dd74f3d96928075da90db',
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -696,7 +705,8 @@ const CHART_INTERACTIONS_TAG2 = '<script src="./js/ui/chart-interactions.js"></s
 const SNAPSHOT_HELPERS_TAG2 = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
 const SWING_WEEKLY_CANDLES_TAG2 = '<script src="./js/services/swing-weekly-candles.js"></script>';
 const SWING_DIRECTION_TAG2 = '<script src="./js/services/swing-direction.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n' + SNAPSHOT_HELPERS_TAG2 + '\n' + SWING_WEEKLY_CANDLES_TAG2 + '\n' + SWING_DIRECTION_TAG2 + '\n<script>'), 1,
+const BACKEND_POSITIONS_AGGREGATE_TAG2 = '<script src="./js/portfolio/backend-positions-aggregate.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n' + SNAPSHOT_HELPERS_TAG2 + '\n' + SWING_WEEKLY_CANDLES_TAG2 + '\n' + SWING_DIRECTION_TAG2 + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG2 + '\n<script>'), 1,
   'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the portfolio backend candles, then the journal snapshot prefetch, then the portfolio DXLink greeks, then the strategy templates, then the vega monitor, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
@@ -936,7 +946,7 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 // layer cut afterwards. The count is asserted rather than narrated: the prose
 // that used to name the later owners stopped at seven of them and stayed there
 // for nine more cycles, because a sentence cannot fail.
-const LATER_LAYERS = [SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U, PORTFOLIO_U, TRADE_DETAIL_U,
   TRADE_FORMS_U, CLOSE_LEGS_U, TT_RECONNECT_U, APEX_POST_AUTH_U, MCX_CHARTS_U,
   MCX_MACRO_CHECK_U, BACKUP_RESTORE_U, MANUAL_U];
@@ -944,8 +954,8 @@ eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/port
   'js/services/journal-manual-import.js', MODULE_REL, 'js/services/journal-rich-snapshot.js',
   'js/services/journal-snapshot-helpers.js',
   'js/services/journal-snapshot-prefetch.js',
-  'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
-  'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'],
+  'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js',
+  'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'].sort(),
   'production footprint is index.html, Migration, and the modules of the layers cut after it');
 eq(changedProduction.length, 2 + LATER_LAYERS.length,
   'that list is exactly index.html + this module + one module per later layer');

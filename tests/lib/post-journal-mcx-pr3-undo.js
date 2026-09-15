@@ -174,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const BACKEND_POSITIONS_AGGREGATE = require('./backend-positions-aggregate-undo.js');
 const SWING_DIRECTION = require('./swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES = require('./swing-weekly-candles-undo.js');
 const JOURNAL_SNAPSHOT_HELPERS = require('./journal-snapshot-helpers-undo.js');
@@ -208,6 +209,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const BACKEND_POSITIONS_AGGREGATE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'backend-positions-aggregate.js'),
+  'utf8'
+);
 const SWING_DIRECTION_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-direction.js'),
   'utf8'
@@ -338,9 +343,14 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  const preSwingDirection = SWING_DIRECTION.isApplied(html)
-    ? SWING_DIRECTION.undoSwingDirection(html, SWING_DIRECTION_SOURCE)
+  // NEWEST FIRST: the backend positions aggregate was cut after everything below
+  // it, so it peels before anything else touches the document.
+  const preBackendPositionsAggregate = BACKEND_POSITIONS_AGGREGATE.isApplied(html)
+    ? BACKEND_POSITIONS_AGGREGATE.undoBackendPositionsAggregate(html, BACKEND_POSITIONS_AGGREGATE_SOURCE)
     : html;
+  const preSwingDirection = SWING_DIRECTION.isApplied(preBackendPositionsAggregate)
+    ? SWING_DIRECTION.undoSwingDirection(preBackendPositionsAggregate, SWING_DIRECTION_SOURCE)
+    : preBackendPositionsAggregate;
   const preSwingWeeklyCandles = SWING_WEEKLY_CANDLES.isApplied(preSwingDirection)
     ? SWING_WEEKLY_CANDLES.undoSwingWeeklyCandles(preSwingDirection, SWING_WEEKLY_CANDLES_SOURCE)
     : preSwingDirection;
