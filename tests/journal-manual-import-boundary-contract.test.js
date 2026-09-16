@@ -131,6 +131,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
@@ -142,13 +143,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The portfolio technical merge was cut after every layer this
-// file peels, so it comes off before any of them — peeling out of order throws
+// NEWEST FIRST. The alignment debug pair was cut after every layer this file
+// peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(INDEX)
-  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(INDEX)
+  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
   : INDEX;
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG;
 const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
   ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
       PRE_PORTFOLIO_TECHNICAL_MERGE,
@@ -479,8 +485,8 @@ eq(BASE.length, 1951961, 'base index UTF-16 length is pinned');
 eq(sha256(BASE), 'fe514b8183fc8fbde428062ad050bf7f78577dd32a887025ed9caf1fddb566c4',
   'base index SHA-256 is pinned');
 eq(POST_MANUAL_INDEX.length, 1944246, 'extracted index UTF-16 length is exact');
-eq(INDEX.length, 1504517, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), '6944b4231b09b963e6c044de4f0ea6c2a4623a042b81fb1331303b06b5258e5f',
+eq(INDEX.length, 1500455, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), '361533f1892dd215b00620c0537cd1337a05177eac5a9929c6378cec09dd29eb',
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -768,7 +774,7 @@ ok(moduleOrderViolations(POST_MANUAL_INDEX.replace(MODULE_TAG, MODULE_TAG.replac
 section('9. Exact production scope');
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'].sort(),
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-backup-restore.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'].sort(),
   'production footprint is exactly index.html plus the Journal Manual Import, Backup/Restore, MCX charts, MCX macro-check and Apex post-auth owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Manual Import contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Manual Import undo helper is part of the change');

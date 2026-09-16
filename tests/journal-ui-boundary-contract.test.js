@@ -113,6 +113,7 @@ const SWING_WEEKLY_CANDLES_TAG = '<script src="./js/services/swing-weekly-candle
 const SWING_DIRECTION_TAG = '<script src="./js/services/swing-direction.js"></script>';
 const BACKEND_POSITIONS_AGGREGATE_TAG = '<script src="./js/portfolio/backend-positions-aggregate.js"></script>';
 const PORTFOLIO_TECHNICAL_MERGE_TAG = '<script src="./js/portfolio/portfolio-technical-merge.js"></script>';
+const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG = '<script src="./js/portfolio/portfolio-technical-alignment-debug.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const UI_MARKER = '// ══════════════════════════════════════════════════════════════\n// JOURNAL UI\n// ══════════════════════════════════════════════════════════════\n\n';
 const EXPORT_MARKER = '// ── JOURNAL EXCEL EXPORT ──────────────────────────────────────────\n';
@@ -197,7 +198,7 @@ const writeTagAt = INDEX.indexOf(WRITE_TAG);
 const migrationTagAt = INDEX.indexOf(MIGRATION_TAG);
 eq(count(INDEX, UI_TAG), 1, 'exactly one Journal UI script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n',
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' + REGIME_TAG + '\n' + UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n',
   'the full service tail, in load order, ends at the inline monolith — the\n   concatenation above IS the enumeration, so the message does not repeat it');
 ok(mcx1At >= 0 && regimeAt > mcx1At && uiTagAt > regimeAt && remoteTagAt > uiTagAt &&
   writeTagAt > remoteTagAt && migrationTagAt > writeTagAt && inlineAt > migrationTagAt,
@@ -313,6 +314,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
@@ -324,13 +326,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The portfolio technical merge was cut after every layer this
-// file peels, so it comes off before any of them — peeling out of order throws
+// NEWEST FIRST. The alignment debug pair was cut after every layer this file
+// peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(INDEX)
-  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(INDEX)
+  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
   : INDEX;
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG;
 const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
   ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
       PRE_PORTFOLIO_TECHNICAL_MERGE,
@@ -461,7 +468,7 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
 }).trim().split(/\r?\n/).filter(Boolean);
 const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
 same(changedProduction, [
-  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-remote-persistence.js',
+  'index.html', 'js/config/strategy-templates.js', MODULE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-remote-persistence.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
   'js/services/journal-snapshot-helpers.js',
