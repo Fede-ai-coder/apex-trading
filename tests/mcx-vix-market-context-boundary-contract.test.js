@@ -406,11 +406,13 @@ const chartInteractionsTag = '<script src="./js/ui/chart-interactions.js"></scri
 const snapshotHelpersTag = '<script src="./js/services/journal-snapshot-helpers.js"></script>';
 const swingWeeklyCandlesTag = '<script src="./js/services/swing-weekly-candles.js"></script>';
 const swingDirectionTag = '<script src="./js/services/swing-direction.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/backend-positions-aggregate.js"></script>';
+const backendPositionsAggregateTag = '<script src="./js/portfolio/backend-positions-aggregate.js"></script>';
+const newestLayerTag = '<script src="./js/portfolio/portfolio-technical-merge.js"></script>';
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(swingDirectionTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(backendPositionsAggregateTag)
+  && INDEX.indexOf(backendPositionsAggregateTag) > INDEX.indexOf(swingDirectionTag)
   && INDEX.indexOf(swingDirectionTag) > INDEX.indexOf(swingWeeklyCandlesTag)
   && INDEX.indexOf(swingWeeklyCandlesTag) > INDEX.indexOf(snapshotHelpersTag)
   && INDEX.indexOf(snapshotHelpersTag) > INDEX.indexOf(chartInteractionsTag)

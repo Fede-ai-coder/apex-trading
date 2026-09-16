@@ -166,6 +166,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const SWING_DIRECTION_U = require('./lib/swing-direction-undo.js');
 const SWING_WEEKLY_CANDLES_U = require('./lib/swing-weekly-candles-undo.js');
@@ -176,13 +177,18 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The backend positions aggregate was cut after every layer this
+// NEWEST FIRST. The portfolio technical merge was cut after every layer this
 // file peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(LIVE_INDEX)
-  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-merge.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_POSITIONS_AGGREGATE = BACKEND_POSITIONS_AGGREGATE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_MERGE)
+  ? BACKEND_POSITIONS_AGGREGATE_U.undoBackendPositionsAggregate(
+      PRE_PORTFOLIO_TECHNICAL_MERGE,
+      fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-aggregate.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_MERGE;
 const PRE_SWING_DIRECTION = SWING_DIRECTION_U.isApplied(PRE_BACKEND_POSITIONS_AGGREGATE)
   ? SWING_DIRECTION_U.undoSwingDirection(
       PRE_BACKEND_POSITIONS_AGGREGATE,
@@ -607,8 +613,8 @@ eq(INDEX.length, 1933458, 'extracted index UTF-16 length is exact');
 eq(Buffer.byteLength(INDEX, 'utf8'), 1968899, 'extracted index UTF-8 byte length is exact');
 eq(sha256(INDEX), '71064f2cb772a0555d5abcf14496e9c87830e1974be1544dcc08ec841047e529',
   'extracted index SHA-256 is the audited prediction');
-eq(LIVE_INDEX.length, 1510282, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), '43fdeeff33a11e3b3028bb94dca447f3f711beb8438dd74f3d96928075da90db',
+eq(LIVE_INDEX.length, 1504517, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), '6944b4231b09b963e6c044de4f0ea6c2a4623a042b81fb1331303b06b5258e5f',
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -720,8 +726,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
   'index carried exactly 52 local application scripts when this extraction landed');
 eq(APP_LOADER.parseScriptTags(PRE_MCX_CHARTS).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 53,
   'peeling MCX charts restores the 53 local application scripts of the post-macro-check index');
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 77,
-  'the current shipped index carries exactly 77 local application scripts');
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 78,
+  'the current shipped index carries exactly 78 local application scripts');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
 eq(APP_LOADER.parseScriptTags(PRE_APEX_POST_AUTH).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 54,
@@ -1064,7 +1070,7 @@ section('8. Panel open/close and list rendering behavior');
   section('14. Exact production scope');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'].sort(),
+  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', MODULE_REL, 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', 'js/ui/mcx-macro-check.js', 'js/ui/tt-reconnect.js'].sort(),
     'production footprint is exactly index.html plus the Journal Backup/Restore owner and the later MCX macro-check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'permanent Backup/Restore contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'byte-exact Backup/Restore undo helper is part of the change');
