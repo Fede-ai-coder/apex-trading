@@ -113,7 +113,7 @@ const UNDO_REL = 'tests/lib/backend-positions-aggregate-undo.js';
 const AUDIT_REL = 'tests/temporary-backend-positions-aggregate-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/backend-positions-aggregate-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/backend-positions-aggregate-contract.spec.js';
-const TEST_FILE_COUNT = 162;
+const TEST_FILE_COUNT = 163;
 const LOCAL_SCRIPT_COUNT = 77;
 const MODULE_POSITION = 76;
 
@@ -891,7 +891,14 @@ section('8. Reachability, the chain, and exact production scope');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '', '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED in #460, thirty-three layers down the chain: the mutation budget is
+  // finite, so specs retire in chain order once their layer is long settled. The
+  // CONTRACT is untouched and still runs every assertion on every push — what
+  // left is the per-pin mutation pass over it. The assertion that used to prove
+  // the spec EXISTS now proves it is GONE, so the retirement is executed rather
+  // than remembered.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec is retired: the budget moved on, the contract did not');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
