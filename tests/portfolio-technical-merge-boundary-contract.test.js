@@ -96,7 +96,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-merge-contra
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
 // contract arrives, so this cycle leaves the count exactly where #458 put it.
-const TEST_FILE_COUNT = 162;
+const TEST_FILE_COUNT = 163;
 const LOCAL_SCRIPT_COUNT = 78;
 const MODULE_POSITION = 77;
 
