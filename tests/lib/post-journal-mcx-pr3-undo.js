@@ -174,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = require('./portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE = require('./portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE = require('./backend-positions-aggregate-undo.js');
 const SWING_DIRECTION = require('./swing-direction-undo.js');
@@ -210,6 +211,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-alignment-debug.js'),
+  'utf8'
+);
 const PORTFOLIO_TECHNICAL_MERGE_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-merge.js'),
   'utf8'
@@ -348,11 +353,16 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  // NEWEST FIRST: the portfolio technical merge was cut after everything below
-  // it, so it peels before anything else touches the document.
-  const prePortfolioTechnicalMerge = PORTFOLIO_TECHNICAL_MERGE.isApplied(html)
-    ? PORTFOLIO_TECHNICAL_MERGE.undoPortfolioTechnicalMerge(html, PORTFOLIO_TECHNICAL_MERGE_SOURCE)
+  // NEWEST FIRST: the alignment debug pair was cut after everything below it,
+  // so it peels before anything else touches the document.
+  const prePortfolioTechnicalAlignmentDebug = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.isApplied(html)
+    ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.undoPortfolioTechnicalAlignmentDebug(
+      html, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE)
     : html;
+  const prePortfolioTechnicalMerge = PORTFOLIO_TECHNICAL_MERGE.isApplied(prePortfolioTechnicalAlignmentDebug)
+    ? PORTFOLIO_TECHNICAL_MERGE.undoPortfolioTechnicalMerge(
+      prePortfolioTechnicalAlignmentDebug, PORTFOLIO_TECHNICAL_MERGE_SOURCE)
+    : prePortfolioTechnicalAlignmentDebug;
   const preBackendPositionsAggregate = BACKEND_POSITIONS_AGGREGATE.isApplied(prePortfolioTechnicalMerge)
     ? BACKEND_POSITIONS_AGGREGATE.undoBackendPositionsAggregate(
       prePortfolioTechnicalMerge, BACKEND_POSITIONS_AGGREGATE_SOURCE)

@@ -407,11 +407,13 @@ const snapshotHelpersTag = '<script src="./js/services/journal-snapshot-helpers.
 const swingWeeklyCandlesTag = '<script src="./js/services/swing-weekly-candles.js"></script>';
 const swingDirectionTag = '<script src="./js/services/swing-direction.js"></script>';
 const backendPositionsAggregateTag = '<script src="./js/portfolio/backend-positions-aggregate.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/portfolio-technical-merge.js"></script>';
+const portfolioTechnicalMergeTag = '<script src="./js/portfolio/portfolio-technical-merge.js"></script>';
+const newestLayerTag = '<script src="./js/portfolio/portfolio-technical-alignment-debug.js"></script>';
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(backendPositionsAggregateTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(portfolioTechnicalMergeTag)
+  && INDEX.indexOf(portfolioTechnicalMergeTag) > INDEX.indexOf(backendPositionsAggregateTag)
   && INDEX.indexOf(backendPositionsAggregateTag) > INDEX.indexOf(swingDirectionTag)
   && INDEX.indexOf(swingDirectionTag) > INDEX.indexOf(swingWeeklyCandlesTag)
   && INDEX.indexOf(swingWeeklyCandlesTag) > INDEX.indexOf(snapshotHelpersTag)
