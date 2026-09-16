@@ -98,8 +98,8 @@ module.exports = {
 
   // ── The ratchet and the tag's slot ────────────────────────────────────────
   { id: "TEST_FILE_COUNT",
-    find: "const TEST_FILE_COUNT = 163;",
-    replace: "const TEST_FILE_COUNT = 162;", },
+    find: "const TEST_FILE_COUNT = 164;",
+    replace: "const TEST_FILE_COUNT = 163;", },
   { id: "LOCAL_SCRIPT_COUNT",
     find: "const LOCAL_SCRIPT_COUNT = 79;",
     replace: "const LOCAL_SCRIPT_COUNT = 78;", },

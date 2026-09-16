@@ -86,7 +86,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-dxlink-greeks-contract
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 163;
+const TEST_FILE_COUNT = 164;
 const LOCAL_SCRIPT_COUNT = 68;
 const MODULE_POSITION = 67;
 
