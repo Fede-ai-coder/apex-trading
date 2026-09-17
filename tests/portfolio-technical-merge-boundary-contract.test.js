@@ -101,7 +101,7 @@ const SPEC_RETIRED_FROM = '5210693';
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
 // contract arrives, so this cycle leaves the count exactly where #458 put it.
-const TEST_FILE_COUNT = 163;
+const TEST_FILE_COUNT = 164;
 const LOCAL_SCRIPT_COUNT = 78;
 const MODULE_POSITION = 77;
 

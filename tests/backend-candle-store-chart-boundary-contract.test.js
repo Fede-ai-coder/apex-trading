@@ -64,7 +64,7 @@ const BASE_SHA = '8311c0a5c428d9c039dbe5a86bec54928321c45f';
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 163;
+const TEST_FILE_COUNT = 164;
 const LOCAL_SCRIPT_COUNT = 64;
 const AUDIT_REL = 'tests/temporary-backend-candle-store-chart-boundary-audit.test.js';
 
