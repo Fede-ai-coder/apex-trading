@@ -84,6 +84,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-technical-alignment-debug-undo.js');
+const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 
 const MODULE_REL = 'js/portfolio/portfolio-technical-alignment-debug.js';
 const TAG = '<script src="./js/portfolio/portfolio-technical-alignment-debug.js"></script>\n';
@@ -97,6 +98,9 @@ const UNDO_REL = 'tests/lib/portfolio-technical-alignment-debug-undo.js';
 const AUDIT_REL = 'tests/temporary-portfolio-technical-alignment-debug-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-alignment-debug-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-alignment-debug-contract.spec.js';
+// The commit that retired it, so the negation above is pinned against a path that
+// really existed rather than one that never did.
+const SPEC_RETIRED_FROM = '6c2f01f';
 
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
@@ -146,7 +150,7 @@ const BY_CONSUMER = 1;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 2;
-const LAYERS_WITH_A_DEPENDENCY = 10;
+const LAYERS_WITH_A_DEPENDENCY = 11;
 const HELPER_CALL_SITES = 1;
 const PROMISE_ALL_SITES = 22;
 
@@ -276,11 +280,14 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('PORTFOLIO TECHNICAL ALIGNMENT DEBUG — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited by #460 · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The journal map-audit layer was cut AFTER this one, so it is newer: peel it
+// FIRST, and LIVE_* below means this layer's own shipped document — the one it
+// was written against — not whatever the head of the chain looks like today.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = JOURNAL_MAP_AUDIT_U.isApplied(HEAD_INDEX)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -580,8 +587,9 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 5 — five inbound sites a
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     });
   eq(withDep.length, LAYERS_WITH_A_DEPENDENCY,
-    'TEN shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so having NONE is the '
-    + 'exception and is recorded rather than assumed');
+    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so '
+    + 'having NONE is the exception and is recorded rather than assumed — the count lives in '
+    + 'that constant, not in this sentence, which every cycle would otherwise rewrite wrong');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -970,8 +978,8 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL].sort(),
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/services/journal-map-audit.js'].sort(),
+    'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so.
   // Its two uses — "it is in the change set" and "exclude it from the dependency
@@ -992,12 +1000,21 @@ section('8. Reachability, the chain, and exact production scope');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely a path that does not exist');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '', '…as is the audit\'s own path');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by one for this contract');
+  // RETIRED IN #463, in chain order. This contract's own mutation spec is gone;
+  // every assertion in this file still runs on every push, and what stops is the
+  // mutation pass proving those pins load-bearing. The assertion is kept as its
+  // NEGATION rather than deleted, so the retirement is executed rather than
+  // merely described — a deleted line would pass for the wrong reason.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED, so the newest layer carries the pass');
+  eq(git(['cat-file', '-e', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]), '',
+    '…and that path is the one this cycle removed, not merely a path that never existed');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/services/journal-map-audit.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

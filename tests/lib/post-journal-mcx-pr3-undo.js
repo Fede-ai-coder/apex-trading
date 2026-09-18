@@ -174,6 +174,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_MAP_AUDIT = require('./journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = require('./portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE = require('./portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE = require('./backend-positions-aggregate-undo.js');
@@ -211,6 +212,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_MAP_AUDIT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-map-audit.js'),
+  'utf8'
+);
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-alignment-debug.js'),
   'utf8'
@@ -353,12 +358,15 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  // NEWEST FIRST: the alignment debug pair was cut after everything below it,
-  // so it peels before anything else touches the document.
-  const prePortfolioTechnicalAlignmentDebug = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.isApplied(html)
-    ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.undoPortfolioTechnicalAlignmentDebug(
-      html, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE)
+  // NEWEST FIRST: the journal map audit was cut after everything below it, so it
+  // peels before anything else touches the document.
+  const preJournalMapAudit = JOURNAL_MAP_AUDIT.isApplied(html)
+    ? JOURNAL_MAP_AUDIT.undoJournalMapAudit(html, JOURNAL_MAP_AUDIT_SOURCE)
     : html;
+  const prePortfolioTechnicalAlignmentDebug = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.isApplied(preJournalMapAudit)
+    ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.undoPortfolioTechnicalAlignmentDebug(
+      preJournalMapAudit, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE)
+    : preJournalMapAudit;
   const prePortfolioTechnicalMerge = PORTFOLIO_TECHNICAL_MERGE.isApplied(prePortfolioTechnicalAlignmentDebug)
     ? PORTFOLIO_TECHNICAL_MERGE.undoPortfolioTechnicalMerge(
       prePortfolioTechnicalAlignmentDebug, PORTFOLIO_TECHNICAL_MERGE_SOURCE)
