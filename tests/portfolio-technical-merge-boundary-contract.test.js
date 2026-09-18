@@ -78,6 +78,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const UNDO = require('./lib/portfolio-technical-merge-undo.js');
 
@@ -148,7 +149,7 @@ const BY_CONSUMER = 1;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 1;
-const LAYERS_WITH_A_DEPENDENCY = 10;
+const LAYERS_WITH_A_DEPENDENCY = 11;
 
 // ── The screen, re-executed on this contract's own numbers ───────────────────
 const RUN_FLOOR = 1500;
@@ -268,10 +269,14 @@ console.log('relocation only · audited by #458 · base=' + BASE_SHA);
 // FIRST, and LIVE_* below means this layer's own shipped document — the one it
 // was written against — not whatever the head of the chain looks like today.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(HEAD_INDEX)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
+  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
+      PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+  : PRE_JOURNAL_MAP_AUDIT;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -564,8 +569,9 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 2 — two inbound sites an
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     });
   eq(withDep.length, LAYERS_WITH_A_DEPENDENCY,
-    'TEN shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so having NONE is the '
-    + 'exception and is recorded rather than assumed');
+    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so '
+    + 'having NONE is the exception and is recorded rather than assumed — the count lives in '
+    + 'that constant, not in this sentence, which every cycle would otherwise rewrite wrong');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -883,7 +889,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-alignment-debug.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js'].sort(),
     'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -912,6 +918,7 @@ section('8. Reachability, the chain, and exact production scope');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
+    rel === 'js/services/journal-map-audit.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

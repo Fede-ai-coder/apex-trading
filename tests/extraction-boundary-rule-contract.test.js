@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const JOURNAL_MAP_AUDIT = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE = require('./lib/backend-positions-aggregate-undo.js');
@@ -191,6 +192,7 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = JOURNAL_MAP_AUDIT.undoJournalMapAudit(doc, read('js/services/journal-map-audit.js'));
   doc = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.undoPortfolioTechnicalAlignmentDebug(doc, read('js/portfolio/portfolio-technical-alignment-debug.js'));
   doc = PORTFOLIO_TECHNICAL_MERGE.undoPortfolioTechnicalMerge(doc, read('js/portfolio/portfolio-technical-merge.js'));
   doc = BACKEND_POSITIONS_AGGREGATE.undoBackendPositionsAggregate(doc, read('js/portfolio/backend-positions-aggregate.js'));

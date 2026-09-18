@@ -162,6 +162,12 @@ that contract:
    Written in audit #422 to fix (1), and wrong on the same module: it stops at
    the first blank line, and that IIFE contains blank lines. Same 4,878 short.
 
+A third was written down and killed in the same way, and it is pinned in §5(c)
+of `tests/journal-map-audit-boundary-contract.test.js` rather than here:
+*"never cut inside a `// ── ` banner region."* The count is not restated in this
+paragraph — the ordinal is executed in that contract, derived from the file that
+holds the other two, so it fails rather than drifts when a fourth arrives.
+
 What **is** mechanical, and lives in `tests/lib/extraction-boundary.js`:
 
 - `snapBodyEnd(src, at, limit)` — once you have chosen the last construct, the

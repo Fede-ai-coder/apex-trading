@@ -128,7 +128,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 80;
+const PARTS_TOTAL = 81;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -263,6 +263,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
@@ -278,10 +279,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // NEWEST FIRST. The alignment debug pair was cut after every layer this file
 // peels, so it comes off before any of them — peeling out of order throws
 // rather than silently measuring the wrong document.
-const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
+  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
+      PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+  : PRE_JOURNAL_MAP_AUDIT;
 const PRE_PORTFOLIO_TECHNICAL_MERGE = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG)
   ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
       PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG,
@@ -542,7 +547,7 @@ eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module l
 // this module and the inline monolith.
 eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
   '…followed by the backend-portfolios module, which was cut later');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 20,
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 21,
   '…and the inline monolith is that many positions on, one further with every layer cut since');
 {
   // The referencing set is DERIVED, not assumed.
@@ -621,14 +626,15 @@ const changed = Array.from(new Set(committed.concat(status))).sort();
 // well. One module per later layer, so the list is index.html + this module +
 // one entry per peel hop above — and that count is asserted, not narrated,
 // because the narrated one ("the four layers") was two cycles stale.
-const LATER_LAYERS = [PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [JOURNAL_MAP_AUDIT_U, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U];
 const production = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(production,
   ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', MODULE_REL,
    'js/portfolio/portfolio-dxlink-greeks.js',
    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js',
-   'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-rich-snapshot.js',
+   'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-map-audit.js',
+   'js/services/journal-rich-snapshot.js',
    'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js',
    'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
    'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js'].sort(),
@@ -655,6 +661,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
+    rel === 'js/services/journal-map-audit.js' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' ||
   rel === 'CLAUDE.md' || rel.startsWith('tests/')),

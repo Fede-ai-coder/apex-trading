@@ -280,6 +280,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/portfolio/backend-positions-aggregate.js',
   './js/portfolio/portfolio-technical-merge.js',
   './js/portfolio/portfolio-technical-alignment-debug.js',
+  './js/services/journal-map-audit.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2829,7 +2830,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 79,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 80,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
@@ -3955,7 +3956,22 @@ eq(A.exposures.reduce(function (n, e) { return n + (e.end - e.start); }, 0), 308
   // pinned by name and by content immediately below rather than waved through,
   // so a second module — or a second assignment — still fails here.
   const localParts = PARTS.filter(function (p) { return p.kind === 'local'; });
-  const WINDOW_ASSIGN = /window\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=/;
+  // The `(?!=)` is load-bearing, not tidiness. Without it this pattern counts
+  // `window.FLAG === true` — a READ — as an assignment, and the journal
+  // map-audit owner reads exactly such a flag. The controls below execute both
+  // halves of that distinction, because a regex nobody probes is a regex that
+  // silently widens: this one had been loose since it was written and only the
+  // first module to compare against a window property exposed it.
+  const WINDOW_ASSIGN = /window\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*=(?!=)/;
+  {
+    const MAP_AUDIT = localParts.filter(function (p) { return p.src === './js/services/journal-map-audit.js'; });
+    eq(MAP_AUDIT.length, 1, 'CONTROL: the journal map-audit owner is part of the measured local set');
+    const masked = maskSource(MAP_AUDIT[0].code);
+    ok(/window\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*===/.test(masked),
+       'CONTROL: it DOES compare against a window property, so the loose pattern would match it');
+    ok(!WINDOW_ASSIGN.test(masked),
+       'CONTROL: …and it assigns to none, so the pattern above correctly leaves it out');
+  }
   const modulesTouchingWindow = localParts
     .filter(function (p) { return WINDOW_ASSIGN.test(stripFunctions(maskSource(p.code))); })
     .map(function (p) { return p.src; });

@@ -100,6 +100,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const UNDO = require('./lib/backend-positions-aggregate-undo.js');
@@ -158,9 +159,9 @@ const FULL_NINE = 1;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 1;
-const LAYERS_WITH_A_DEPENDENCY = 10;
-const CONTRACTS_PINNING_NINE = 5;
-const PINNED_NINE_SCORES = [1, 2, 5, 7, 8];
+const LAYERS_WITH_A_DEPENDENCY = 11;
+const CONTRACTS_PINNING_NINE = 6;
+const PINNED_NINE_SCORES = [1, 2, 2, 5, 7, 8];
 
 // ── The banner region that hid it, and the screen that did not ───────────────
 const HOST_REGION = [921786, 1017315];
@@ -282,10 +283,14 @@ console.log('BACKEND POSITIONS AGGREGATE — PERMANENT BOUNDARY CONTRACT');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // Two layers were cut AFTER this one, so both are newer: peel them NEWEST-FIRST
 // and everything below measures this layer's own document.
-const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
+  ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
+      PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
+  : PRE_JOURNAL_MAP_AUDIT;
 const INDEX = PORTFOLIO_TECHNICAL_MERGE_U.isApplied(PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG)
   ? PORTFOLIO_TECHNICAL_MERGE_U.undoPortfolioTechnicalMerge(
       PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG,
@@ -605,8 +610,9 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 1 — one inbound edge and
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     });
   eq(withDep.length, LAYERS_WITH_A_DEPENDENCY,
-    'TEN shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so having NONE is the '
-    + 'exception and is recorded rather than assumed');
+    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, so '
+    + 'having NONE is the exception and is recorded rather than assumed — the count lives in '
+    + 'that constant, not in this sentence, which every cycle would otherwise rewrite wrong');
 }
 // THE SCORE COMPARISON IS SCOPED TO WHAT IS PINNED, not to the whole chain.
 {
@@ -614,10 +620,14 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 1 — one inbound edge and
     .filter((f) => /-boundary-contract\.test\.js$/.test(f))
     .map((f) => fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8').match(/^const FULL_NINE = (\d+);/m))
     .filter(Boolean).map((x) => Number(x[1])).sort((a, b) => a - b);
-  eq(pinned.length, CONTRACTS_PINNING_NINE, 'FIVE shipped contracts now pin a nine-direction score');
-  eq(pinned, PINNED_NINE_SCORES, '…and those five are 1, 2, 5, 7 and 8');
+  eq(pinned.length, CONTRACTS_PINNING_NINE,
+    'CONTRACTS_PINNING_NINE shipped contracts pin a nine-direction score — the count lives in\n'
+    + '     that constant, not in this sentence, which every cycle would otherwise rewrite wrong');
+  eq(pinned, PINNED_NINE_SCORES,
+    '…and PINNED_NINE_SCORES is the whole sorted multiset of them, so a new layer joining the\n'
+    + '     set fails here rather than passing unnoticed');
   ok(FULL_NINE < pinned[1],
-    '…so all that can be said is that 1 is the lowest of the five layers that pin one at all. '
+    '…so all that can be said is that 1 is the lowest of the layers that pin one at all. '
     + 'The metric is younger than the chain, and HOW MUCH younger is CHAIN_LENGTH in the newest '
     + 'contract rather than a numeral here, which is how the last one went stale');
 }
@@ -887,7 +897,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js'].sort(),
     'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -915,6 +925,7 @@ section('8. Reachability, the chain, and exact production scope');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
+    rel === 'js/services/journal-map-audit.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }
