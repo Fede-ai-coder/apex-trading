@@ -462,6 +462,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
@@ -475,13 +476,19 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The alignment debug pair was cut after every layer this file
-// peels, so it comes off before any of them — peeling out of order throws
-// rather than silently measuring the wrong document.
-const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(INDEX)
-  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+// NEWEST FIRST. The chain below peels in the reverse of the cut order, so the
+// newest layer comes off before any older one and peeling out of order throws
+// rather than silently measuring the wrong document. WHICH layer is newest is
+// not narrated here — the chain below IS that statement. The sentence this
+// replaces named one, and stopped being true the next time a layer shipped.
+const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(INDEX)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
   : INDEX;
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(PRE_DXLINK_GREEKS_FETCH)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      PRE_DXLINK_GREEKS_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS_FETCH;
 const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
   ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
       PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
@@ -604,8 +611,8 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, 1496195, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), 'cad874aeadb31e613487488a54ab9bcd92043bf8478084f55c148638dc1df900',
+eq(INDEX.length, DXLINK_GREEKS_FETCH_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), DXLINK_GREEKS_FETCH_U.EXTRACTED_SHA256,
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -928,7 +935,7 @@ eq(changedProduction, [
   'js/services/journal-snapshot-prefetch.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',
   'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'
-, 'js/services/journal-map-audit.js'].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');
+, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js'].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,

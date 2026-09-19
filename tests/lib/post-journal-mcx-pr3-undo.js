@@ -147,33 +147,38 @@
 //     undo re-inserts the body followed by SEPARATOR.
 //
 // Both shapes are byte-exact; neither is a defect. The reliable tell is the
-// `const SEPARATOR = '\n'` declaration: the nineteen newest have it, the eight
-// oldest do not. Both counts, and the fifteen below, are EXECUTED in §4 of
-// tests/scanner-ivr-throttle-boundary-contract.test.js — they were prose through four
-// cycles, which is how "the eighteen newest" survived the cycle that made it
-// nineteen — as this line now records, having been that cycle. Change them
-// there or they fail there.
+// `const SEPARATOR = '\n'` declaration. HOW MANY carry it is NOT written here:
+// that number grows with every cycle, and naming it is how this paragraph came
+// to say "the eighteen newest" a cycle after it was nineteen, and "the
+// nineteen newest" for several cycles after that. It is executed as
+// LAYERS_WITH_SEPARATOR in §9 of the NEWEST layer's boundary contract, beside
+// LAYERS_WITHOUT_SEPARATOR and LAYERS_WITH_RAW_PAIR, over the whole chain as it
+// stands that cycle. An older contract's copy of those counts is frozen at its
+// own era and is not the live answer.
 //
-// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Only SIXTEEN of the
-// nineteen pin a single RAW_CHARS one unit longer than MODULE_CHARS —
-// post-auth, TT reconnect, close legs, trade detail, portfolio data fetch,
-// backend portfolios, manual expiry, traffic light, candle-store chart, rich
-// async snapshot, portfolio backend candles, journal snapshot prefetch, the
-// portfolio DXLink greeks pair, the strategy templates and the vega monitor. The
-// multi-fragment layers pin
-// their fragments individually instead (charts weaves three, trade forms joins
-// two), and macro check pins neither constant. A future layer that reasons
-// about "the" convention must ask which era it means, and must not infer the
-// era from those constants.
+// The one count here that does NOT move is the EIGHT oldest layers with no
+// separator concept at all, listed above: that set closed when #406 introduced
+// the convention and nothing can join it.
 //
-// Layer shapes, measured against the shipped modules rather than assumed, and
-// scoped to what was actually measured: of the TWENTY-SIX layers this bridge
-// peels, every one is a single contiguous fragment except #408 (three) and
-// #415 (two). That is not a statement about the repository at large — the MCX3
+// What is NOT a reliable tell is the RAW_*/MODULE_* pair. Fewer layers pin a
+// single RAW_CHARS one unit longer than MODULE_CHARS than carry a SEPARATOR,
+// which is the point — the multi-fragment layers pin their fragments
+// individually instead (charts weaves three, trade forms joins two), and macro
+// check pins neither constant. Both counts are executed together in that same
+// §9, so the inequality between them is checked rather than asserted here. A
+// future layer that reasons about "the" convention must ask which era it means,
+// and must not infer the era from those constants.
+//
+// Layer shapes, measured against the shipped modules rather than assumed: of
+// the layers this bridge peels — the chain, whose length is executed as
+// CHAIN_LENGTH in the newest contract and is deliberately not restated here —
+// every one is a single contiguous fragment except #408 (three) and #415
+// (two). That is not a statement about the repository at large: the MCX3
 // delegate below this chain is itself two fragments, and the older EIC, PESS
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const DXLINK_GREEKS_FETCH = require('./dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT = require('./journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = require('./portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE = require('./portfolio-technical-merge-undo.js');
@@ -212,6 +217,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const DXLINK_GREEKS_FETCH_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'dxlink-greeks-fetch.js'),
+  'utf8'
+);
 const JOURNAL_MAP_AUDIT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-map-audit.js'),
   'utf8'
@@ -358,11 +367,15 @@ const JOURNAL_SOURCE = fs.readFileSync(
 );
 
 function undoMcxPr3AfterJournal(html, mcx3Source) {
-  // NEWEST FIRST: the journal map audit was cut after everything below it, so it
-  // peels before anything else touches the document.
-  const preJournalMapAudit = JOURNAL_MAP_AUDIT.isApplied(html)
-    ? JOURNAL_MAP_AUDIT.undoJournalMapAudit(html, JOURNAL_MAP_AUDIT_SOURCE)
+  // NEWEST FIRST: the layer cut last peels before anything else touches the
+  // document. Which layer that is stays in the chain below rather than in this
+  // comment, which named one and went stale the next time a layer shipped.
+  const preDxlinkGreeksFetch = DXLINK_GREEKS_FETCH.isApplied(html)
+    ? DXLINK_GREEKS_FETCH.undoDxlinkGreeksFetch(html, DXLINK_GREEKS_FETCH_SOURCE)
     : html;
+  const preJournalMapAudit = JOURNAL_MAP_AUDIT.isApplied(preDxlinkGreeksFetch)
+    ? JOURNAL_MAP_AUDIT.undoJournalMapAudit(preDxlinkGreeksFetch, JOURNAL_MAP_AUDIT_SOURCE)
+    : preDxlinkGreeksFetch;
   const prePortfolioTechnicalAlignmentDebug = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.isApplied(preJournalMapAudit)
     ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG.undoPortfolioTechnicalAlignmentDebug(
       preJournalMapAudit, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_SOURCE)
