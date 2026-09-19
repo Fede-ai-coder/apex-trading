@@ -18,19 +18,21 @@
 //
 // ── THE FINDING THIS LAYER SHIPPED: THE BANNER SIGNAL IS SPENT ─────────────
 //
-// Every cut before this one leaned, where it could, on the strongest structural
-// signal the document offers: a `// ── ` banner that NAMES the declaration it
-// governs. When the banner names the owner, where the feature ends is not a
-// judgement — the banner says.
+// A `// ── ` banner that NAMES the declaration it governs is the strongest
+// structural signal this document offers: where one exists, where the feature
+// ends is not a judgement — the banner says. LAYERS_OPENING_ON_BANNER of the
+// layers on this chain open ON a banner at all, which §9 counts; how many of
+// THOSE banners named their owner is measured nowhere, so it is not claimed
+// here.
 //
-// THERE WAS NO SUCH BANNER LEFT. Of the 221 top-level banner marks in the base
-// monolith, 77 were `// ── ` dash banners, and NONE of them named an owner it
-// governed. §4 re-measures that on every push and — because a metric whose true
+// WHAT IS MEASURED IS WHAT WAS LEFT. Of the 221 top-level banner marks in the
+// base monolith, 77 were `// ── ` dash banners, and NONE of them named an owner
+// it governed. §4 re-measures that on every push and — because a metric whose true
 // value is zero is indistinguishable from a metric that measures nothing — runs
 // the SAME predicate over the document the previous layer's undo helper
 // reconstructs, where the answer is ONE: `fetchDXLinkGreeks`, the region #465
-// cut. The signal was not scarce. It was singular, and the cycle before this
-// one spent it.
+// cut. At that base the signal was not scarce but singular, and the cycle
+// before this one spent it.
 //
 // SO THIS BOUNDARY IS ARGUED FROM THE CALL GRAPH, and §5 re-executes that
 // argument rather than quoting it: of the four owners, TWO are referenced
@@ -970,8 +972,9 @@ eq(candidateRuns.length, CANDIDATES, '…leaving CANDIDATES distinct candidates'
     'no enumerated run begins where this cut begins');
   eq(MARKS.indexOf(RAW_AT_IN_CODE), -1, '…because that offset is not a region start');
   eq(DECLS.filter((d) => d.start === RAW_AT_IN_CODE).length, 0, '…nor a declaration start');
-  // What the screen DID enumerate is the same cut minus its opening block, which is
-  // the closest the screen can come — and it ranks there among the cleanest.
+  // What the screen DID enumerate is the same cut minus its opening block, which
+  // is the closest the screen can come. What it scores there is measured in the
+  // three clauses below, not summarised in an adjective here.
   const rec = candidateRuns.filter((c) => c.lo === BY_NAME.get(OWNERS_EXPECTED[0]).start
     && c.hi === BODY_END_IN_CODE)[0];
   ok(rec, 'the screen DOES enumerate the same cut starting at its first declaration');
@@ -1150,6 +1153,15 @@ section('9. Reachability, the chain, and exact production scope');
     '…and the module at that rank is this one, by its undo helper\'s own pin');
   ok(bySize[0].units < UNDO.MODULE_CHARS && bySize[bySize.length - 1].units > UNDO.MODULE_CHARS,
     '…so it displaces no superlative and re-pins no earlier contract');
+  // THE RANK AND THE COUNT ABOVE IT ARE PINNED SEPARATELY AND TIED TOGETHER.
+  // LAYERS_LARGER_THAN_THIS_CUT came over from the audit, where it was read; the
+  // assertion that read it did not, and the constant sat here checking nothing
+  // until the mutation pass raised it as a survivor. A pin nothing reads cannot
+  // fail, which is exactly why rereading never finds one.
+  eq(bySize.filter((x) => x.units > UNDO.MODULE_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
+    'LAYERS_LARGER_THAN_THIS_CUT layers in the chain are larger than this module');
+  eq(MODULE_SIZE_RANK + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH,
+    '…and the rank and that count PARTITION the chain, so neither can drift alone');
   eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
     'LAYERS_ENDING_BRACE of the chain end `}\\n`, this one among them');
 

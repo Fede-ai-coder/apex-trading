@@ -20,8 +20,9 @@
 // sibling that also ships, so a mutant pointing at a file that does not exist
 // proves nothing about it. That exact survivor was found three times: in #461
 // (CONTRACT_REL), in #465 (RETIRED_CONTRACT_REL) and in #466 (AUDIT_SPEC_REL).
-// So MODULE_REL and TAG move to the layer next to this one in the same
-// directory, UNDO_REL and RETIRED_CONTRACT_REL to files that still ship,
+// So MODULE_REL and TAG move to the module that sorts immediately before this
+// one in js/portfolio/, UNDO_REL and RETIRED_CONTRACT_REL to files that still
+// ship,
 // CONTRACT_SPEC_REL to a spec that really is committed, and RETIRED_SPEC_REL to
 // the OTHER path this cycle removes — which is absent from the tree and present
 // in the base commit exactly as the real one is, and is caught only by the
@@ -58,9 +59,14 @@
 // `renderPositionsPanel`, which is a real consumer of other regions;
 // MONOLITH_DEPENDENCIES becomes `S`, the name that disqualified audit #424.
 //
-// PROSE PINNED BY EQUALITY changes one WORD, not one character: a banner or a
-// title that differs by a letter would be caught by a hash, while a plausible
-// re-wording is what a real drift looks like.
+// PROSE PINNED BY EQUALITY IS MUTATED THE WAY THAT LINE ACTUALLY DRIFTS, which
+// is not the same edit in every case. A banner drifts in WIDTH, so
+// HEADER_FIRST_LINE and CATCH_ALL_BANNER each lose one rule character; a title
+// drifts by a letter, so HEADER_TITLE_LINE gains one; and the comment line the
+// cut opens on drifts in the token that carries its meaning, so
+// OPENING_BLOCK_FIRST_LINE moves the timeframe from 1D to 4H. The version of
+// this paragraph the audit carried said all four changed a WORD — it was
+// written from the one that does.
 //
 // CONTRACT_SPEC_MUTANTS COUNTS THIS FILE, so its mutant is the one that fails
 // if an entry is ever dropped here without the contract noticing.
