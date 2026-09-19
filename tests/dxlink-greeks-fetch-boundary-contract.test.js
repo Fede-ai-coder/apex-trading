@@ -1183,6 +1183,12 @@ section('9. Reachability, the chain, and exact production scope');
     '…that path too being one the base commit carried');
   ok(fs.existsSync(path.join(ROOT, RETIRED_CONTRACT_REL)),
     '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
+  // EXISTENCE ALONE DOES NOT NAME IT, and the mutation pass proved that here: a mutant
+  // pointing RETIRED_CONTRACT_REL at a NEIGHBOURING contract survived, because that file
+  // still ships too and the clause above was satisfied by it. The name is pinned to the
+  // one the retired spec itself targeted, read out of the commit that still carried it.
+  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + RETIRED_CONTRACT_REL + "'") >= 0,
+    '…and it is the contract that retired spec TARGETED, not merely a contract that exists');
   ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), 'a spec for THIS contract is committed');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
