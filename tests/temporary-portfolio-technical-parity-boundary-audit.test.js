@@ -1044,7 +1044,12 @@ section('10. The change set, the ratchet and the budget');
       + 'chain-order retirement has nothing left to take and this cycle retires nothing');
     ok(fs.existsSync(path.join(ROOT, NEWEST_CONTRACT)), '…whose contract ships');
 
-    const auditSpec = require('./mutation-specs/portfolio-technical-parity-audit.spec.js');
+    // LOADED THROUGH AUDIT_SPEC_REL, not through a literal beside it. The mutation
+    // pass found this constant checking nothing: its only consumer asked whether the
+    // path was in the change set, and the mutant pointed it at a NEIGHBOURING spec
+    // that this same PR also touches — so the clause was satisfied by the wrong file.
+    // Requiring the spec through the constant makes the two assertions below read it.
+    const auditSpec = require(path.join(ROOT, AUDIT_SPEC_REL));
     const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
     const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
     const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
