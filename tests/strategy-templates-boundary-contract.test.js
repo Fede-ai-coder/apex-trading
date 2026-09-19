@@ -102,7 +102,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/strategy-templates-contract.spec
 // contract shipped: a Phase 1 audit adds its temporary file and advances this
 // pin in every contract that carries it, and Phase 2 deletes that audit as the
 // next contract arrives, leaving the count where it is.
-const TEST_FILE_COUNT = 165;
+const TEST_FILE_COUNT = 166;
 const LOCAL_SCRIPT_COUNT = 69;
 const MODULE_POSITION = 68;
 

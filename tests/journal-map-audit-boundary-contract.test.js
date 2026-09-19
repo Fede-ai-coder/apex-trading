@@ -140,7 +140,7 @@ const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-alignment-deb
 // Ratchet. The suite file count as it stands TODAY. Phase 1 advanced it to 164;
 // this phase deletes that audit as this contract arrives, one for one, so the
 // count is unchanged.
-const TEST_FILE_COUNT = 165;
+const TEST_FILE_COUNT = 166;
 const LOCAL_SCRIPT_COUNT = 80;
 const MODULE_POSITION = 79;
 
