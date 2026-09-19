@@ -135,7 +135,7 @@ const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-alignment-deb
 // Ratchet. The suite file count as it stands TODAY. Phase 1 advanced it to 164;
 // this phase deletes that audit as this contract arrives, one for one, so the
 // count is unchanged.
-const TEST_FILE_COUNT = 164;
+const TEST_FILE_COUNT = 165;
 const LOCAL_SCRIPT_COUNT = 80;
 const MODULE_POSITION = 79;
 
@@ -279,6 +279,11 @@ const LAYERS_OPENING_ON_BANNER = 20;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 const BASE_DECLARED_MUTANTS = 177;
 const RETIRED_MUTANTS = 89 + 82;
+// This layer's own contribution to the mutant budget. The LIVE total is not
+// pinned here: it is a fact about the suite TODAY, which every later audit moves
+// by design, and pinning it made the next cycle's Phase 1 fail on a contract it
+// had not touched.
+const CONTRACT_SPEC_MUTANTS = 93;
 const MUTANT_BUDGET = 250;
 const LAYER_CONTRACT_SPECS = 1;
 
@@ -1105,10 +1110,29 @@ section('8. Reachability, the chain, and exact production scope');
     eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
       .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
     'the base declared BASE_DECLARED_MUTANTS mutants');
-    eq(declaredNow, BASE_DECLARED_MUTANTS - RETIRED_MUTANTS + spec.mutants.length,
-      '…and this change declares that MINUS the two retired specs PLUS this contract\'s');
+    // WHAT THE LIVE TOTAL IS, this contract does NOT pin, and the distinction
+    // cost a cycle to learn. The arithmetic above is a fact about the commit
+    // that shipped this layer and stays true forever; `declaredNow` is a fact
+    // about the suite TODAY, which every later audit moves by design. Pinning
+    // the live number here made the next cycle's Phase 1 fail on a contract it
+    // had not touched. What survives is the INVARIANT, and this layer's own
+    // contribution to it.
+    eq(spec.mutants.length, CONTRACT_SPEC_MUTANTS,
+      'this contract\'s spec carries CONTRACT_SPEC_MUTANTS mutants, one per pin');
+    // HOW BIG THE RETIREMENT WAS, read out of the base commit rather than
+    // remembered. RETIRED_MUTANTS lost its only consumer when the live-total
+    // pin above was replaced, and a constant nothing reads is a constant whose
+    // mutant survives — which is how this assertion came to be written.
+    const entriesAt = (rel) => (git(['show', BASE_SHA + ':' + rel]).match(/\n  \{ id: "/g) || []).length;
+    eq(entriesAt(AUDIT_SPEC_REL) + entriesAt(RETIRED_SPEC_REL), RETIRED_MUTANTS,
+      '…and the two specs this cycle retired carried RETIRED_MUTANTS between them, counted '
+      + 'in the base commit that still holds both');
+    ok(entriesAt(AUDIT_SPEC_REL) > 0 && entriesAt(RETIRED_SPEC_REL) > 0,
+      '…each of them non-empty, so the sum is two real specs and not one plus a typo');
+    ok(declaredNow >= spec.mutants.length,
+      '…and the live declared total still counts them, whatever later cycles have added');
     eq(budgetNow, MUTANT_BUDGET, 'the ceiling is unchanged at 250');
-    ok(declaredNow < budgetNow, '…and the declared total is under it');
+    ok(declaredNow < budgetNow, '…and the live declared total is under it');
     eq(spec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
     const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
       .filter((f) => /-contract\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
