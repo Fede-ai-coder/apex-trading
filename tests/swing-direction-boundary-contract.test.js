@@ -247,18 +247,24 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 console.log('SWING DIRECTION RESOLVER — PERMANENT BOUNDARY CONTRACT');
 
+const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
 const BACKEND_POSITIONS_AGGREGATE_U = require('./lib/backend-positions-aggregate-undo.js');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-// THREE layers were cut AFTER this one. Peel them NEWEST-FIRST — the alignment
-// debug pair is the newest of all — and everything below measures this layer's
-// own document.
-const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(LIVE_INDEX)
-  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+// Layers were cut AFTER this one; the peel chain below IS how many, and it is
+// not restated here because a narrated count goes stale — this one said THREE
+// while four had shipped. Peel them NEWEST-FIRST, the reverse of the cut
+// order, and everything below measures this layer's own document.
+const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(PRE_DXLINK_GREEKS_FETCH)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      PRE_DXLINK_GREEKS_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS_FETCH;
 const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
   ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
       PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))
@@ -829,7 +835,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -857,7 +863,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
 }

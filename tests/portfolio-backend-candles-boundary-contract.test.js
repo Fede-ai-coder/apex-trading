@@ -186,6 +186,7 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
 const PORTFOLIO_TECHNICAL_MERGE_U = require('./lib/portfolio-technical-merge-undo.js');
@@ -199,13 +200,19 @@ const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
 const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
-// NEWEST FIRST. The alignment debug pair was cut after every layer this file
-// peels, so it comes off before any of them — peeling out of order throws
-// rather than silently measuring the wrong document.
-const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(LIVE_INDEX)
-  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+// NEWEST FIRST. The chain below peels in the reverse of the cut order, so the
+// newest layer comes off before any older one and peeling out of order throws
+// rather than silently measuring the wrong document. WHICH layer is newest is
+// not narrated here — the chain below IS that statement. The sentence this
+// replaces named one, and stopped being true the next time a layer shipped.
+const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(LIVE_INDEX)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(PRE_DXLINK_GREEKS_FETCH)
+  ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
+      PRE_DXLINK_GREEKS_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
+  : PRE_DXLINK_GREEKS_FETCH;
 const PRE_PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.isApplied(PRE_JOURNAL_MAP_AUDIT)
   ? PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U.undoPortfolioTechnicalAlignmentDebug(
       PRE_JOURNAL_MAP_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-alignment-debug.js'), 'utf8'))

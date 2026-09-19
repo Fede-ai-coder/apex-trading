@@ -109,6 +109,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/journal-map-audit-undo.js');
+const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 // The #459 counterexample in §5 is measured on the document that cut actually
 // faced, reconstructed by the shipped undo helpers rather than remembered.
 const ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
@@ -126,6 +127,10 @@ const UNDO_REL = 'tests/lib/journal-map-audit-undo.js';
 const AUDIT_REL = 'tests/temporary-journal-map-audit-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/journal-map-audit-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/journal-map-audit-contract.spec.js';
+// The commit that retired it, so the negations below are pinned against a path
+// that really existed rather than one that never did. It is also the revision
+// the spec's own numbers are read out of, now that the file is gone.
+const SPEC_RETIRED_FROM = '9dae61e';
 // Chain-order retirement resumes this cycle: the layer that was newest at the
 // base is no longer newest, so its spec goes. §8 pins that path the same way it
 // pins the audit's — by what the BASE commit carried, because absence alone is
@@ -330,11 +335,14 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('JOURNAL MAP AUDIT — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited by #462 · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// The DXLink greeks-fetch layer was cut AFTER this one, so it is newer: peel it
+// FIRST, and LIVE_* below means this layer's own shipped document — the one it
+// was written against — not whatever the head of the chain looks like today.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = DXLINK_GREEKS_FETCH_U.isApplied(HEAD_INDEX)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1067,8 +1075,8 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL].sort(),
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/services/dxlink-greeks-fetch.js'].sort(),
+    'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
   // in the contract that carried it: a mutant pointing it at a NEIGHBOURING
@@ -1093,17 +1101,24 @@ section('8. Reachability, the chain, and exact production scope');
     '…that path too being one the base commit carried');
   ok(fs.existsSync(path.join(ROOT, 'tests/portfolio-technical-alignment-debug-boundary-contract.test.js')),
     '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), 'a spec for THIS contract is committed');
+  // RETIRED IN #465, in chain order. Every assertion in this file still runs on
+  // every push; what stops is the mutation pass proving those pins load-bearing.
+  // The assertion is kept as its NEGATION rather than deleted, because a deleted
+  // line would pass for the wrong reason.
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    'this contract\'s mutation spec was RETIRED, so the newest layer carries the pass');
+  eq(git(['cat-file', '-e', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]), '',
+    '…and that path is the one this cycle removed, not merely a path that never existed');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/services/dxlink-greeks-fetch.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
   // The budget, executed rather than narrated.
   {
-    const spec = require('./mutation-specs/journal-map-audit-contract.spec.js');
     const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
     const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
     const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
@@ -1117,8 +1132,14 @@ section('8. Reachability, the chain, and exact production scope');
     // the live number here made the next cycle's Phase 1 fail on a contract it
     // had not touched. What survives is the INVARIANT, and this layer's own
     // contribution to it.
-    eq(spec.mutants.length, CONTRACT_SPEC_MUTANTS,
-      'this contract\'s spec carries CONTRACT_SPEC_MUTANTS mutants, one per pin');
+    // READ OUT OF THE REVISION THAT LAST CARRIED IT. The spec is retired, so
+    // requiring it would throw; what it HELD is a fact about that commit and
+    // stays true forever, which is why the pin survives the retirement.
+    const specAt = git(['show', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]);
+    eq((specAt.match(/\n  \{ id: "/g) || []).length, CONTRACT_SPEC_MUTANTS,
+      'this contract\'s spec carried CONTRACT_SPEC_MUTANTS mutants, one per pin');
+    ok(specAt.indexOf("target: '" + CONTRACT_REL + "'") >= 0,
+      '…and it targeted THIS contract, not a neighbouring one');
     // HOW BIG THE RETIREMENT WAS, read out of the base commit rather than
     // remembered. RETIRED_MUTANTS lost its only consumer when the live-total
     // pin above was replaced, and a constant nothing reads is a constant whose
@@ -1129,17 +1150,17 @@ section('8. Reachability, the chain, and exact production scope');
       + 'in the base commit that still holds both');
     ok(entriesAt(AUDIT_SPEC_REL) > 0 && entriesAt(RETIRED_SPEC_REL) > 0,
       '…each of them non-empty, so the sum is two real specs and not one plus a typo');
-    ok(declaredNow >= spec.mutants.length,
-      '…and the live declared total still counts them, whatever later cycles have added');
+    // WHAT THE LIVE TOTAL NO LONGER COUNTS is this contract's 93: they left with
+    // the spec. The live number is read only for the ceiling invariant below,
+    // which is the part that stays true however many layers ship after this one.
     eq(budgetNow, MUTANT_BUDGET, 'the ceiling is unchanged at 250');
     ok(declaredNow < budgetNow, '…and the live declared total is under it');
-    eq(spec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
     const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
       .filter((f) => /-contract\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
     eq(layerSpecs.length, LAYER_CONTRACT_SPECS,
       'exactly LAYER_CONTRACT_SPECS layer contract spec is committed');
-    eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)],
-      '…and it is this one: the newest layer keeps a spec, and only the newest');
+    eq(layerSpecs.indexOf(path.basename(CONTRACT_SPEC_REL)), -1,
+      '…and it is NOT this one: the newest layer keeps a spec, and only the newest');
   }
 }
 
