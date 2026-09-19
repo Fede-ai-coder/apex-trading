@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_TECHNICAL_PARITY = require('./portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH = require('./dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT = require('./journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG = require('./portfolio-technical-alignment-debug-undo.js');
@@ -217,6 +218,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_TECHNICAL_PARITY_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-parity.js'),
+  'utf8'
+);
 const DXLINK_GREEKS_FETCH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'dxlink-greeks-fetch.js'),
   'utf8'
@@ -370,9 +375,12 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preDxlinkGreeksFetch = DXLINK_GREEKS_FETCH.isApplied(html)
-    ? DXLINK_GREEKS_FETCH.undoDxlinkGreeksFetch(html, DXLINK_GREEKS_FETCH_SOURCE)
+  const prePortfolioTechnicalParity = PORTFOLIO_TECHNICAL_PARITY.isApplied(html)
+    ? PORTFOLIO_TECHNICAL_PARITY.undoPortfolioTechnicalParity(html, PORTFOLIO_TECHNICAL_PARITY_SOURCE)
     : html;
+  const preDxlinkGreeksFetch = DXLINK_GREEKS_FETCH.isApplied(prePortfolioTechnicalParity)
+    ? DXLINK_GREEKS_FETCH.undoDxlinkGreeksFetch(prePortfolioTechnicalParity, DXLINK_GREEKS_FETCH_SOURCE)
+    : prePortfolioTechnicalParity;
   const preJournalMapAudit = JOURNAL_MAP_AUDIT.isApplied(preDxlinkGreeksFetch)
     ? JOURNAL_MAP_AUDIT.undoJournalMapAudit(preDxlinkGreeksFetch, JOURNAL_MAP_AUDIT_SOURCE)
     : preDxlinkGreeksFetch;

@@ -243,6 +243,7 @@ console.log('relocation only · audited #440 · base=' + BASE_SHA.slice(0, 7));
 // The vega monitor ratios were cut AFTER this layer, so the live document is no
 // longer the one this contract shipped. Peel them first; the helper re-verifies
 // its own output by length and SHA-256, so the hop is proved, not assumed.
+const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
@@ -261,10 +262,14 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(LIVE_INDEX)
-  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(PRE_PORTFOLIO_TECHNICAL_PARITY)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      PRE_PORTFOLIO_TECHNICAL_PARITY, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_PARITY;
 const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(PRE_DXLINK_GREEKS_FETCH)
   ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
       PRE_DXLINK_GREEKS_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
@@ -348,11 +353,11 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // state is pinned against the layer that now owns it. Without this pair the
 // live document would be checked by nothing here — the gap the assertion-call
 // census caught, because this file gained a peel and no assertions.
-eq(LIVE_INDEX.length, DXLINK_GREEKS_FETCH_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_CHARS,
   'the live document is the NEWEST layer\'s extracted length — the message names the\n   // role, not a layer, because naming the layer went stale the next cycle');
-eq(sha256(LIVE_INDEX), DXLINK_GREEKS_FETCH_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_SHA256, '…and its digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 12, '…carrying one more local script for every layer cut since');
+  LOCAL_SCRIPT_COUNT + 13, '…carrying one more local script for every layer cut since');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -764,7 +769,7 @@ section('10. Exact production scope, and the temporary audit is gone');
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
     ['index.html', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js',
       'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/chart-interactions.js',
-      'js/services/journal-snapshot-helpers.js', MODULE_REL, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js'].sort(),
+      'js/services/journal-snapshot-helpers.js', MODULE_REL, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -800,7 +805,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'js/portfolio/portfolio-vega-monitor.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
