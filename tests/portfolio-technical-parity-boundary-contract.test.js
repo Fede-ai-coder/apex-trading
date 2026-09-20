@@ -116,7 +116,7 @@ const BASE_SHA256 = '088c2808f2668e6c47489729119a7baa880938835e1c6b112e123622276
 const BASE_LOCAL_SCRIPTS = 81;
 const LOCAL_SCRIPT_COUNT = 82;
 const MODULE_POSITION = 81;
-const TEST_FILE_COUNT = 166;
+const TEST_FILE_COUNT = 167;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-technical-parity-boundary-audit.test.js';
