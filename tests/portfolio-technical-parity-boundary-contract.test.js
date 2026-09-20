@@ -1,90 +1,83 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// PORTFOLIO TECHNICAL PARITY — TEMPORARY BOUNDARY AUDIT.
+// PORTFOLIO TECHNICAL PARITY — PERMANENT BOUNDARY CONTRACT.
 //
-// Phase 1. MEASUREMENT ONLY: index.html and every shipped module are
-// byte-identical to the base commit, and §9 asserts that against git rather
-// than trusting the diff. Phase 2 deletes this file.
+// A RELOCATION, NOT A REWRITE. One contiguous fragment of the inline monolith,
+// [954446,967048) in monolith coordinates at the base, is now
+// js/portfolio/portfolio-technical-parity.js. The module is the block's bytes
+// verbatim, and tests/lib/portfolio-technical-parity-undo.js reconstructs the
+// pre-extraction index.html byte for byte. EVERY coordinate below is measured
+// on THAT reconstruction, so nothing here is a remembered copy of the base.
 //
-// RECOMMENDATION: [954446,967048) in monolith coordinates — 12,602 raw units,
-// FOUR top-level owners that turn a backend technical-refresh response into a
-// by-ticker map behind a formula-parity gate. ONE consumer, ONE monolith
-// dependency, and ZERO in every other direction — including both halves of the
-// ninth: it names no module at all, chain or foundation. It loads in a
-// completely empty VM and runs nothing while loading.
+// FOUR OWNERS, which turn a backend technical-refresh response into a by-ticker
+// map behind a formula-parity gate: `PORTFOLIO_TECHNICAL_1D_PARITY_ALIASES`
+// (211, a `var`), `_resolvePortfolioTechnicalParityKey` (261),
+// `buildFormulaParityGate` (2,943) and
+// `buildBackendTechnicalByTickerFromResponse` (7,529).
 //
-// ── THIS AUDIT'S FINDING: THE BANNER SIGNAL IS SPENT ────────────────────────
+// ── THE FINDING THIS LAYER SHIPPED: THE BANNER SIGNAL IS SPENT ─────────────
 //
-// Every cut this programme has made leaned, where it could, on the strongest
-// structural signal the document offers: a `// ── ` banner that NAMES the
-// declaration it governs. When the banner names the owner, where the feature
-// ends is not a judgement — the banner says.
+// A `// ── ` banner that NAMES the declaration it governs is the strongest
+// structural signal this document offers: where one exists, where the feature
+// ends is not a judgement — the banner says. LAYERS_OPENING_ON_BANNER of the
+// layers on this chain open ON a banner at all, which §9 counts; how many of
+// THOSE banners named their owner is measured nowhere, so it is not claimed
+// here.
 //
-// THERE IS NO SUCH BANNER LEFT. Of the 221 top-level banner marks in this
-// monolith, 77 are `// ── ` dash banners, and NONE of them names an owner it
-// governs. §4 measures that, and — because a metric whose true value is zero is
-// indistinguishable from a metric that measures nothing — it runs the SAME
-// predicate over the document reconstructed by the shipped undo helper, where
-// the answer is ONE: `fetchDXLinkGreeks`, the region #465 cut. The signal was
-// not scarce. It was singular, and the last cycle spent it.
+// WHAT IS MEASURED IS WHAT WAS LEFT. Of the 221 top-level banner marks in the
+// base monolith, 77 were `// ── ` dash banners, and NONE of them named an owner
+// it governed. §4 re-measures that on every push and — because a metric whose true
+// value is zero is indistinguishable from a metric that measures nothing — runs
+// the SAME predicate over the document the previous layer's undo helper
+// reconstructs, where the answer is ONE: `fetchDXLinkGreeks`, the region #465
+// cut. At that base the signal was not scarce but singular, and the cycle
+// before this one spent it.
 //
-// So this cycle's boundary cannot be read off a banner and has to be argued
-// from the CALL GRAPH instead. §5 makes that argument and §2 pins it: of the
-// four owners, TWO are referenced nowhere outside the cut at all, and the other
-// two only from inside ONE function. Nothing in the eighteen owners that follow
-// them under the same banner names any of the four.
+// SO THIS BOUNDARY IS ARGUED FROM THE CALL GRAPH, and §5 re-executes that
+// argument rather than quoting it: of the four owners, TWO are referenced
+// nowhere outside the cut at all, and the other two only from inside ONE
+// function. None of the eighteen owners that follow them under the same banner
+// names any of the four, so the end of the cut severs no call.
 //
-// ── AND THE SCREEN'S WHOLE CLEAN SET IS BOUNDARY-BLOCKED ────────────────────
+// IT DOES NOT OPEN ON A BANNER. It opens on an 828-unit explanatory comment
+// block about the alias table it owns, and §2 proves every line of that block
+// is a comment and that a blank line separates it from the declaration above.
 //
-// Ranked on coupling alone, three candidates read exactly one consumer and
-// nothing else. All three are refused here, each for a reason §5 executes:
+// ── WHAT FOLLOWS IT IS ANOTHER FEATURE, IMMEDIATELY ────────────────────────
 //
-//   [719173,722692)  3,519u  opens ON a `// ═══` SECTION header — `PORTFOLIO
-//                            MANAGER — state + CRUD` — whose section CONTINUES
-//                            past the cut: the very next owner, `positionManager`,
-//                            is the section's subject. Taking the header would
-//                            leave the section that keeps it with no title. That
-//                            is the defect audit #462 published, unchanged.
-//   [929378,932088)  2,710u  a LONE owner inside an 81,860-unit banner region.
-//   [975281,977133)  1,852u  another lone owner inside the SAME region.
+// The next top-level owner begins at EXACTLY the raw end: no blank line, no
+// banner, no header between. That is the `tt-reconnect` shape, the one where
+// "extend to the next header" would swallow the next feature whole — which is
+// why this programme has no such rule and §2 pins the seam instead.
 //
-// THAT REGION IS A MIS-LABELLED CATCH-ALL, which is why the screen keeps
-// recommending owners from inside it. `// ── [PortfolioRefreshPayload] — gated
-// verbose payload diagnostics` governs 81,860 units and THIRTY-ONE owners with
-// ZERO interior banner marks. The diagnostics it names are the first three
-// owners — 1,602 units of the 81,860 — and the other twenty-eight are payload
-// building, full and live refresh, the technical-refresh family and, at the far
-// end, add-position form rendering. A banner that describes under a twentieth
-// of what it governs is not a boundary; it is a label someone stopped
-// maintaining.
+// ── COUPLING ───────────────────────────────────────────────────────────────
 //
-// The recommendation is cut OUT of that catch-all, and §5 defends the two cuts
-// it makes rather than asserting them: it begins where a 828-unit explanatory
-// comment block begins, and ends where the last owner that nothing downstream
-// names ends.
+// FOUR edges reach in, all four hosted by `refreshPositionsLive` — 138,483
+// units, the largest top-level declaration in the monolith and the same hub the
+// layer before this one answered to. That is ONE consumer at four sites.
 //
-// ── WHAT THE SCREEN FOUND ───────────────────────────────────────────────────
+// ONE monolith dependency, `_technicalTfSqueezeState`, declared 189,471 units
+// earlier. Every other direction is ZERO, including BOTH halves of the ninth:
+// this region names no module at all, chain or foundation. §3 keeps those two
+// zeroes apart, because they are not the same claim written twice.
 //
-// 7,649 owner runs, 2,048 refused by `assertSeam`, 3,284 distinct candidates,
-// 2,033 of which run nothing at load. ONE reads exactly one consumer under the
-// raw reading of the ninth direction and THREE do under the split reading #465
-// shipped — down from four, because the fourth was the region #465 cut. 135
-// have one consumer and more than one site.
+// ── WHAT THIS CONTRACT IS FOR ───────────────────────────────────────────────
 //
-// ── ONE CONSUMER, AND IT IS THE SAME HUB AS LAST CYCLE ─────────────────────
+// THE MODULE LOADS LAST AND NEEDS NOTHING. It is the 82nd and final local
+// script (index 81 of 82), which is what MODULE_POSITION pins, and §7 loads it
+// in a COMPLETELY empty VM: four globals defined, and no fetch, timer, socket,
+// storage read or listener touched while it loads. §7 also RUNS the parity
+// resolver on inputs where the answer differs, which is what makes its verdict
+// a measurement rather than an echo.
 //
-// All four inbound edges are hosted by `refreshPositionsLive`, which is 138,483
-// units — still the largest top-level declaration in the monolith, and still
-// the consumer the last cut answered to. §3 pins its size, because "one
-// consumer" reads differently when that consumer is a tenth of the document.
-//
-// ── THE RETIREMENT: THERE ISN'T ONE ────────────────────────────────────────
-//
-// The only layer contract spec committed is the NEWEST layer's, which the
-// programme requires it to keep, so chain-order retirement has nothing to take.
-// §10 asserts the arithmetic that makes that safe rather than asserting the
-// absence.
+// §8 plants every failure the undo helper documents AS REACHABLE and asserts
+// its EXACT message. The seventh, BASE_IDENTITY, is a deliberate redundant
+// final gate and has no mutant that reaches it once the module digest and the
+// whole-document digest have both passed; the helper says so in its own header.
+// §9 carries the chain-wide counts — this is the newest layer, so this is the
+// contract that holds CHAIN_LENGTH and the counts derived from it — and the
+// exact production scope of the change.
 // ═════════════════════════════════════════════════════════════════════════════
 
 const assert = require('assert');
@@ -107,26 +100,43 @@ const {
 // measurement. The shipped undo helper reconstructs it byte-exactly.
 const PREV_UNDO = require('./lib/dxlink-greeks-fetch-undo.js');
 
-const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-technical-parity.js';
+const UNDO = require('./lib/portfolio-technical-parity-undo.js');
+
+const MODULE_REL = 'js/portfolio/portfolio-technical-parity.js';
+const TAG = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>\n';
+const ANCHOR_TAG = '<script src="./js/services/dxlink-greeks-fetch.js"></script>\n';
+const INLINE_OPEN = '<script>';
 
 // ── The base ─────────────────────────────────────────────────────────────────
-const BASE_SHA = '5b537b2';
+const BASE_SHA = 'b22b355';
 const BASE_CHARS = 1491306;
 const BASE_UTF8 = 1520056;
 const BASE_LF = 25802;
 const BASE_SHA256 = '088c2808f2668e6c47489729119a7baa880938835e1c6b112e1236222765abb8';
-const LOCAL_SCRIPTS = 81;
-const BASE_TEST_FILE_COUNT = 165;
+const BASE_LOCAL_SCRIPTS = 81;
+const LOCAL_SCRIPT_COUNT = 82;
+const MODULE_POSITION = 81;
 const TEST_FILE_COUNT = 166;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-technical-parity-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-parity-audit.spec.js';
-const RATCHETED_CONTRACTS = 27;
+const CONTRACT_REL = 'tests/portfolio-technical-parity-boundary-contract.test.js';
+const UNDO_REL = 'tests/lib/portfolio-technical-parity-undo.js';
+const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-parity-contract.spec.js';
+// Chain-order retirement: the layer that was newest at the base is no longer
+// newest, so its spec goes. §9 pins that path by what the BASE commit carried,
+// because absence alone is satisfied by any wrong path, including one that
+// never existed.
+const RETIRED_SPEC_REL = 'tests/mutation-specs/dxlink-greeks-fetch-contract.spec.js';
+const RETIRED_CONTRACT_REL = 'tests/dxlink-greeks-fetch-boundary-contract.test.js';
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
-const NEWEST_CONTRACT = 'tests/dxlink-greeks-fetch-boundary-contract.test.js';
-const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/dxlink-greeks-fetch-contract.spec.js';
-const BASE_DECLARED_MUTANTS = 121;
+const BASE_DECLARED_MUTANTS = 227;
+const RETIRED_MUTANTS = 106 + 115;
+// This layer's own contribution to the mutant budget. The LIVE total is not
+// pinned here: it is a fact about the suite TODAY, which every later audit
+// moves by design.
+const CONTRACT_SPEC_MUTANTS = 121;
 const MUTANT_BUDGET = 250;
 const LAYER_CONTRACT_SPECS = 1;
 
@@ -263,17 +273,68 @@ const CLEAN_CANDIDATES = 2033;
 const ONE_CONSUMER_MULTI_SITE = 135;
 
 // ── Where this layer would sit ───────────────────────────────────────────────
-const CHAIN_LENGTH = 37;
-const SIZE_RANK_IF_CUT = 28;
-const SMALLEST_LAYER_CHARS = 1761;
-const LARGEST_LAYER_CHARS = 71811;
+const CHAIN_LENGTH = 38;
+const MODULE_SIZE_RANK = 28;
+const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';
+const SMALLEST_CHARS = 1761;
+const LARGEST_CHARS = 71811;
 const LAYERS_LARGER_THAN_THIS_CUT = 10;
+const LAYERS_ENDING_BRACE = 35;
+const LAYERS_WITH_SEPARATOR = 30;
+const LAYERS_WITH_RAW_PAIR = 27;
+const LAYERS_WITHOUT_SEPARATOR = 8;
+const UNDOCUMENTED_LAYERS = 2;
 const PURE_ASCII_LAYERS = 2;
 const LAYERS_OPENING_ON_BANNER = 21;
 
 // ── Reachability at this base ────────────────────────────────────────────────
 const DEAD_DECLS = 18;
 const DEAD_UNITS = 5318;
+
+// ── The chain, as it stands with this layer on it ────────────────────────────
+// CHRONOLOGICAL, oldest first, ending at THIS layer: a contract's chain records
+// the tree as its own cut left it, which is why the previous contract's copy
+// ends one entry earlier and is not extended by later cycles.
+const CHAIN = [
+  'js/services/journal-core.js',
+  'js/services/mcx-regime-policy.js',
+  'js/ui/journal-ui.js',
+  'js/services/journal-remote-persistence.js',
+  'js/services/journal-backend-write-through.js',
+  'js/services/journal-migration.js',
+  'js/services/journal-manual-import.js',
+  'js/ui/journal-backup-restore.js',
+  'js/ui/mcx-macro-check.js',
+  'js/ui/mcx-charts.js',
+  'js/services/apex-post-auth-init.js',
+  'js/ui/tt-reconnect.js',
+  'js/ui/journal-close-legs.js',
+  'js/ui/journal-trade-forms.js',
+  'js/ui/journal-trade-detail.js',
+  'js/portfolio/portfolio-data-fetch.js',
+  'js/portfolio/backend-portfolios.js',
+  'js/portfolio/portfolio-expiry-manual.js',
+  'js/portfolio/portfolio-traffic-light.js',
+  'js/ui/backend-candle-store-chart.js',
+  'js/services/journal-rich-snapshot.js',
+  'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-prefetch.js',
+  'js/portfolio/portfolio-dxlink-greeks.js',
+  'js/config/strategy-templates.js',
+  'js/portfolio/portfolio-vega-monitor.js',
+  'js/services/scanner-ivr-throttle.js',
+  'js/services/scanner-earnings-throttle.js',
+  'js/ui/chart-interactions.js',
+  'js/services/journal-snapshot-helpers.js',
+  'js/services/swing-weekly-candles.js',
+  'js/services/swing-direction.js',
+  'js/portfolio/backend-positions-aggregate.js',
+  'js/portfolio/portfolio-technical-merge.js',
+  'js/portfolio/portfolio-technical-alignment-debug.js',
+  'js/services/journal-map-audit.js',
+  'js/services/dxlink-greeks-fetch.js',
+  'js/portfolio/portfolio-technical-parity.js',
+];
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -315,13 +376,22 @@ function locallyBound(src) {
 function codeLines(src) { return src.split('\n').filter((l) => !isBlankOrComment(l)).length; }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-console.log('PORTFOLIO TECHNICAL PARITY — TEMPORARY BOUNDARY AUDIT');
-console.log('measurement only · base=' + BASE_SHA);
+console.log('PORTFOLIO TECHNICAL PARITY — PERMANENT BOUNDARY CONTRACT');
+console.log('relocation only · audited by #466 · base=' + BASE_SHA);
 
-// MEASUREMENT ONLY: nothing is peeled and nothing has moved, so the shipped
-// document IS the one this audit measures. §4 reconstructs the PREVIOUS one
-// for its control, and that is the only place a peeled document appears.
-const INDEX = APP_LOADER.loadIndexHtml();
+// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
+// this layer's shipped document. When a later cycle cuts again, a peel goes here
+// and LIVE_INDEX stops being the head of the tree — the idiom every older
+// contract in this chain already carries.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
+const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+
+// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
+// copy of it: the undo helper runs first, so every coordinate here is proved by
+// the reconstruction that shipped.
+const INDEX = UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE);
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
 const CODE = TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
@@ -499,15 +569,9 @@ let rawRunCount = 0, seamRejectedCount = 0;
 
 async function main() {
 
-// CHAIN, read off the newest contract rather than written here: it is that
-// file that carries the list, and copying it would be a second place to drift.
-const CHAIN = fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8')
-  .match(/^const CHAIN = \[([\s\S]*?)^\];/m)[1]
-  .split('\n').map((l) => l.trim()).filter((l) => l.startsWith("'"))
-  .map((l) => l.replace(/^'|',?$/g, ''));
 // Which KIND of module owns a name: one this programme extracted, or one that
-// predates it. THE WHOLE FINDING rests on this split, and CHAIN is the literal
-// above — this is the newest layer, so this contract is where that list lives.
+// predates it. CHAIN is the literal above — this is the newest layer, so this
+// contract is where that list lives.
 const CHAIN_SET = new Set(CHAIN);
 const OWNER_KIND = new Map();
 for (const s of SIBLINGS) {
@@ -533,51 +597,73 @@ function outboundSplit(lo, hi) {
 // byConsumer with the FOUNDATION half of the ninth direction removed.
 const byConsumerSplit = (p, split) => byConsumer(p) - p.outModule + split.chain;
 
-
 // ─────────────────────────────────────────────────────────────────────────────
-section('1. The base these numbers were measured against');
+section('1. The shipped document, and the base it came from');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(INDEX.length, BASE_CHARS, 'index.html is BASE_CHARS units');
+eq(LIVE_INDEX.length, UNDO.EXTRACTED_CHARS, 'the shipped index.html is the extracted length');
+eq(Buffer.byteLength(LIVE_INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…its byte length');
+eq((LIVE_INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…its line-feed count');
+eq(sha256(LIVE_INDEX), UNDO.EXTRACTED_SHA256, '…and its digest');
+eq(LIVE_INDEX.length, INDEX_AFTER,
+  '…which is the figure the audit PREDICTED before the move, not one read back afterwards');
+eq(LIVE_LOCALS.length, LOCAL_SCRIPT_COUNT, 'it loads LOCAL_SCRIPT_COUNT local application scripts');
+eq(LIVE_LOCALS.indexOf(MODULE_REL), MODULE_POSITION,
+  '…this module being the LAST of them, at MODULE_POSITION');
+eq(LIVE_LOCALS[LIVE_LOCALS.length - 1], MODULE_REL,
+  '…read off the tail directly, so the endpoint is pinned by position and not only by index');
+eq(count(LIVE_INDEX, TAG), 1, 'exactly one tag for it');
+eq(count(LIVE_INDEX, ANCHOR_TAG + TAG + INLINE_OPEN), 1,
+  '…immediately after the previous layer\'s tag and immediately before the inline monolith');
+// THE RECONSTRUCTION IS THE BASE, and that is asserted against git rather than
+// against a number this file carries: a digest written here could be wrong in
+// exactly the same way twice and still agree with itself.
+eq(INDEX.length, BASE_CHARS, 'the reconstruction is BASE_CHARS units');
 eq(Buffer.byteLength(INDEX, 'utf8'), BASE_UTF8, '…BASE_UTF8 bytes');
 eq((INDEX.match(/\n/g) || []).length, BASE_LF, '…BASE_LF line feeds');
 eq(sha256(INDEX), BASE_SHA256, '…and this digest');
-eq(sha256(git(['show', BASE_SHA + ':index.html'])), BASE_SHA256,
-  'and that digest is the one the base COMMIT carries, not merely one this file remembers');
-eq(LOCALS.length, LOCAL_SCRIPTS, 'it loads LOCAL_SCRIPTS local application scripts');
-eq(INDEX.indexOf(CODE), CODE_AT, 'the inline monolith starts at CODE_AT');
-eq(CODE.length, CODE_CHARS, '…and runs CODE_CHARS units');
-eq(DECLS.length, TOP_LEVEL_DECLS, 'it declares TOP_LEVEL_DECLS names at top level');
+eq(INDEX, git(['show', BASE_SHA + ':index.html']),
+  '…and it is the base commit\'s index.html BYTE FOR BYTE, which is the claim the whole file '
+  + 'rests on — every coordinate below is an offset into this string');
+eq(LOCALS.length, BASE_LOCAL_SCRIPTS, 'the base loaded BASE_LOCAL_SCRIPTS local scripts');
+eq(LOCAL_SCRIPT_COUNT - BASE_LOCAL_SCRIPTS, 1, '…exactly one fewer: this layer');
+eq(INDEX.indexOf(CODE), CODE_AT, 'the base inline monolith starts at CODE_AT');
+eq(CODE.length, CODE_CHARS, '…and ran CODE_CHARS units');
+eq(DECLS.length, TOP_LEVEL_DECLS, 'it declared TOP_LEVEL_DECLS names at top level');
 eq(MARKS.length, TOP_LEVEL_BANNERS, '…under TOP_LEVEL_BANNERS top-level banners');
 eq(REGIONS.length, OWNER_REGIONS, '…which merge into OWNER_REGIONS regions that own a declaration');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('2. The recommended region, its boundary and its seam');
+section('2. The module is the block, verbatim');
 // ─────────────────────────────────────────────────────────────────────────────
-eq(BODY.length, BODY_CHARS, 'the body is BODY_CHARS units');
-eq(Buffer.byteLength(BODY, 'utf8'), BODY_UTF8, '…BODY_UTF8 bytes');
-eq((BODY.match(/\n/g) || []).length, BODY_LF, '…BODY_LF line feeds');
-eq(sha256(BODY), BODY_SHA256, '…and this digest, which Phase 2 must reproduce exactly');
+eq(MODULE, BODY, 'THE MODULE IS THE BLOCK\'S BYTES, with nothing added and nothing removed');
+eq(MODULE.length, BODY_CHARS, 'the body is BODY_CHARS units');
+eq(Buffer.byteLength(MODULE, 'utf8'), BODY_UTF8, '…BODY_UTF8 bytes');
+eq((MODULE.match(/\n/g) || []).length, BODY_LF, '…BODY_LF line feeds');
+eq(sha256(MODULE), BODY_SHA256, '…and this digest, which the audit pinned before the move');
+eq(MODULE.length, UNDO.MODULE_CHARS, '…the undo helper agreeing on the length');
+eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and on the digest');
 eq(CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE).length, RAW_CHARS,
-  'the raw fragment is RAW_CHARS units: the body plus one structural separator');
+  'the raw fragment index.html gave up is RAW_CHARS units: the body plus one separator');
 eq(RAW_CHARS - BODY_CHARS, 1, '…exactly one, which is the separator');
-eq(BODY.slice(-2), BODY_ENDING, 'it ends on a closing brace and a newline');
-ok(!BODY.endsWith('\n\n'), '…and not on a blank line');
-ok(/[^\x00-\x7F]/.test(BODY),
+eq(CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE), MODULE + UNDO.SEPARATOR,
+  '…and the fragment IS the module followed by that separator, which is why the module file '
+  + 'ends line-terminated and index.html needs no reflow');
+eq(MODULE.slice(-2), BODY_ENDING, 'it ends on a closing brace and a newline');
+ok(!MODULE.endsWith('\n\n'), '…and not on a blank line');
+ok(/[^\x00-\x7F]/.test(MODULE),
   'it is NOT pure ASCII — the prose in its opening block settles that');
-// IT DOES NOT OPEN ON A BANNER, and §4 is the reason no region can any more.
-// It opens on an explanatory comment block, which is a weaker signal and is
-// therefore argued in §5 rather than asserted here.
+// IT DOES NOT OPEN ON A BANNER, and §4 is the reason no region could any more.
 eq(MARKS.indexOf(RAW_AT_IN_CODE), -1, 'the cut does NOT begin on a banner mark');
-eq(BODY.slice(0, BODY.indexOf('\n')), OPENING_BLOCK_FIRST_LINE,
+eq(MODULE.slice(0, MODULE.indexOf('\n')), OPENING_BLOCK_FIRST_LINE,
   '…it begins on the first line of an explanatory comment block');
 eq(BY_NAME.get(OWNERS_EXPECTED[0]).start - RAW_AT_IN_CODE, OPENING_BLOCK_CHARS,
   '…which runs OPENING_BLOCK_CHARS units before the first declaration');
 {
   const block = CODE.slice(RAW_AT_IN_CODE, RAW_AT_IN_CODE + OPENING_BLOCK_CHARS);
   ok(block.split('\n').filter(Boolean).every((l) => /^\s*\/\//.test(l)),
-    '…and every line of it is a comment, so nothing executable is being swept in');
+    '…and every line of it is a comment, so nothing executable was swept in');
   eq(CODE.slice(RAW_AT_IN_CODE - 2, RAW_AT_IN_CODE), '\n\n',
-    '…with a blank line before it, so the block belongs to what FOLLOWS it and not to '
+    '…with a blank line before it, so the block belonged to what FOLLOWED it and not to '
     + 'the declaration above');
 }
 {
@@ -587,12 +673,12 @@ eq(BY_NAME.get(OWNERS_EXPECTED[0]).start - RAW_AT_IN_CODE, OPENING_BLOCK_CHARS,
   eq(assertSeam(CODE, RAW_AT_IN_CODE, BODY_END_IN_CODE), RAW_END_IN_CODE,
     'assertSeam accepts this boundary on all four invariants');
   eq(next.start, RAW_END_IN_CODE,
-    'the next top-level owner begins EXACTLY where the raw span ends — no blank line, no\n'
-    + '     banner and no header between them. That is the `tt-reconnect` shape, the one where\n'
+    'the next top-level owner began EXACTLY where the raw span ends — no blank line, no\n'
+    + '     banner and no header between them: the `tt-reconnect` shape, the one where\n'
     + '     "extend to the next header" would swallow the next feature whole');
   ok(bannerOf(next.start) === bannerOf(RAW_AT_IN_CODE),
-    '…and it sits under the SAME banner, which is exactly why the banner cannot end this '
-    + 'region and the boundary is the judgement §5 publishes');
+    '…and it sat under the SAME banner, which is why the banner could not end this region '
+    + 'and the boundary is the judgement §5 publishes');
   eq(CODE.slice(BODY_END_IN_CODE, RAW_END_IN_CODE), '\n',
     '…with exactly one structural newline between the body and that owner');
 }
@@ -605,31 +691,55 @@ eq(BY_NAME.get(OWNERS_EXPECTED[0]).start - RAW_AT_IN_CODE, OPENING_BLOCK_CHARS,
   eq(OWNERS.length - OWNERS.filter((d) => d.form === 'function').length, BINDING_OWNERS,
     '…and BINDING_OWNERS is a `var`, so this layer ships a mutable binding as well as code');
   eq(OWNERS.map((d) => d.chars), OWNER_SIZES, '…at these sizes');
-  const lines = BODY.split('\n');
+  const lines = MODULE.split('\n');
   eq(lines.length, TOTAL_LINES, 'the body is TOTAL_LINES lines');
   eq(lines.filter((l) => !isBlankOrComment(l)).length, CODE_LINES, '…CODE_LINES of them code');
   eq(lines.filter((l) => isBlankOrComment(l)).length, COMMENT_LINES, '…COMMENT_LINES of them not');
   eq(lines.filter((l) => /^\s*\/\//.test(l)).length, OPENING_COMMENT_LINES,
     '…OPENING_COMMENT_LINES of which begin a comment');
 }
-// What the move would cost, predicted before it happens.
-eq(BASE_CHARS - INDEX_AFTER, NET_REDUCTION,
-  'index.html would fall by NET_REDUCTION units net: the span leaves and a tag arrives');
-eq(RAW_CHARS - NET_REDUCTION,
-  ('<script src="./' + MODULE_REL_IF_CUT + '"></script>\n').length,
-  '…and the difference is exactly the tag line this layer would add');
-eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH, 'the monolith would be left at RESIDUAL_MONOLITH units');
+// What the move cost, predicted by the audit and now realised.
+eq(BASE_CHARS - LIVE_INDEX.length, NET_REDUCTION,
+  'index.html fell by NET_REDUCTION units net: the span left and a tag arrived');
+eq(RAW_CHARS - NET_REDUCTION, TAG.length,
+  '…and the difference is exactly the tag line this layer added');
+eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH, 'the monolith is left at RESIDUAL_MONOLITH units');
 {
-  const INLINE_OPEN = '<script>';
-  const tagWouldSitAt = CODE_AT - INLINE_OPEN.length;
-  eq(INDEX.slice(tagWouldSitAt, CODE_AT), INLINE_OPEN,
-    'the inline monolith opens with INLINE_OPEN immediately before CODE_AT');
-  eq(INDEX.slice(tagWouldSitAt - 1, tagWouldSitAt), '\n',
-    '…on its own line, so a tag line inserted there needs no reflow');
-  eq((CODE_AT + RAW_AT_IN_CODE) - tagWouldSitAt, TAG_GAP,
-    'so the tag line would begin TAG_GAP units before the fragment it replaces');
+  const liveCode = LIVE_TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+  eq(liveCode.length, RESIDUAL_MONOLITH,
+    '…which the shipped document confirms, not only the arithmetic');
+  eq(liveCode.indexOf(OPENING_BLOCK_FIRST_LINE), -1,
+    '…and the opening block is gone from it entirely');
+  // THE OWNERS' NAMES SURVIVE IN THE RESIDUE, at exactly their call sites and
+  // nowhere else — which is what makes this a relocation rather than a deletion.
+  // Counted on the MASKED residue: the raw substring count is higher, because the
+  // largest owner's name also appears inside log strings, and a substring count
+  // would have read 8 where the reference count reads 3.
+  {
+    const liveMasked = maskLiterals(liveCode);
+    const per = OWNERS_EXPECTED.map((n) => refSites(liveMasked, n).length);
+    eq(per.reduce((a2, b2) => a2 + b2, 0), EXTERNAL_EDGES,
+      '…and they total EXTERNAL_EDGES references, the same four edges §3 pins');
+    eq(OWNERS_EXPECTED.filter((n, i) => per[i] === 0), OWNERS_WITH_NO_OUTSIDE_REFERENCE,
+      '…with the two private owners appearing in the residue not at all');
+    ok(count(liveCode, OWNERS_EXPECTED[3]) > refSites(liveMasked, OWNERS_EXPECTED[3]).length,
+      'control — the RAW substring count is strictly higher, which is why the masked '
+      + 'reference count is the one being asserted');
+  }
+}
+{
+  const tagAt = LIVE_INDEX.indexOf(TAG);
+  const inlineOpenAt = LIVE_INDEX.indexOf(INLINE_OPEN, tagAt);
+  eq(inlineOpenAt, tagAt + TAG.length, 'the tag line sits immediately before the inline monolith');
+  eq(LIVE_INDEX.slice(tagAt - 1, tagAt), '\n', '…on its own line, so nothing was reflowed');
+  eq((CODE_AT + RAW_AT_IN_CODE) - (CODE_AT - INLINE_OPEN.length), TAG_GAP,
+    'the tag line begins TAG_GAP units before the fragment it replaced, in base coordinates');
   eq(TAG_GAP - RAW_AT_IN_CODE, INLINE_OPEN.length,
     '…which is the region offset plus the width of the inline open, and nothing else');
+  eq(UNDO.RAW_AT - tagAt, TAG_GAP,
+    '…and the helper\'s RAW_AT sits the SAME distance past the tag, which is what makes it a\n'
+    + '   TAG-FREE offset: it is where the fragment goes back AFTER the tag line is removed, so\n'
+    + '   the two coordinates coincide rather than differing by the width of the tag');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -650,7 +760,7 @@ eq(consumersOf(REC).length, DISTINCT_CONSUMERS, '…so there is DISTINCT_CONSUME
   // recalled: two consecutive cuts answering to one function is a fact about
   // this document worth executing, not a sentence worth repeating.
   {
-    const prevHost = fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8')
+    const prevHost = fs.readFileSync(path.join(ROOT, RETIRED_CONTRACT_REL), 'utf8')
       .match(/^const EDGE_HOSTS = \[([^\]]*)\];$/m)[1].replace(/'/g, '').trim();
     eq(prevHost, EDGE_HOSTS[0],
       '…and it is the SAME consumer the layer before this one answered to');
@@ -754,7 +864,7 @@ section('5. Why the screen\'s three clean candidates are all refused');
   // DOWN FROM FOUR, and that is read out of the contract that measured the four
   // rather than remembered here. The one that left is the region #465 cut.
   {
-    const wasSplit = Number(fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8')
+    const wasSplit = Number(fs.readFileSync(path.join(ROOT, RETIRED_CONTRACT_REL), 'utf8')
       .match(/^const ONE_CONSUMER_SPLIT = (\d+);$/m)[1]);
     eq(wasSplit - ONE_CONSUMER_SPLIT, 1,
       '…exactly one fewer than the newest contract pinned at ITS base: the set shrank by the\n'
@@ -862,8 +972,9 @@ eq(candidateRuns.length, CANDIDATES, '…leaving CANDIDATES distinct candidates'
     'no enumerated run begins where this cut begins');
   eq(MARKS.indexOf(RAW_AT_IN_CODE), -1, '…because that offset is not a region start');
   eq(DECLS.filter((d) => d.start === RAW_AT_IN_CODE).length, 0, '…nor a declaration start');
-  // What the screen DID enumerate is the same cut minus its opening block, which is
-  // the closest the screen can come — and it ranks there among the cleanest.
+  // What the screen DID enumerate is the same cut minus its opening block, which
+  // is the closest the screen can come. What it scores there is measured in the
+  // three clauses below, not summarised in an adjective here.
   const rec = candidateRuns.filter((c) => c.lo === BY_NAME.get(OWNERS_EXPECTED[0]).start
     && c.hi === BODY_END_IN_CODE)[0];
   ok(rec, 'the screen DOES enumerate the same cut starting at its first declaration');
@@ -947,9 +1058,52 @@ section('7. It loads bare and all four owners run');
   const gate = ctx.buildFormulaParityGate({}, []);
   ok(gate && typeof gate === 'object', 'and the gate returns an object on an empty response too');
 }
+section('8. Every documented failure, with its exact message');
+// ─────────────────────────────────────────────────────────────────────────────
+eq(UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE), INDEX,
+  'the undo reconstructs the base exactly — the whole point of the helper');
+eq(UNDO.isApplied(LIVE_INDEX), true, 'isApplied answers true for the shipped document');
+eq(UNDO.isApplied(INDEX), false, '…and false for the document that predates this layer');
+eq(UNDO.isApplied(42), false, '…and false, rather than throwing, for a non-string');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(42, MODULE),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_BAD_INPUT', 'a non-string document is refused by name');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, 42),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_BAD_INPUT', '…as is a non-string module');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE + 'x'),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_MODULE_IDENTITY', 'a padded module is refused');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE.slice(0, -1)),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_MODULE_IDENTITY', '…as is a truncated one');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE + '\n'),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_MODULE_IDENTITY',
+  '…and so is one that RE-ABSORBED the structural separator: it is one unit too long');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, MODULE.slice(0, -2) + 'x\n'),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_MODULE_SEPARATOR',
+  'a module of the right LENGTH that no longer ends on a closing brace gets its own error');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX, ' ' + MODULE.slice(1)),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_MODULE_IDENTITY',
+  'a module of the right length and ending whose BYTES differ is caught by the digest');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX.replace(TAG, ''), MODULE),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_TAG_IDENTITY', 'a document with no tag is refused');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX.replace(TAG, TAG + TAG), MODULE),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_TAG_IDENTITY', '…as is one with the tag twice');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(
+  LIVE_INDEX.replace(ANCHOR_TAG + TAG, TAG + ANCHOR_TAG), MODULE),
+'PORTFOLIO_TECHNICAL_PARITY_UNDO_TAG_ADJACENCY', 'a REORDERED tag is refused by adjacency');
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(LIVE_INDEX + 'x', MODULE),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_EXTRACTED_IDENTITY', 'foreign content anywhere is refused');
+{
+  const stranded = LIVE_INDEX.slice(0, UNDO.RAW_AT) + '\n' + LIVE_INDEX.slice(UNDO.RAW_AT);
+  eq(stranded.length, UNDO.EXTRACTED_CHARS + 1, 'the stranded-separator mutant is one unit too long');
+  throwsWith(() => UNDO.undoPortfolioTechnicalParity(stranded, MODULE),
+    'PORTFOLIO_TECHNICAL_PARITY_UNDO_EXTRACTED_IDENTITY',
+    '…and a structural separator left inline is rejected by the whole-document gate');
+}
+throwsWith(() => UNDO.undoPortfolioTechnicalParity(INDEX, MODULE),
+  'PORTFOLIO_TECHNICAL_PARITY_UNDO_TAG_IDENTITY',
+  'an ALREADY-unextracted document is refused rather than silently doubled');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('8. Reachability, and where this layer would sit');
+section('9. Reachability, the chain, and exact production scope');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const dead = DECLS.filter((d) => {
@@ -960,114 +1114,183 @@ section('8. Reachability, and where this layer would sit');
       SIBLINGS.every((s) => refSites(s.masked, d.name).length === 0 &&
         refSites(s.strings, d.name).length === 0);
   });
-  eq(dead.length, DEAD_DECLS, 'DEAD_DECLS of the monolith\'s declarations are named nowhere');
+  eq(dead.length, DEAD_DECLS, 'DEAD_DECLS of the base monolith\'s declarations are named nowhere');
   eq(dead.reduce((n, d) => n + d.chars, 0), DEAD_UNITS, '…DEAD_UNITS of code');
   eq(dead.filter((d) => OWNERS_EXPECTED.indexOf(d.name) >= 0).map((d) => d.name), [],
-    '…and NO owner of this cut is among them: all four are live code');
+    '…and the owner is not among them: this is live code with a live consumer');
 }
 {
-  ok(CHAIN.indexOf(MODULE_REL_IF_CUT) < 0, 'this module is not in the chain yet');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)), '…and its path does not exist yet');
-  eq(CHAIN.length, CHAIN_LENGTH, 'the chain is CHAIN_LENGTH layers long');
+  eq(CHAIN.length, CHAIN_LENGTH, 'CHAIN_LENGTH layers ship today');
+  eq(Array.from(new Set(CHAIN)).length, CHAIN_LENGTH,
+    '…each exactly once: a chain with a duplicated entry is a chain missing a layer');
+  eq(CHAIN[CHAIN.length - 1], MODULE_REL, '…and this one is the newest, read off the tail');
+  ok(CHAIN.every((rel) => fs.existsSync(path.join(ROOT, rel))), '…every one of which ships');
+  // CHAIN IS AN ORDER, NOT A SET, and until #459 nothing said so: a mutant that
+  // swapped two entries survived the whole pass, because membership, length and
+  // the tail were all checked and the sequence between them was not. Each layer
+  // appends its tag after the previous one, so the cut order IS the tag order in
+  // the shipped document, and that is what proves it.
+  {
+    const tagAt = CHAIN.map((rel) => LIVE_INDEX.indexOf('<script src="./' + rel + '"></script>'));
+    ok(tagAt.every((at) => at >= 0), 'every layer in CHAIN has its tag in the shipped document');
+    for (let i = 1; i < tagAt.length; i++) {
+      ok(tagAt[i] > tagAt[i - 1],
+        'CHAIN is in cut order: ' + CHAIN[i] + ' loads after ' + CHAIN[i - 1]);
+    }
+    ok(tagAt[tagAt.length - 1] < LIVE_INDEX.indexOf(INLINE_OPEN + '\n'),
+      '…and the whole chain precedes the inline monolith');
+  }
+
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
-  const sizes = sources.map((s) => s.length).sort((a, b) => a - b);
-  eq(sizes[0], SMALLEST_LAYER_CHARS, 'the smallest shipped layer is SMALLEST_LAYER_CHARS units');
-  eq(sizes[sizes.length - 1], LARGEST_LAYER_CHARS, '…the largest LARGEST_LAYER_CHARS');
-  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK_IF_CUT,
-    'this cut would rank SIZE_RANK_IF_CUT by size — well into the upper half, and not at either end');
-  eq(sizes.filter((u) => u > BODY_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
-    '…with LAYERS_LARGER_THAN_THIS_CUT layers still larger than it');
-  ok(BODY_CHARS > SMALLEST_LAYER_CHARS && BODY_CHARS < LARGEST_LAYER_CHARS,
+  const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
+    .sort((a, b) => a.units - b.units);
+  eq(bySize[0].rel, SMALLEST_MODULE, 'the vega monitor is still the smallest');
+  eq(bySize[0].units, SMALLEST_CHARS, '…at SMALLEST_CHARS units');
+  eq(bySize[bySize.length - 1].units, LARGEST_CHARS, 'the chain\'s largest is still LARGEST_CHARS');
+  eq(bySize.findIndex((x) => x.rel === MODULE_REL) + 1, MODULE_SIZE_RANK,
+    'this layer sits at MODULE_SIZE_RANK by size — well into the upper half, and not at either end');
+  eq(bySize[MODULE_SIZE_RANK - 1].units, UNDO.MODULE_CHARS,
+    '…and the module at that rank is this one, by its undo helper\'s own pin');
+  ok(bySize[0].units < UNDO.MODULE_CHARS && bySize[bySize.length - 1].units > UNDO.MODULE_CHARS,
     '…so it displaces no superlative and re-pins no earlier contract');
+  // THE RANK AND THE COUNT ABOVE IT ARE PINNED SEPARATELY AND TIED TOGETHER.
+  // LAYERS_LARGER_THAN_THIS_CUT came over from the audit, where it was read; the
+  // assertion that read it did not, and the constant sat here checking nothing
+  // until the mutation pass raised it as a survivor. A pin nothing reads cannot
+  // fail, which is exactly why rereading never finds one.
+  eq(bySize.filter((x) => x.units > UNDO.MODULE_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
+    'LAYERS_LARGER_THAN_THIS_CUT layers in the chain are larger than this module');
+  eq(MODULE_SIZE_RANK + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH,
+    '…and the rank and that count PARTITION the chain, so neither can drift alone');
+  eq(sources.filter((s) => s.endsWith('}\n')).length, LAYERS_ENDING_BRACE,
+    'LAYERS_ENDING_BRACE of the chain end `}\\n`, this one among them');
+
+  // "PURE ASCII", "UNDOCUMENTED" AND "OPENS ON A BANNER" ARE ALL SUPERLATIVES
+  // WAITING TO BE WRITTEN WRONG, so each is a count over the whole chain rather
+  // than an adjective about this layer.
   eq(sources.filter((s) => !/[^\x00-\x7F]/.test(s)).length, PURE_ASCII_LAYERS,
-    'PURE_ASCII_LAYERS shipped layers are pure ASCII');
-  ok(/[^\x00-\x7F]/.test(BODY), '…and this region would NOT join them, so that count is unchanged');
+    'exactly PURE_ASCII_LAYERS layers in the chain are pure ASCII');
+  ok(/[^\x00-\x7F]/.test(MODULE), '…and this module is NOT one of them');
+  eq(sources.filter((s) => s.split('\n').filter((l) => !isBlankOrComment(l)).length === 0).length, 0,
+    'control — no layer in the chain is comment-only, so the code-line scan measures something');
+  eq(sources.filter((s) => s.split('\n').filter((l) => /^\s*\/\//.test(l)).length === 0).length,
+    UNDOCUMENTED_LAYERS, 'exactly UNDOCUMENTED_LAYERS layers carry no comment line at all');
+  ok(MODULE.split('\n').filter((l) => /^\s*\/\//.test(l)).length > 0,
+    '…and this module is not one of those either');
   eq(sources.filter((s) => /^\s*\/\/ ── /.test(s.split('\n')[0])).length, LAYERS_OPENING_ON_BANNER,
     'LAYERS_OPENING_ON_BANNER of the chain open on a `── ` banner line');
-  ok(!/^\/\/ ── /.test(BODY.split('\n')[0]),
-    '…and this one would NOT, which §4 explains: there is no such banner left to open on');
+  ok(!/^\/\/ ── /.test(MODULE.split('\n')[0]),
+    '…and this one does NOT, which §4 explains: there was no such banner left to open on');
+  eq(LAYERS_OPENING_ON_BANNER, Number(git(['show', BASE_SHA + ':' + RETIRED_CONTRACT_REL])
+    .match(/^const LAYERS_OPENING_ON_BANNER = (\d+);$/m)[1]),
+    '…and that count did not move when this layer joined, which is the same statement read '
+    + 'off the previous contract at the base rather than asserted twice');
   ok(CHAIN_LENGTH - LAYERS_OPENING_ON_BANNER > 0,
-    '…while the rest already do not, so opening on one was never the rule');
-}
+    '…while the rest do not, so opening on one is neither a rule nor a first');
 
-// ─────────────────────────────────────────────────────────────────────────────
-section('9. Production is byte-identical to the base');
-// ─────────────────────────────────────────────────────────────────────────────
-{
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
-  const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
-    .split('\n').filter(Boolean).map((l) => l.slice(3));
-  const all = Array.from(new Set(changed.concat(status)));
-  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), [],
-    'NOT ONE production file differs from the base: this phase measures, it does not move');
-  eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
-    '…and the base really did carry an index.html of this length');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)),
-    'the module Phase 2 would write does not exist yet');
+  const HELPERS = fs.readdirSync(path.join(ROOT, 'tests/lib'))
+    .filter((f) => /-undo\.js$/.test(f) && f !== 'post-journal-mcx-pr3-undo.js')
+    .map((f) => require(path.join(ROOT, 'tests/lib', f)));
+  const forLayer = CHAIN.map((rel) => {
+    const hit = HELPERS.filter((M) => typeof M.TAG === 'string' && M.TAG.indexOf('/' + rel + '"') >= 0);
+    return hit.length === 1 ? hit[0] : null;
+  });
+  eq(forLayer.filter(Boolean).length, CHAIN_LENGTH,
+    'every layer in CHAIN resolves to exactly one undo helper by its own TAG');
+  const withSeparator = forLayer.filter((M) => Object.prototype.hasOwnProperty.call(M, 'SEPARATOR'));
+  eq(withSeparator.length, LAYERS_WITH_SEPARATOR,
+    'LAYERS_WITH_SEPARATOR carry a SEPARATOR export, this one among them');
+  eq(CHAIN_LENGTH - withSeparator.length, LAYERS_WITHOUT_SEPARATOR,
+    '…and LAYERS_WITHOUT_SEPARATOR do not: the convention is NOT uniform across this chain');
+  eq(withSeparator.filter((M) => M.RAW_CHARS === M.MODULE_CHARS + 1).length, LAYERS_WITH_RAW_PAIR,
+    '…while only LAYERS_WITH_RAW_PAIR pin a single RAW/MODULE pair one unit apart, so that '
+    + 'pair is not the tell the separator is');
+  ok(Object.prototype.hasOwnProperty.call(UNDO, 'SEPARATOR'),
+    '…and this layer follows the post-#406 convention, which its own export settles');
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-section('10. The change set, the ratchet and the budget');
-// ─────────────────────────────────────────────────────────────────────────────
 {
   const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
-
-  ok(changed.indexOf(AUDIT_REL) >= 0, 'this audit is part of the change');
-  ok(changed.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec');
+  eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
+    ['index.html', MODULE_REL].sort(),
+    'production footprint is exactly index.html plus the one new module');
+  ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
+  // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
+  // in the contract that carried it: a mutant pointing it at a NEIGHBOURING
+  // contract survived, because every use was satisfied by that file too.
+  eq(fs.readFileSync(path.join(ROOT, CONTRACT_REL), 'utf8'), fs.readFileSync(__filename, 'utf8'),
+    '…and CONTRACT_REL is the path of THIS file, byte for byte, so §3 counts this contract '
+    + 'and no other');
+  ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
+  ok(changed.indexOf(AUDIT_REL) >= 0, 'the temporary audit removal is visible in the change set');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
+    'no temporary audit is shipped: this contract replaces it one for one');
+  // ABSENCE ALONE IS NOT A PIN: any wrong path is also absent, so the name has
+  // to be the one the base actually carried.
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)),
+    'the audit\'s mutation spec is gone with the audit it targeted');
+  eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_SPEC_REL]), '',
+    '…and that path is the one the base commit carried, not merely a path that does not exist');
+  eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '', '…as is the audit\'s own path');
+  ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC_REL)),
+    'and the previous newest layer\'s spec is retired, in chain order');
+  eq(git(['cat-file', '-e', BASE_SHA + ':' + RETIRED_SPEC_REL]), '',
+    '…that path too being one the base commit carried');
+  ok(fs.existsSync(path.join(ROOT, RETIRED_CONTRACT_REL)),
+    '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
+  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), 'a spec for THIS contract is committed');
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
-    TEST_FILE_COUNT, 'the suite ratchets by one');
-  eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
-    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length,
-  BASE_TEST_FILE_COUNT, '…and BASE_TEST_FILE_COUNT is what the base actually carried');
+    TEST_FILE_COUNT, 'the suite matches the pin above: the audit left as this contract arrived');
+  ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
+    'no backend/model configuration changed');
+  ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'CLAUDE.md' || rel.startsWith('tests/')),
+  'every other changed path is a test artifact');
+  // The budget, executed rather than narrated.
   {
-    const contracts = fs.readdirSync(path.join(ROOT, 'tests'))
-      .filter((f) => /\.test\.js$/.test(f) && f !== path.basename(AUDIT_REL))
-      .filter((f) => /^const TEST_FILE_COUNT = \d+;$/m.test(
-        fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8')));
-    eq(contracts.length, RATCHETED_CONTRACTS, 'RATCHETED_CONTRACTS contracts pin the suite file count');
-    const RATCHETED = new RegExp('^const TEST_FILE_COUNT = ' + TEST_FILE_COUNT + ';$', 'm');
-    ok(contracts.every((f) => RATCHETED.test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
-      '…and every one of them reads the ratcheted count, none left behind');
-  }
-  // THE RETIREMENT QUEUE IS EMPTY, and that is asserted rather than narrated.
-  {
-    const specs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'));
-    const layerSpecs = specs.filter((f) => /-contract\.spec\.js$/.test(f) &&
-      f !== 'mutation-coverage-contract.spec.js');
-    eq(layerSpecs.length, LAYER_CONTRACT_SPECS,
-      'exactly LAYER_CONTRACT_SPECS layer contract spec is committed');
-    eq(layerSpecs, [path.basename(NEWEST_CONTRACT_SPEC)],
-      '…and it belongs to the NEWEST layer, which the programme requires to keep one — so '
-      + 'chain-order retirement has nothing left to take and this cycle retires nothing');
-    ok(fs.existsSync(path.join(ROOT, NEWEST_CONTRACT)), '…whose contract ships');
-
-    // LOADED THROUGH AUDIT_SPEC_REL, not through a literal beside it. The mutation
-    // pass found this constant checking nothing: its only consumer asked whether the
-    // path was in the change set, and the mutant pointed it at a NEIGHBOURING spec
-    // that this same PR also touches — so the clause was satisfied by the wrong file.
-    // Requiring the spec through the constant makes the two assertions below read it.
-    const auditSpec = require(path.join(ROOT, AUDIT_SPEC_REL));
+    const spec = require(path.join(ROOT, CONTRACT_SPEC_REL));
     const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
     const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
     const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
     eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
       .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
     'the base declared BASE_DECLARED_MUTANTS mutants');
-    eq(declaredNow, BASE_DECLARED_MUTANTS + auditSpec.mutants.length,
-      '…and this change declares the base PLUS this audit\'s spec, with nothing subtracted');
+    // WHAT THE LIVE TOTAL IS, this contract does NOT pin, and the distinction
+    // cost a cycle to learn. The arithmetic above is a fact about the commit
+    // that shipped this layer and stays true forever; `declaredNow` is a fact
+    // about the suite TODAY, which every later audit moves by design. Pinning
+    // the live number made the next cycle's Phase 1 fail on a contract it had
+    // not touched. What survives is the INVARIANT, and this layer's own
+    // contribution to it.
+    eq(spec.mutants.length, CONTRACT_SPEC_MUTANTS,
+      'this contract\'s spec carries CONTRACT_SPEC_MUTANTS mutants, one per pin');
+    // HOW BIG THE RETIREMENT WAS, read out of the base commit rather than
+    // remembered. A constant nothing reads is a constant whose mutant survives,
+    // which is how this assertion came to be written.
+    const entriesAt = (rel) => (git(['show', BASE_SHA + ':' + rel]).match(/\n  \{ id: "/g) || []).length;
+    eq(entriesAt(AUDIT_SPEC_REL) + entriesAt(RETIRED_SPEC_REL), RETIRED_MUTANTS,
+      '…and the two spec paths this cycle removes carried RETIRED_MUTANTS between them, '
+      + 'counted in the base commit that still holds both');
+    ok(entriesAt(AUDIT_SPEC_REL) > 0 && entriesAt(RETIRED_SPEC_REL) > 0,
+      '…each of them non-empty, so the sum is two real specs and not one plus a typo');
+    ok(declaredNow >= spec.mutants.length,
+      '…and the live declared total still counts them, whatever later cycles have added');
     eq(budgetNow, MUTANT_BUDGET, 'the ceiling is unchanged at 250');
-    ok(declaredNow < budgetNow,
-      '…and the declared total is under it, which is what makes retiring nothing safe rather '
-      + 'than merely convenient');
-    eq(auditSpec.target, AUDIT_REL, 'the audit spec targets this audit');
+    ok(declaredNow < budgetNow, '…and the live declared total is under it');
+    eq(spec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
+    const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
+      .filter((f) => /-contract\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
+    eq(layerSpecs.length, LAYER_CONTRACT_SPECS,
+      'exactly LAYER_CONTRACT_SPECS layer contract spec is committed');
+    eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)],
+      '…and it is this one: the newest layer keeps a spec, and only the newest');
   }
 }
 
 console.log('\n' + pass + ' assertions passed.');
-console.log('PORTFOLIO_TECHNICAL_PARITY_AUDIT_OK');
+console.log('PORTFOLIO_TECHNICAL_PARITY_CONTRACT_OK');
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

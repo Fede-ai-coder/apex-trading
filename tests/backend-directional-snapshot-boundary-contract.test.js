@@ -282,6 +282,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-technical-alignment-debug.js',
   './js/services/journal-map-audit.js',
   './js/services/dxlink-greeks-fetch.js',
+  './js/portfolio/portfolio-technical-parity.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2831,7 +2832,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 81,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 82,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
@@ -3038,6 +3039,12 @@ function topLevelDeclarations(code) {
       // touches no DOM at load.
       './js/services/scanner-ivr-throttle.js',
       './js/services/scanner-earnings-throttle.js',
+      // The technical-parity layer of #466 joins for the same reason the
+      // strategy templates did: ONE top-level `var` bound to an object literal,
+      // the alias table its two gate functions read. Visible top-level residue
+      // by construction, and inert — its own contract loads it in an empty VM
+      // and proves it touches no fetch, timer, socket, storage or DOM at load.
+      './js/portfolio/portfolio-technical-parity.js',
       // The chart-interactions layer of #449 is deliberately ABSENT here: its
       // five top-level vars are all inert literal initialisers (40, null,
       // false), so it contributes no visible load-time residue at all. Adding

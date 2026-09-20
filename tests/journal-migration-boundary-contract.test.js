@@ -136,6 +136,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U = require('./lib/portfolio-technical-alignment-debug-undo.js');
@@ -155,10 +156,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(INDEX)
-  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(INDEX)
+  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
   : INDEX;
+const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(PRE_PORTFOLIO_TECHNICAL_PARITY)
+  ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
+      PRE_PORTFOLIO_TECHNICAL_PARITY, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_PARITY;
 const PRE_JOURNAL_MAP_AUDIT = JOURNAL_MAP_AUDIT_U.isApplied(PRE_DXLINK_GREEKS_FETCH)
   ? JOURNAL_MAP_AUDIT_U.undoJournalMapAudit(
       PRE_DXLINK_GREEKS_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/journal-map-audit.js'), 'utf8'))
@@ -597,8 +602,8 @@ eq(BASE.length, U.BASE_CHARS, 'audit-base UTF-16 length matches the undo pin');
 eq(sha256(BASE), U.BASE_SHA256, 'audit-base SHA-256 matches the undo pin');
 eq(MODULE.length, U.MODULE_CHARS, 'module UTF-16 length matches the undo pin');
 eq(sha256(MODULE), U.MODULE_SHA256, 'module SHA-256 matches the undo pin');
-eq(INDEX.length, DXLINK_GREEKS_FETCH_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), DXLINK_GREEKS_FETCH_U.EXTRACTED_SHA256,
+eq(INDEX.length, PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_SHA256,
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -734,7 +739,8 @@ const PORTFOLIO_TECHNICAL_MERGE_TAG2 = '<script src="./js/portfolio/portfolio-te
 const PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG2 = '<script src="./js/portfolio/portfolio-technical-alignment-debug.js"></script>';
 const JOURNAL_MAP_AUDIT_TAG2 = '<script src="./js/services/journal-map-audit.js"></script>';
 const DXLINK_GREEKS_FETCH_TAG2 = '<script src="./js/services/dxlink-greeks-fetch.js"></script>';
-eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n' + SNAPSHOT_HELPERS_TAG2 + '\n' + SWING_WEEKLY_CANDLES_TAG2 + '\n' + SWING_DIRECTION_TAG2 + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG2 + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG2 + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG2 + '\n' + JOURNAL_MAP_AUDIT_TAG2 + '\n' + DXLINK_GREEKS_FETCH_TAG2 + '\n<script>'), 1,
+const PORTFOLIO_TECHNICAL_PARITY_TAG2 = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
+eq(countLiteral(INDEX, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG2 + '\n' + TT_RECONNECT_TAG2 + '\n' + CLOSE_LEGS_TAG2 + '\n' + TRADE_FORMS_TAG2 + '\n' + TRADE_DETAIL_TAG2 + '\n' + PORTFOLIO_TAG2 + '\n' + BACKEND_PORTFOLIOS_TAG2 + '\n' + EXPIRY_MANUAL_TAG2 + '\n' + TRAFFIC_LIGHT_TAG2 + '\n' + CANDLE_CHART_TAG2 + '\n' + RICH_SNAPSHOT_TAG2 + '\n' + BACKEND_CANDLES_TAG2 + '\n' + SNAPSHOT_PREFETCH_TAG2 + '\n' + DXLINK_GREEKS_TAG2 + '\n' + STRATEGY_TEMPLATES_TAG2 + '\n' + VEGA_MONITOR_TAG2 + '\n' + SCANNER_IVR_TAG2 + '\n' + SCANNER_EARNINGS_TAG2 + '\n' + CHART_INTERACTIONS_TAG2 + '\n' + SNAPSHOT_HELPERS_TAG2 + '\n' + SWING_WEEKLY_CANDLES_TAG2 + '\n' + SWING_DIRECTION_TAG2 + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG2 + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG2 + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG2 + '\n' + JOURNAL_MAP_AUDIT_TAG2 + '\n' + DXLINK_GREEKS_FETCH_TAG2 + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG2 + '\n<script>'), 1,
   'Migration loads after Write-through, before Manual Import, then Backup/Restore, then MCX macro check, then MCX charts, then Apex post-auth, then TT reconnect, then the portfolio owners, then the traffic light, then the candle-store chart, then the rich async snapshot, then the portfolio backend candles, then the journal snapshot prefetch, then the portfolio DXLink greeks, then the strategy templates, then the vega monitor, then the inline monolith');
 eq(countLiteral(preMcxCharts, WRITE_TAG + '\n' + MODULE_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n<script>'), 1,
   'peeling MCX charts restores the exact tail the MCX macro-check layer was written against');
@@ -974,12 +980,12 @@ const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.st
 // layer cut afterwards. The count is asserted rather than narrated: the prose
 // that used to name the later owners stopped at seven of them and stayed there
 // for nine more cycles, because a sentence cannot fail.
-const LATER_LAYERS = [DXLINK_GREEKS_FETCH_U, JOURNAL_MAP_AUDIT_U, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [PORTFOLIO_TECHNICAL_PARITY_U, DXLINK_GREEKS_FETCH_U, JOURNAL_MAP_AUDIT_U, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U, PORTFOLIO_U, TRADE_DETAIL_U,
   TRADE_FORMS_U, CLOSE_LEGS_U, TT_RECONNECT_U, APEX_POST_AUTH_U, MCX_CHARTS_U,
   MCX_MACRO_CHECK_U, BACKUP_RESTORE_U, MANUAL_U];
 eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js',
-  'js/services/dxlink-greeks-fetch.js',
+  'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js',
 'js/services/journal-manual-import.js', MODULE_REL, 'js/services/journal-rich-snapshot.js',
   'js/services/journal-snapshot-helpers.js',
   'js/services/journal-snapshot-prefetch.js',
