@@ -29,8 +29,9 @@
 // the zero a measurement rather than a metric that measures nothing.
 //
 // AND THE SIXTEEN ARE NOT SCATTERED. THIRTEEN of them sit under a single
-// banner, `// ── UNREALIZED P&L`. FOUR are inside this cut, and the FIFTH — the
-// block heading `resolvePortfolioLivePrice` — begins at EXACTLY the raw end.
+// banner, `// ── UNREALIZED P&L`. FOUR are inside this cut, and the NEXT one
+// after those four — the block heading `resolvePortfolioLivePrice` — begins at
+// EXACTLY the raw end.
 // The boundary this audit recommends is therefore not argued against the
 // document, as the last one had to be: both of its ends are marked by the
 // rarest structural signal the monolith still carries.
@@ -67,14 +68,16 @@
 // all.
 //
 // THAT IS RARE BUT NOT UNPRECEDENTED, and the first draft of this paragraph
-// said "first" because it asked a narrower question. §3 asks the whole one of
-// the TWELVE shipped modules that pin a non-empty MONOLITH_DEPENDENCIES:
-// exactly ONE of them, js/services/swing-weekly-candles.js, already guards
-// every outward reference it makes. This cut would be the SECOND. The count is
-// an `eq` over the set with the precedent NAMED, which is the only form of
-// this claim that survives contact with the set it quantifies over. §7 spends
-// the property: the resolver is driven to a real answer in an EMPTY VM with
-// every outward name injected, rather than merely loaded and looked at.
+// said "first" because it asked a narrower question. §3 asks the same question
+// of the TWELVE shipped modules that pin a non-empty MONOLITH_DEPENDENCIES —
+// each against its OWN pinned list, which is the only outward surface those
+// contracts record — and exactly ONE of them,
+// js/services/swing-weekly-candles.js, already guards every reference on it.
+// This cut would be the SECOND. The count is an `eq` over the set with the
+// precedent NAMED, which is the only form of this claim that survives contact
+// with the set it quantifies over. §7 spends the property: the resolver is
+// driven to a real answer in an EMPTY VM with every outward name injected,
+// rather than merely loaded and looked at.
 //
 // Every other direction is ZERO: no inbound write, no inbound property write,
 // no write to a global it does not own, no sibling-module reference in, no
@@ -93,8 +96,8 @@
 //   (c) adding both freshness helpers — the same second consumer, 3,657 more.
 //   (d) extending through `resolvePortfolioLivePrice`, which reads like this
 //       region's sibling and is wired like nothing of the sort: four
-//       consumers, four dependencies, thirty sites, a sibling-module reference
-//       in, and byConsumerSplit from 2 to 11.
+//       consumers, four dependencies, an order more sites reaching in, a
+//       sibling-module reference in, and byConsumerSplit from 2 to 11.
 //
 // THE SCREEN CANNOT SEE THIS CUT, and that is a fact about the screen. A run
 // begins only at a region start or a declaration start, and this one begins on
@@ -915,6 +918,13 @@ section('5. The four refused boundaries, and the runner-up');
 }
 // (b) and (c) ADMIT A SECOND CONSUMER.
 {
+  // EACH OFFSET IS ANCHORED TO THE BLOCK IT STARTS ON. Trading the derived
+  // size constants for inequalities left these pinned by nothing, and the
+  // mutation pass said so: an offset shifted by one still satisfies "wider".
+  eq(ALT_ONE_FRESH_AT, blockAbove(BY_NAME.get('_portfolioPriceFreshness')).start,
+    'ALT_ONE_FRESH_AT is where _portfolioPriceFreshness\'s own comment block begins');
+  eq(ALT_BOTH_FRESH_AT, blockAbove(BY_NAME.get('_portfolioGreeksFreshness')).start,
+    '…and ALT_BOTH_FRESH_AT where _portfolioGreeksFreshness\'s does');
   for (const at of [ALT_ONE_FRESH_AT, ALT_BOTH_FRESH_AT]) {
     const p = profileOf([at, RAW_END_IN_CODE]);
     ok(RAW_END_IN_CODE - at > RAW_CHARS, 'the cut at ' + at + ' is WIDER than the recommendation');
@@ -933,14 +943,19 @@ section('5. The four refused boundaries, and the runner-up');
   ok(/window\.[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*function/
     .test(CODE.slice(ALT_SECOND_CONSUMER_AT - 600, ALT_SECOND_CONSUMER_AT)),
   '…and the enclosing form is exactly that, so it runs when called and not at load');
-  ok(namesIt(CODE.slice(ALT_SECOND_CONSUMER_AT, CODE.indexOf('\n', ALT_SECOND_CONSUMER_AT)),
-    ALT_SECOND_CONSUMER_OWNER), '…calling ALT_SECOND_CONSUMER_OWNER');
+  eq(CODE.slice(ALT_SECOND_CONSUMER_AT, ALT_SECOND_CONSUMER_AT + ALT_SECOND_CONSUMER_OWNER.length),
+    ALT_SECOND_CONSUMER_OWNER,
+    '…and ALT_SECOND_CONSUMER_AT is the exact offset of that call, not merely a line that '
+    + 'contains it: an offset pinned by a line lookup survives being shifted by one');
 }
 // (d) EXTEND THROUGH THE SIBLING RESOLVER. It reads like this region's other
 //     half and is wired like nothing of the sort.
 {
   const p = profileOf([RAW_AT_IN_CODE, ALT_LIVE_PRICE_END]);
-  ok(ALT_LIVE_PRICE_END - RAW_AT_IN_CODE > RAW_CHARS * 2, '(d) is more than twice the span');
+  eq(ALT_LIVE_PRICE_END, blockAbove(BY_NAME.get('refreshPortfolioBetas')).start,
+    'ALT_LIVE_PRICE_END is where the NEXT feature\'s comment block begins, so the wider cut '
+    + 'ends where the document does and not at a chosen number');
+  ok(ALT_LIVE_PRICE_END - RAW_AT_IN_CODE > RAW_CHARS * 2, '…and (d) is more than twice the span');
   eq(consumersOf(p).length, ALT_LIVE_PRICE_CONSUMERS, '…ALT_LIVE_PRICE_CONSUMERS consumers');
   eq(p.deps.length, ALT_LIVE_PRICE_DEPS, '…ALT_LIVE_PRICE_DEPS monolith dependencies');
   ok(p.sites.length > EXTERNAL_EDGES * 5, '…and an order more sites reaching in');
@@ -952,6 +967,11 @@ section('5. The four refused boundaries, and the runner-up');
 // THE RUNNER-UP, published with its numbers rather than described.
 {
   const p = profileOf([RUNNER_UP_AT, RUNNER_UP_END]);
+  ok(SORTED_MARKS.indexOf(RUNNER_UP_AT) >= 0,
+    'the runner-up opens ON a banner mark, which is what RUNNER_UP_AT is pinned to');
+  eq(snapBodyEnd(CODE, RUNNER_UP_AT, DECLS.filter((d) => d.start >= RUNNER_UP_END)[0].start),
+    RUNNER_UP_END,
+    '…and RUNNER_UP_END is where snapping its last construct lands, not a number chosen for it');
   eq(DECLS.filter((d) => d.start >= RUNNER_UP_AT && d.end < RUNNER_UP_END).length, RUNNER_UP_OWNERS,
     '…RUNNER_UP_OWNERS owners');
   eq(consumersOf(p), [RUNNER_UP_CONSUMER], '…answering to RUNNER_UP_CONSUMER alone');
