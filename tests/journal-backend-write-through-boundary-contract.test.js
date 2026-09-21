@@ -462,6 +462,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT_U = require('./lib/journal-map-audit-undo.js');
@@ -482,10 +483,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(INDEX)
-  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
+const PRE_PORTFOLIO_SPY_PRICE = PORTFOLIO_SPY_PRICE_U.isApplied(INDEX)
+  ? PORTFOLIO_SPY_PRICE_U.undoPortfolioSpyPrice(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-spy-price.js'), 'utf8'))
   : INDEX;
+const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(PRE_PORTFOLIO_SPY_PRICE)
+  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
+      PRE_PORTFOLIO_SPY_PRICE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
+  : PRE_PORTFOLIO_SPY_PRICE;
 const PRE_DXLINK_GREEKS_FETCH = DXLINK_GREEKS_FETCH_U.isApplied(PRE_PORTFOLIO_TECHNICAL_PARITY)
   ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
       PRE_PORTFOLIO_TECHNICAL_PARITY, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
@@ -616,8 +621,8 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), PORTFOLIO_TECHNICAL_PARITY_U.EXTRACTED_SHA256,
+eq(INDEX.length, PORTFOLIO_SPY_PRICE_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), PORTFOLIO_SPY_PRICE_U.EXTRACTED_SHA256,
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain, again: the live pin moves up to the strategy
 // templates, and the post-DXLink-greeks document it used to name is asserted
@@ -940,7 +945,7 @@ eq(changedProduction, [
   'js/services/journal-snapshot-prefetch.js',
   'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js',
   'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js'
-, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js'].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');
+, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js'].sort(), 'production footprint is index.html plus Write-through, Migration, Manual Import, Backup/Restore, MCX macro check, MCX charts, Apex post-auth, TT reconnect and Journal Close Legs');
 ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/')),
   'no workflow or bootstrap script changed');
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,

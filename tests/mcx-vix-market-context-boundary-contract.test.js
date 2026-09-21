@@ -411,11 +411,13 @@ const portfolioTechnicalMergeTag = '<script src="./js/portfolio/portfolio-techni
 const portfolioTechnicalAlignmentDebugTag = '<script src="./js/portfolio/portfolio-technical-alignment-debug.js"></script>';
 const journalMapAuditTag = '<script src="./js/services/journal-map-audit.js"></script>';
 const dxlinkGreeksFetchTag = '<script src="./js/services/dxlink-greeks-fetch.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
+const portfolioTechnicalParityTag = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
+const newestLayerTag = '<script src="./js/portfolio/portfolio-spy-price.js"></script>';
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(dxlinkGreeksFetchTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(portfolioTechnicalParityTag)
+  && INDEX.indexOf(portfolioTechnicalParityTag) > INDEX.indexOf(dxlinkGreeksFetchTag)
   && INDEX.indexOf(dxlinkGreeksFetchTag) > INDEX.indexOf(journalMapAuditTag)
   && INDEX.indexOf(journalMapAuditTag) > INDEX.indexOf(portfolioTechnicalAlignmentDebugTag)
   && INDEX.indexOf(portfolioTechnicalAlignmentDebugTag) > INDEX.indexOf(portfolioTechnicalMergeTag)

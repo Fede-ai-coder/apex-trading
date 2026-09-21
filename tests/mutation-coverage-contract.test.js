@@ -94,8 +94,11 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // the alternative is an unbounded ceiling.
 //
 // RETIREMENT HAS RUN IN CHAIN ORDER EVER SINCE — #448 took layer #25's spec, and
-// #450 took #26's AND #27's, on down to #461, which took layer #34's. Two in one
-// cycle, because one does not always pay:
+// #450 took #26's AND #27's, and every cycle since has taken the next oldest in
+// that order. Where this paragraph once named the latest such cycle it went
+// stale four cycles running, so it names none: DECLARED_MUTANTS below is the
+// number that is executed, and each layer contract asserts its own retirement.
+// Two in one cycle, because one does not always pay:
 // the retirement has to cover the temporary audit spec that arrives with it, and
 // #450's audit carries ninety-six pins. The rate over two cycles is unchanged, and
 // the audit ASSERTS the arithmetic — base, less the retirements, plus its own
@@ -126,7 +129,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // to rank it. Indexing the sibling scan and binary-searching the occurrence
 // lists took it from 2,004 ms to 1,301 ms, so its 102 mutants cost 133 s instead
 // of 204 s — again with nothing unscreened.
-const DECLARED_MUTANTS = 249;
+const DECLARED_MUTANTS = 146;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
