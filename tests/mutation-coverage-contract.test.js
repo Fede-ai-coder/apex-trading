@@ -87,6 +87,27 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // 50 to 60 mutants — every cycle, for ever. Raising the ceiling buys exactly one
 // cycle each time; retiring one older spec per new layer keeps the count flat.
 //
+// AND THE RETIREMENT MOVED A PHASE EARLIER IN #470, which is the change that
+// made the ceiling hold without being raised. The rhythm above retires the
+// outgoing contract's spec in PHASE 2, so Phase 1 carries TWO specs — the
+// audit's and the outgoing contract's — and the total PEAKS there. That peak
+// reached 279 against this ceiling of 250, and it had been creeping: the
+// contract specs either side of it carried 121 and 140 mutants as the newest
+// contract took on more chain-wide counts each cycle. Raising the ceiling would
+// have bought one cycle, maybe two.
+//
+// Retiring in PHASE 1 instead makes the count uniform: exactly one non-coverage
+// spec is committed at any moment — the audit's between the phases, the newest
+// contract's after them — so the total sits near 6 + one spec in BOTH phases
+// rather than alternating. CI halves on the phase that used to be expensive.
+//
+// THE INVARIANT THAT ENFORCES IT WAS ALSO WRONG, and that is why the peak was
+// invisible. Four contracts asserted "exactly one layer contract spec is
+// committed" with a predicate matching `-contract.spec.js`, which cannot match
+// an AUDIT spec at all — so it read 1 all through Phase 1 while two specs were
+// on disk. The predicate is now every `.spec.js` but the coverage spec, and it
+// reads the number that was always true.
+//
 // So #446 retired tests/mutation-specs/portfolio-dxlink-greeks-contract.spec.js
 // (49 mutants, layer #24, three cycles settled). Its CONTRACT still runs on every
 // push with every assertion intact; what stops is the mutation pass proving those
@@ -129,7 +150,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // to rank it. Indexing the sibling scan and binary-searching the occurrence
 // lists took it from 2,004 ms to 1,301 ms, so its 102 mutants cost 133 s instead
 // of 204 s — again with nothing unscreened.
-const DECLARED_MUTANTS = 146;
+const DECLARED_MUTANTS = 139;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
