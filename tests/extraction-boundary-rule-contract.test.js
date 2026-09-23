@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_SPY_PRICE = require('./lib/portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH = require('./lib/dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT = require('./lib/journal-map-audit-undo.js');
@@ -194,6 +195,7 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = PORTFOLIO_SPY_PRICE.undoPortfolioSpyPrice(doc, read('js/portfolio/portfolio-spy-price.js'));
   doc = PORTFOLIO_TECHNICAL_PARITY.undoPortfolioTechnicalParity(doc, read('js/portfolio/portfolio-technical-parity.js'));
   doc = DXLINK_GREEKS_FETCH.undoDxlinkGreeksFetch(doc, read('js/services/dxlink-greeks-fetch.js'));
   doc = JOURNAL_MAP_AUDIT.undoJournalMapAudit(doc, read('js/services/journal-map-audit.js'));

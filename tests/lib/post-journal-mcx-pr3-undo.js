@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_SPY_PRICE = require('./portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY = require('./portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH = require('./dxlink-greeks-fetch-undo.js');
 const JOURNAL_MAP_AUDIT = require('./journal-map-audit-undo.js');
@@ -218,6 +219,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_SPY_PRICE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-spy-price.js'),
+  'utf8'
+);
 const PORTFOLIO_TECHNICAL_PARITY_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-parity.js'),
   'utf8'
@@ -375,9 +380,12 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioTechnicalParity = PORTFOLIO_TECHNICAL_PARITY.isApplied(html)
-    ? PORTFOLIO_TECHNICAL_PARITY.undoPortfolioTechnicalParity(html, PORTFOLIO_TECHNICAL_PARITY_SOURCE)
+  const prePortfolioSpyPrice = PORTFOLIO_SPY_PRICE.isApplied(html)
+    ? PORTFOLIO_SPY_PRICE.undoPortfolioSpyPrice(html, PORTFOLIO_SPY_PRICE_SOURCE)
     : html;
+  const prePortfolioTechnicalParity = PORTFOLIO_TECHNICAL_PARITY.isApplied(prePortfolioSpyPrice)
+    ? PORTFOLIO_TECHNICAL_PARITY.undoPortfolioTechnicalParity(prePortfolioSpyPrice, PORTFOLIO_TECHNICAL_PARITY_SOURCE)
+    : prePortfolioSpyPrice;
   const preDxlinkGreeksFetch = DXLINK_GREEKS_FETCH.isApplied(prePortfolioTechnicalParity)
     ? DXLINK_GREEKS_FETCH.undoDxlinkGreeksFetch(prePortfolioTechnicalParity, DXLINK_GREEKS_FETCH_SOURCE)
     : prePortfolioTechnicalParity;

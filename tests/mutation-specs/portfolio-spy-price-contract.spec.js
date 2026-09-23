@@ -1,11 +1,13 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — portfolio SPY price TEMPORARY boundary audit.
+// Mutation spec — portfolio SPY price PERMANENT boundary contract.
 //
 // One mutant per pinned constant. The coverage contract proves on every push
 // that each `find` still appears exactly once in the target and that no pin is
 // left uncovered, then applies all of them against a baseline it verifies green
-// first. This spec retires with the audit in Phase 2.
+// first. It carries the audit's mutants, repointed at the contract's constants,
+// plus one for every pin the relocation added; it retires in chain order when
+// the next layer ships.
 //
 // THE FINDING IS A CONTRAST, not a single number, so both sides are mutated.
 // BANNERS_NAMING_AN_OWNER_THEY_GOVERN is zero — and zero is also what a
@@ -26,28 +28,34 @@
 // constant whose only use is an existence or a membership test is satisfied by
 // any sibling that also ships, so a mutant pointing at an absent file proves
 // nothing about it. That exact survivor was found in #461 (CONTRACT_REL), #465
-// (RETIRED_CONTRACT_REL) and #466 (AUDIT_SPEC_REL). So MODULE_REL_IF_CUT moves
-// to a module that DOES exist and IS in the chain — the two things the audit
-// asserts it is not — and AUDIT_REL, AUDIT_SPEC_REL, NEWEST_CONTRACT and
-// NEWEST_CONTRACT_SPEC each move to a committed file of the same kind.
+// (RETIRED_CONTRACT_REL) and #466 (AUDIT_SPEC_REL). So MODULE_REL, CONTRACT_REL,
+// UNDO_REL, CONTRACT_SPEC_REL, AUDIT_REL, AUDIT_SPEC_REL, RETIRED_SPEC_REL and
+// RETIRED_CONTRACT_REL each move to a committed file of the same kind — for the
+// two retirement paths, to the OTHER path this same cycle removes, which is the
+// near miss that an absent path could never be.
+//
+// THE CHAIN IS AN ORDER, so its mutant SWAPS the last two entries rather than
+// dropping one: membership, length and the tail are each checked separately, and
+// a swap is the perturbation that passes all three.
 //
 // MODULES_GUARDING_EVERY_REFERENCE AND MODULE_ALREADY_GUARDING ARE MUTATED
 // SEPARATELY. The count says how many shipped modules guard every outward
-// reference; the name says WHICH. The first draft of that claim said "first"
-// because it only had a count, so the name is pinned and mutated on its own —
-// to another chain module that also guards some, which is the near miss.
+// reference — two, now that this module ships — and the name says which the
+// OTHER one is. The first draft of that claim said "first" because it only had
+// a count, so the name is pinned and mutated on its own, to another chain
+// module that also guards some, which is the near miss.
 //
-// THE GUARDED SURFACE IS THE OTHER HALF OF THE RECOMMENDATION. OUTWARD_REFS and
+// THE GUARDED SURFACE IS THE OTHER HALF OF THE ARGUMENT. OUTWARD_REFS and
 // OUTWARD_GUARDED_REFS are equal and are mutated apart: dropping the guarded
 // count is the world where one reference is bare, and dropping the total is the
 // world where the region reaches out less than it does.
 //
 // THE REFUSED BOUNDARIES CARRY THEIR OWN MUTANTS, because the argument against
 // each is a number: ALT_FRESH_BY_CONSUMER_SPLIT is what makes (b) and (c) worse
-// than the recommendation, and ALT_LIVE_PRICE_BY_CONSUMER_SPLIT is what makes
-// (d) decisively so. RUNNER_UP_FULL_NINE is mutated UP past FULL_NINE, which is
-// the reading in which the runner-up is not the cleaner region on the raw nine
-// and the audit's own concession is false.
+// than the boundary that shipped, and ALT_LIVE_PRICE_BY_CONSUMER_SPLIT is what
+// makes (d) decisively so. RUNNER_UP_FULL_NINE is mutated UP past FULL_NINE,
+// which is the reading in which the runner-up is not the cleaner region on the
+// raw nine and this contract's own concession is false.
 //
 // NAMES ARE MUTATED TO OTHER REAL DECLARATIONS. EDGE_HOSTS becomes
 // `renderPositionsPanel`, a real consumer of other regions; MONOLITH_DEPENDENCIES
@@ -61,16 +69,25 @@
 // to "else zero", which is exactly the validity rule §7 executes.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-portfolio-spy-price-boundary-audit.test.js',
-  runs: ['tests/temporary-portfolio-spy-price-boundary-audit.test.js'],
+  target: 'tests/portfolio-spy-price-boundary-contract.test.js',
+  runs: ['tests/portfolio-spy-price-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-  { id: "MODULE_REL_IF_CUT",
-    find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-spy-price.js';",
-    replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-technical-parity.js';", },
+  { id: "MODULE_REL",
+    find: "const MODULE_REL = 'js/portfolio/portfolio-spy-price.js';",
+    replace: "const MODULE_REL = 'js/portfolio/portfolio-technical-parity.js';", },
+  { id: "TAG",
+    find: "const TAG = '<script src=\"./js/portfolio/portfolio-spy-price.js\"></script>\\n';",
+    replace: "const TAG = '<script src=\"./js/portfolio/portfolio-technical-parity.js\"></script>\\n';", },
+  { id: "ANCHOR_TAG",
+    find: "const ANCHOR_TAG = '<script src=\"./js/portfolio/portfolio-technical-parity.js\"></script>\\n';",
+    replace: "const ANCHOR_TAG = '<script src=\"./js/services/dxlink-greeks-fetch.js\"></script>\\n';", },
+  { id: "INLINE_OPEN",
+    find: "const INLINE_OPEN = '<script>';",
+    replace: "const INLINE_OPEN = '</script>';", },
   { id: "BASE_SHA",
-    find: "const BASE_SHA = 'c65d065';",
-    replace: "const BASE_SHA = 'b22b355';", },
+    find: "const BASE_SHA = 'ae7cf10';",
+    replace: "const BASE_SHA = 'c65d065';", },
   { id: "BASE_CHARS",
     find: "const BASE_CHARS = 1478773;",
     replace: "const BASE_CHARS = 1478772;", },
@@ -83,12 +100,18 @@ module.exports = {
   { id: "BASE_SHA256",
     find: "const BASE_SHA256 = '9e0265d2f7c53266d34f71a2b492f990f12fc6c35707300a6cbca3abc5817e66';",
     replace: "const BASE_SHA256 = '9e0265d2f7c53266d34f71a2b492f990f12fc6c35707300a6cbca3abc5817e67';", },
-  { id: "LOCAL_SCRIPTS",
-    find: "const LOCAL_SCRIPTS = 82;",
-    replace: "const LOCAL_SCRIPTS = 81;", },
+  { id: "BASE_LOCAL_SCRIPTS",
+    find: "const BASE_LOCAL_SCRIPTS = 82;",
+    replace: "const BASE_LOCAL_SCRIPTS = 81;", },
+  { id: "LOCAL_SCRIPT_COUNT",
+    find: "const LOCAL_SCRIPT_COUNT = 83;",
+    replace: "const LOCAL_SCRIPT_COUNT = 82;", },
+  { id: "MODULE_POSITION",
+    find: "const MODULE_POSITION = 82;",
+    replace: "const MODULE_POSITION = 81;", },
   { id: "BASE_TEST_FILE_COUNT",
-    find: "const BASE_TEST_FILE_COUNT = 166;",
-    replace: "const BASE_TEST_FILE_COUNT = 165;", },
+    find: "const BASE_TEST_FILE_COUNT = 167;",
+    replace: "const BASE_TEST_FILE_COUNT = 166;", },
   { id: "TEST_FILE_COUNT",
     find: "const TEST_FILE_COUNT = 167;",
     replace: "const TEST_FILE_COUNT = 166;", },
@@ -98,21 +121,36 @@ module.exports = {
   { id: "AUDIT_SPEC_REL",
     find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-spy-price-audit.spec.js';",
     replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-parity-contract.spec.js';", },
+  { id: "CONTRACT_REL",
+    find: "const CONTRACT_REL = 'tests/portfolio-spy-price-boundary-contract.test.js';",
+    replace: "const CONTRACT_REL = 'tests/portfolio-technical-parity-boundary-contract.test.js';", },
+  { id: "UNDO_REL",
+    find: "const UNDO_REL = 'tests/lib/portfolio-spy-price-undo.js';",
+    replace: "const UNDO_REL = 'tests/lib/portfolio-technical-parity-undo.js';", },
+  { id: "CONTRACT_SPEC_REL",
+    find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-spy-price-contract.spec.js';",
+    replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
   { id: "RATCHETED_CONTRACTS",
     find: "const RATCHETED_CONTRACTS = 29;",
     replace: "const RATCHETED_CONTRACTS = 28;", },
+  { id: "RETIRED_SPEC_REL",
+    find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-parity-contract.spec.js';",
+    replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-spy-price-audit.spec.js';", },
+  { id: "RETIRED_CONTRACT_REL",
+    find: "const RETIRED_CONTRACT_REL = 'tests/portfolio-technical-parity-boundary-contract.test.js';",
+    replace: "const RETIRED_CONTRACT_REL = 'tests/dxlink-greeks-fetch-boundary-contract.test.js';", },
   { id: "COVERAGE_CONTRACT",
     find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
     replace: "const COVERAGE_CONTRACT = 'tests/extraction-boundary-rule-contract.test.js';", },
-  { id: "NEWEST_CONTRACT",
-    find: "const NEWEST_CONTRACT = 'tests/portfolio-technical-parity-boundary-contract.test.js';",
-    replace: "const NEWEST_CONTRACT = 'tests/dxlink-greeks-fetch-boundary-contract.test.js';", },
-  { id: "NEWEST_CONTRACT_SPEC",
-    find: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/portfolio-technical-parity-contract.spec.js';",
-    replace: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
   { id: "BASE_DECLARED_MUTANTS",
-    find: "const BASE_DECLARED_MUTANTS = 127;",
-    replace: "const BASE_DECLARED_MUTANTS = 126;", },
+    find: "const BASE_DECLARED_MUTANTS = 249;",
+    replace: "const BASE_DECLARED_MUTANTS = 248;", },
+  { id: "RETIRED_MUTANTS",
+    find: "const RETIRED_MUTANTS = 122 + 121;",
+    replace: "const RETIRED_MUTANTS = 122 + 120;", },
+  { id: "CONTRACT_SPEC_MUTANTS",
+    find: "const CONTRACT_SPEC_MUTANTS = 140;",
+    replace: "const CONTRACT_SPEC_MUTANTS = 139;", },
   { id: "MUTANT_BUDGET",
     find: "const MUTANT_BUDGET = 250;",
     replace: "const MUTANT_BUDGET = 249;", },
@@ -172,6 +210,10 @@ module.exports = {
     covers: ["OWNER_SIZES"],
     find: "const OWNER_SIZES = [93, 1088, 524, 5798, 355];",
     replace: "const OWNER_SIZES = [93, 1088, 524, 5798, 356];", },
+  { id: "OWNERS_WITH_NO_OUTSIDE_REFERENCE",
+    covers: ["OWNERS_WITH_NO_OUTSIDE_REFERENCE"],
+    find: "const OWNERS_WITH_NO_OUTSIDE_REFERENCE = ['_spyContextPrice', '_spyContextAvailableKeys'];",
+    replace: "const OWNERS_WITH_NO_OUTSIDE_REFERENCE = ['_spyContextPrice'];", },
   { id: "TOTAL_LINES",
     find: "const TOTAL_LINES = 186;",
     replace: "const TOTAL_LINES = 185;", },
@@ -239,11 +281,11 @@ module.exports = {
     find: "const INJECTION_POINTS = [\n  'backend', 'fetchImpl', 'headers', 'log', 'snapshot', 'ttCallImpl', 'ttConnected',\n];",
     replace: "const INJECTION_POINTS = [\n  'backend', 'fetchImpl', 'headers', 'log', 'snapshot', 'ttCallImpl',\n];", },
   { id: "MODULES_PINNING_DEPENDENCIES",
-    find: "const MODULES_PINNING_DEPENDENCIES = 12;",
-    replace: "const MODULES_PINNING_DEPENDENCIES = 11;", },
+    find: "const MODULES_PINNING_DEPENDENCIES = 13;",
+    replace: "const MODULES_PINNING_DEPENDENCIES = 12;", },
   { id: "MODULES_GUARDING_EVERY_REFERENCE",
-    find: "const MODULES_GUARDING_EVERY_REFERENCE = 1;",
-    replace: "const MODULES_GUARDING_EVERY_REFERENCE = 0;", },
+    find: "const MODULES_GUARDING_EVERY_REFERENCE = 2;",
+    replace: "const MODULES_GUARDING_EVERY_REFERENCE = 1;", },
   { id: "MODULE_ALREADY_GUARDING",
     find: "const MODULE_ALREADY_GUARDING = 'js/services/swing-weekly-candles.js';",
     replace: "const MODULE_ALREADY_GUARDING = 'js/services/swing-direction.js';", },
@@ -280,14 +322,14 @@ module.exports = {
     find: "const VM_GLOBALS = 5;",
     replace: "const VM_GLOBALS = 4;", },
   { id: "LAYERS_PINNING_EDGE_HOSTS",
-    find: "const LAYERS_PINNING_EDGE_HOSTS = 5;",
-    replace: "const LAYERS_PINNING_EDGE_HOSTS = 4;", },
+    find: "const LAYERS_PINNING_EDGE_HOSTS = 6;",
+    replace: "const LAYERS_PINNING_EDGE_HOSTS = 5;", },
   { id: "LAYERS_ON_THIS_HUB",
-    find: "const LAYERS_ON_THIS_HUB = 3;",
-    replace: "const LAYERS_ON_THIS_HUB = 2;", },
+    find: "const LAYERS_ON_THIS_HUB = 4;",
+    replace: "const LAYERS_ON_THIS_HUB = 3;", },
   { id: "CONSECUTIVE_NEWEST_ON_THIS_HUB",
-    find: "const CONSECUTIVE_NEWEST_ON_THIS_HUB = 2;",
-    replace: "const CONSECUTIVE_NEWEST_ON_THIS_HUB = 1;", },
+    find: "const CONSECUTIVE_NEWEST_ON_THIS_HUB = 3;",
+    replace: "const CONSECUTIVE_NEWEST_ON_THIS_HUB = 2;", },
   { id: "LAYER_BREAKING_THE_RUN",
     find: "const LAYER_BREAKING_THE_RUN = 'js/services/journal-map-audit.js';",
     replace: "const LAYER_BREAKING_THE_RUN = 'js/portfolio/portfolio-technical-merge.js';", },
@@ -413,20 +455,38 @@ module.exports = {
     find: "const ONE_CONSUMER_MULTI_SITE = 116;",
     replace: "const ONE_CONSUMER_MULTI_SITE = 115;", },
   { id: "CHAIN_LENGTH",
-    find: "const CHAIN_LENGTH = 38;",
-    replace: "const CHAIN_LENGTH = 37;", },
-  { id: "SIZE_RANK_IF_CUT",
-    find: "const SIZE_RANK_IF_CUT = 25;",
-    replace: "const SIZE_RANK_IF_CUT = 24;", },
-  { id: "SMALLEST_LAYER_CHARS",
-    find: "const SMALLEST_LAYER_CHARS = 1761;",
-    replace: "const SMALLEST_LAYER_CHARS = 1760;", },
-  { id: "LARGEST_LAYER_CHARS",
-    find: "const LARGEST_LAYER_CHARS = 71811;",
-    replace: "const LARGEST_LAYER_CHARS = 71810;", },
+    find: "const CHAIN_LENGTH = 39;",
+    replace: "const CHAIN_LENGTH = 38;", },
+  { id: "MODULE_SIZE_RANK",
+    find: "const MODULE_SIZE_RANK = 25;",
+    replace: "const MODULE_SIZE_RANK = 24;", },
+  { id: "SMALLEST_MODULE",
+    find: "const SMALLEST_MODULE = 'js/portfolio/portfolio-vega-monitor.js';",
+    replace: "const SMALLEST_MODULE = 'js/services/scanner-ivr-throttle.js';", },
+  { id: "SMALLEST_CHARS",
+    find: "const SMALLEST_CHARS = 1761;",
+    replace: "const SMALLEST_CHARS = 1760;", },
+  { id: "LARGEST_CHARS",
+    find: "const LARGEST_CHARS = 71811;",
+    replace: "const LARGEST_CHARS = 71810;", },
   { id: "LAYERS_LARGER_THAN_THIS_CUT",
     find: "const LAYERS_LARGER_THAN_THIS_CUT = 14;",
     replace: "const LAYERS_LARGER_THAN_THIS_CUT = 13;", },
+  { id: "LAYERS_ENDING_BRACE",
+    find: "const LAYERS_ENDING_BRACE = 36;",
+    replace: "const LAYERS_ENDING_BRACE = 35;", },
+  { id: "LAYERS_WITH_SEPARATOR",
+    find: "const LAYERS_WITH_SEPARATOR = 31;",
+    replace: "const LAYERS_WITH_SEPARATOR = 30;", },
+  { id: "LAYERS_WITH_RAW_PAIR",
+    find: "const LAYERS_WITH_RAW_PAIR = 28;",
+    replace: "const LAYERS_WITH_RAW_PAIR = 27;", },
+  { id: "LAYERS_WITHOUT_SEPARATOR",
+    find: "const LAYERS_WITHOUT_SEPARATOR = 8;",
+    replace: "const LAYERS_WITHOUT_SEPARATOR = 7;", },
+  { id: "UNDOCUMENTED_LAYERS",
+    find: "const UNDOCUMENTED_LAYERS = 2;",
+    replace: "const UNDOCUMENTED_LAYERS = 3;", },
   { id: "PURE_ASCII_LAYERS",
     find: "const PURE_ASCII_LAYERS = 2;",
     replace: "const PURE_ASCII_LAYERS = 1;", },
@@ -439,5 +499,9 @@ module.exports = {
   { id: "DEAD_UNITS",
     find: "const DEAD_UNITS = 5318;",
     replace: "const DEAD_UNITS = 5317;", },
+  { id: "CHAIN",
+    covers: ["CHAIN"],
+    find: "  'js/portfolio/portfolio-technical-parity.js',\n  'js/portfolio/portfolio-spy-price.js',\n];",
+    replace: "  'js/portfolio/portfolio-spy-price.js',\n  'js/portfolio/portfolio-technical-parity.js',\n];", },
   ],
 };

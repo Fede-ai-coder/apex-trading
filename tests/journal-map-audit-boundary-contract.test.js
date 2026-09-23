@@ -109,6 +109,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/journal-map-audit-undo.js');
+const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
 // The #459 counterexample in §5 is measured on the document that cut actually
@@ -191,7 +192,7 @@ const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 3;
 // This contract pins a non-empty list, so it is counted IN. The census is over
 // every shipped `-boundary-contract.test.js`, this file included.
-const LAYERS_WITH_A_DEPENDENCY = 12;
+const LAYERS_WITH_A_DEPENDENCY = 13;
 
 // ── The screen, re-executed on this contract's own numbers ───────────────────
 const RUN_FLOOR = 1500;
@@ -340,10 +341,14 @@ console.log('relocation only · audited by #462 · base=' + BASE_SHA);
 // FIRST, and LIVE_* below means this layer's own shipped document — the one it
 // was written against — not whatever the head of the chain looks like today.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
+const PRE_PORTFOLIO_SPY_PRICE = PORTFOLIO_SPY_PRICE_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_SPY_PRICE_U.undoPortfolioSpyPrice(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-spy-price.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(PRE_PORTFOLIO_SPY_PRICE)
+  ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
+      PRE_PORTFOLIO_SPY_PRICE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
+  : PRE_PORTFOLIO_SPY_PRICE;
 const LIVE_INDEX = DXLINK_GREEKS_FETCH_U.isApplied(PRE_PORTFOLIO_TECHNICAL_PARITY)
   ? DXLINK_GREEKS_FETCH_U.undoDxlinkGreeksFetch(
       PRE_PORTFOLIO_TECHNICAL_PARITY, fs.readFileSync(path.join(ROOT, 'js/services/dxlink-greeks-fetch.js'), 'utf8'))
@@ -1080,7 +1085,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js'].sort(),
     'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
@@ -1119,7 +1124,8 @@ section('8. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-technical-parity.js' ||
+    rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' ||
+    rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
   // The budget, executed rather than narrated.
