@@ -156,8 +156,8 @@ const RETIRED_MUTANTS = 140;
 const BASE_SPECS = 2;
 // What the OLD rhythm would have declared here, which is over the ceiling. This
 // is the number that forced the change, so it is pinned rather than narrated.
-const WOULD_HAVE_DECLARED = 279;
-const CEILING_HEADROOM = 111;
+const WOULD_HAVE_DECLARED = 281;
+const CEILING_HEADROOM = 109;
 const MUTANT_BUDGET = 250;
 // EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME, and from this cycle
 // that is uniform across both phases: this audit's spec now, the next layer's
@@ -269,6 +269,9 @@ const DEAD_RULE_BY_CONSUMER = 35;
 const DEAD_RULE_NINE = 42;
 const DEAD_RULE_CONSUMERS = 6;
 const DEAD_RULE_CONTRACT = 'tests/journal-map-audit-boundary-contract.test.js';
+// The sentence that file alone carries. Existence does not name a file when
+// every sibling exists too, which is how the mutation pass caught this one.
+const DEAD_RULE_VERDICT = 'is pinned here as dead rather than adopted';
 
 // ── The four refused boundaries, and the runner-up ───────────────────────────
 const ALT_FN_START_AT = 731384;
@@ -281,6 +284,8 @@ const ALT_WITH_DEPENDENCY_CONSUMERS = 4;
 const BACKUP_PAIR = ['apexBackupKey', 'apexCreateBackup'];
 const BACKUP_CALL_SITES = 2;
 const RUNNER_UP_AT = 751577;
+const RUNNER_UP_BANNER =
+  '// ── CANONICAL LEG QUANTITY — reconciled with the backend owner (semantics 2.1.0)';
 const RUNNER_UP_END = 754911;
 const RUNNER_UP_BY_CONSUMER_SPLIT = 2;
 const RUNNER_UP_FULL_NINE = 6;
@@ -916,10 +921,24 @@ section('4. THE FINDING: the banner names a FAMILY, and its region holds a secon
     ok(DEAD_RULE_BY_CONSUMER > BY_CONSUMER * 10,
       '…an order of magnitude worse, which is what makes this a counterexample and not a '
       + 'preference');
+    // EXISTENCE AND A COMMON SUBSTRING NAME NOTHING. Both clauses here were
+    // satisfied by a NEIGHBOURING contract — every one of them ships, and every
+    // one of them contains `── ` — so the mutation pass reported this constant
+    // as a survivor. It is pinned to the sentence that file alone carries.
     ok(fs.existsSync(path.join(ROOT, DEAD_RULE_CONTRACT)),
       'and DEAD_RULE_CONTRACT ships, which is where that rule is pinned as dead');
-    ok(fs.readFileSync(path.join(ROOT, DEAD_RULE_CONTRACT), 'utf8').indexOf('── ') >= 0,
-      '…and it is the file that records the banner rules, not merely a file that exists');
+    // THE VERDICT IS MATCHED TO ITS CLOSING QUOTE, because `indexOf` matches a
+    // SUBSTRING: the first draft of this pin survived having its last character
+    // removed, which is the same survivor one line up wearing a different hat.
+    const carriesVerdict = (src) => src.indexOf(DEAD_RULE_VERDICT + "'") >= 0;
+    ok(carriesVerdict(fs.readFileSync(path.join(ROOT, DEAD_RULE_CONTRACT), 'utf8')),
+      '…and it is the file that PINS the rule as dead, which DEAD_RULE_VERDICT identifies, '
+      + 'not merely a contract that exists and mentions banners');
+    eq(fs.readdirSync(path.join(ROOT, 'tests'))
+      .filter((f) => /-boundary-contract\.test\.js$/.test(f))
+      .filter((f) => carriesVerdict(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
+    [path.basename(DEAD_RULE_CONTRACT)],
+    '…and it is the ONLY contract that carries that verdict, counted over all of them');
   }
 }
 
@@ -944,6 +963,12 @@ const alt = (lo, hi) => {
 }
 // (b) STOP BEFORE THE BACKUP PAIR.
 {
+  // ANCHORED TO A DOCUMENT FEATURE, not left as a bare offset: `alt` snaps the
+  // end back to the last line of code, which absorbed a one-unit mutation and
+  // let this constant survive the pass. It is where the third owner's body ends.
+  eq(ALT_STOP_BEFORE_BACKUP_AT,
+    snapBodyEnd(CODE, RAW_AT_IN_CODE, BY_NAME.get(BACKUP_PAIR[0]).start) + 1,
+    'ALT_STOP_BEFORE_BACKUP_AT is exactly where the body ends before the backup pair begins');
   const b = alt(RAW_AT_IN_CODE, ALT_STOP_BEFORE_BACKUP_AT);
   eq(b.p.names, OWNERS_EXPECTED.slice(0, OWNER_COUNT - 2),
     'stopping early leaves the backup pair behind');
@@ -974,6 +999,13 @@ ok(DEAD_RULE_BY_CONSUMER > BY_CONSUMER,
 }
 // THE RUNNER-UP, published with its numbers so the next cycle need not re-derive.
 {
+  // ANCHORED THE SAME WAY, and for the same reason: a bare offset that only
+  // ever reaches `alt` survives a one-unit mutation. The runner-up opens ON a
+  // banner mark, and its end is where that region's last line of code falls.
+  ok(MARKS.indexOf(RUNNER_UP_AT) >= 0, 'the runner-up begins ON a banner mark');
+  eq(lineAt(RUNNER_UP_AT), RUNNER_UP_BANNER, '…that mark being RUNNER_UP_BANNER');
+  eq(snapBodyEnd(CODE, RUNNER_UP_AT, DECLS.filter((d) => d.start > RUNNER_UP_END)[0].start),
+    RUNNER_UP_END, '…and RUNNER_UP_END is where its last line of code falls');
   const r = alt(RUNNER_UP_AT, RUNNER_UP_END);
   eq(r.bcs, RUNNER_UP_BY_CONSUMER_SPLIT, 'the runner-up scores RUNNER_UP_BY_CONSUMER_SPLIT');
   eq(r.p.nine, RUNNER_UP_FULL_NINE, '…RUNNER_UP_FULL_NINE on the raw nine, the same as this cut');
@@ -1257,7 +1289,7 @@ section('10. The change set, the ratchet and the budget');
   'the base declared BASE_DECLARED_MUTANTS mutants');
   // THE RHYTHM CHANGED IN THIS PR, and the arithmetic is what says so. Until
   // now the outgoing contract's spec retired in Phase 2, so Phase 1 carried TWO
-  // specs and the total peaked there — at 279 against a ceiling of 250 for this
+  // specs and the total peaked there — at 281 against a ceiling of 250 for this
   // audit. It retires in Phase 1 instead, from this cycle on.
   eq(declaredNow, BASE_DECLARED_MUTANTS + auditSpec.mutants.length - RETIRED_MUTANTS,
     '…and the live total is the base, LESS the spec this cycle retires, PLUS this audit\'s '
@@ -1271,7 +1303,7 @@ section('10. The change set, the ratchet and the budget');
   ok(declaredNow < budgetNow, '…and the declared total is under it');
   // THE HEADROOM THE CHANGE BUYS, measured rather than asserted as comfort. The
   // first draft of this claimed room for "another whole audit of this size" and
-  // was false by twenty-two mutants — 111 of headroom against a 133-mutant spec.
+  // was false by twenty-six mutants — 109 of headroom against a 135-mutant spec.
   // The
   // real claim is smaller and checkable: the total FELL, because one spec left
   // as a comparable one arrived, and it will sit near here in BOTH phases
@@ -1295,6 +1327,14 @@ section('10. The change set, the ratchet and the budget');
     '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
   ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + NEWEST_CONTRACT + "'") >= 0,
     '…and it is the contract that retired spec TARGETED, not merely a contract that exists');
+  // THE SPEC THIS CYCLE RETIRES IS THE NEWEST LAYER'S, which is what makes the
+  // retirement chain-ordered rather than arbitrary. Until the mutation pass
+  // said so, NEWEST_CONTRACT_SPEC was read by NOTHING in this file: a constant
+  // nothing reads cannot fail, and rereading never finds one.
+  eq(RETIRED_SPEC_REL, NEWEST_CONTRACT_SPEC,
+    'the retired path IS the newest layer\'s spec: the retirement is in chain order');
+  eq(git(['cat-file', '-e', BASE_SHA + ':' + NEWEST_CONTRACT_SPEC]), '',
+    '…a path the base commit really carried');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');

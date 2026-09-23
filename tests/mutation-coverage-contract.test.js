@@ -91,7 +91,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // made the ceiling hold without being raised. The rhythm above retires the
 // outgoing contract's spec in PHASE 2, so Phase 1 carries TWO specs — the
 // audit's and the outgoing contract's — and the total PEAKS there. That peak
-// reached 279 against this ceiling of 250, and it had been creeping: the
+// reached 281 against this ceiling of 250, and it had been creeping: the
 // contract specs either side of it carried 121 and 140 mutants as the newest
 // contract took on more chain-wide counts each cycle. Raising the ceiling would
 // have bought one cycle, maybe two.
@@ -150,7 +150,7 @@ const FIXTURE_DERIVED = 'DERIVED_VALUE';
 // to rank it. Indexing the sibling scan and binary-searching the occurrence
 // lists took it from 2,004 ms to 1,301 ms, so its 102 mutants cost 133 s instead
 // of 204 s — again with nothing unscreened.
-const DECLARED_MUTANTS = 139;
+const DECLARED_MUTANTS = 141;
 const MUTANT_BUDGET = 250;
 
 let pass = 0;
