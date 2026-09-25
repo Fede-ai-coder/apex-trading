@@ -62,7 +62,7 @@ const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const HARNESS = require('./lib/mutation-harness.js');
@@ -170,6 +170,36 @@ console.log('MUTATION COVERAGE — PERMANENT CONTRACT');
 console.log(RUN_FOR_REAL ? 'mode: FULL — every mutant is applied and run' : 'mode: --fast, mutants skipped');
 
 const loaded = SPECS.loadSpecs(SPEC_DIR);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 0. NOTHING WAS LEFT MUTATED BY A KILLED PASS.
+//
+// This runs first, and in the ORDINARY suite, because every other number in
+// every other file is measured against the working tree — so a mutant still
+// sitting in it makes the whole run meaningless. It is cheap: a stat, and a
+// digest only when the journal exists.
+//
+// It is here because the previous guard did not work. The harness registered
+// SIGINT and SIGTERM handlers that restored the target, and its header said an
+// interrupted run could not leave a mutant behind. The handlers could never
+// run: runSpec is synchronous end to end, so the event loop never turns
+// between the `process.on` and the `finally` that removed them. Worse, merely
+// registering them suppressed the default "terminate on SIGTERM", so a stop
+// was swallowed, the pass ran on, and the supervisor escalated to SIGKILL —
+// the one signal nothing can catch. A mutant reached a working tree that way
+// in cycle #470 and was found by hand.
+// ─────────────────────────────────────────────────────────────────────────────
+eq(HARNESS.hasAbandonedMutant(), null,
+  'no mutant was left on disk by a killed pass — see ' + HARNESS.JOURNAL_REL);
+
+// The journal is transient by construction: written before a mutant, deleted
+// after the restore that undoes it. A COMMITTED one would therefore be a lie
+// about the tree it describes, and would heal a future checkout back to bytes
+// that have since moved. It is deliberately not in a .gitignore — after a
+// killed pass it SHOULD show up in `git status` — so this is what stops it
+// being committed by a `git add -A`.
+eq(execFileSync('git', ['ls-files', '--', HARNESS.JOURNAL_REL], { cwd: ROOT, encoding: 'utf8' }), '',
+  'the mutation journal is not tracked by git — it describes one moment of one working tree');
 
 // ─────────────────────────────────────────────────────────────────────────────
 section('1. The specs are present and well formed');
@@ -464,6 +494,105 @@ section('5. The guards that make in-place mutation safe');
     // against, so the control is skipped rather than faked.
     console.log('  (dirty-target control skipped: the fixture is not committed yet)');
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('5b. The journal — the half of the restore guard that survives SIGKILL');
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const abs = path.join(ROOT, FIXTURE);
+  const before = fs.readFileSync(abs, 'utf8');
+  const digest = sha256(before);
+  const journal = HARNESS.JOURNAL_ABS;
+  const cleanup = () => {
+    fs.writeFileSync(abs, before);
+    if (fs.existsSync(journal)) fs.unlinkSync(journal);
+  };
+  ok(!fs.existsSync(journal), 'no journal is on disk before these controls plant one');
+
+  // (a) A PASS KILLED MID-MUTANT. The child uses the harness's own journal
+  // writer, applies the mutant, and then SIGKILLs itself — the one signal no
+  // handler of any kind can catch, and the one that actually reached a working
+  // tree in cycle #470.
+  try {
+    const script = [
+      'const H = require(' + JSON.stringify(path.join(ROOT, 'tests/lib/mutation-harness.js')) + ');',
+      "const fs = require('fs');",
+      'const p = ' + JSON.stringify(abs) + ';',
+      "const b = fs.readFileSync(p, 'utf8');",
+      "const a = b.replace('const CHECKED_PIN = 7;', 'const CHECKED_PIN = 9;');",
+      'H.writeJournal(' + JSON.stringify(FIXTURE) + ", 'killed-control', b, a);",
+      'fs.writeFileSync(p, a);',
+      "process.kill(process.pid, 'SIGKILL');",
+    ].join('\n');
+    const killed = spawnSync(process.execPath, ['-e', script], { cwd: ROOT, encoding: 'utf8' });
+    eq(killed.signal, 'SIGKILL', 'the control child really died on SIGKILL, where no handler runs');
+    ok(fs.readFileSync(abs, 'utf8') !== before, '…leaving the fixture mutated on disk');
+    ok(fs.existsSync(journal), '…and the journal it wrote BEFORE the mutant');
+
+    const found = HARNESS.hasAbandonedMutant();
+    ok(found !== null, "the ordinary suite's check sees the abandoned mutant");
+    eq(found.target, FIXTURE, '…and names the file it is sitting in');
+    eq(found.mutantId, 'killed-control', '…and the mutant that was in flight');
+
+    const healed = HARNESS.healAbandonedMutant();
+    eq(healed.healed, true, 'healing reports that it put bytes back');
+    eq(sha256(fs.readFileSync(abs, 'utf8')), digest, '…and the fixture is byte-identical again');
+    ok(!fs.existsSync(journal), '…and the journal is gone');
+    eq(HARNESS.hasAbandonedMutant(), null, '…so §0 is green again');
+  } finally { cleanup(); }
+
+  // (b) CONTROL — a journal whose target is PRISTINE is not an abandoned
+  // mutant. That is the window between the two writes, and it must heal to a
+  // no-op; without this control, §0 could be a check that fires on the mere
+  // existence of a file.
+  try {
+    HARNESS.writeJournal(FIXTURE, 'between-writes', before, before + '// mutated\n');
+    eq(HARNESS.hasAbandonedMutant(), null,
+      'control — a journal over a pristine target is NOT an abandonment, so (a) measures');
+    const healed = HARNESS.healAbandonedMutant();
+    eq(healed.healed, false, '…and healing it puts nothing back');
+    ok(!fs.existsSync(journal), '…but still clears the journal');
+  } finally { cleanup(); }
+
+  // (c) A TARGET EDITED SINCE is refused rather than guessed at. Restoring it
+  // would discard whoever's work is in there now.
+  try {
+    HARNESS.writeJournal(FIXTURE, 'stale', before,
+      before.replace('const CHECKED_PIN = 7;', 'const CHECKED_PIN = 8;'));
+    fs.writeFileSync(abs, before + '// edited by someone else\n');
+    throwsWith(() => HARNESS.healAbandonedMutant(), /MUTATION_JOURNAL_STALE/,
+      'a target matching neither the pristine bytes nor the mutant is refused');
+    ok(fs.existsSync(journal), '…and nothing is thrown away: the journal stays for a human');
+  } finally { cleanup(); }
+
+  // (d) A CORRUPT JOURNAL is refused too — a truncated write must not read as
+  // "nothing to heal".
+  try {
+    fs.writeFileSync(journal, '{ this is not json');
+    throwsWith(() => HARNESS.hasAbandonedMutant(), /MUTATION_JOURNAL_CORRUPT/,
+      'a journal that is not JSON is refused rather than ignored');
+  } finally { cleanup(); }
+
+  // (e) A COMPLETED mutant leaves nothing behind.
+  const done = HARNESS.runMutant(
+    { id: 'journal-cleanup', find: 'const CHECKED_PIN = 7;', replace: 'const CHECKED_PIN = 8;' },
+    FIXTURE, [FIXTURE], {});
+  eq(done.status, 'caught', 'a normal mutant still runs');
+  eq(sha256(fs.readFileSync(abs, 'utf8')), digest, '…and restores the fixture');
+  ok(!fs.existsSync(journal), '…and leaves no journal behind');
+
+  // (f) THE DEAD HANDLERS, pinned as removed. They are not merely unused: a
+  // registered SIGTERM listener suppresses Node's default termination, so the
+  // stop was swallowed and the pass ran on until the supervisor sent SIGKILL.
+  // Measured before removal: SIGTERM at t=3.0s left a two-mutant pass running
+  // to its normal end at t=24.2s, exit 0 — the listener never ran once.
+  const harnessSrc = fs.readFileSync(path.join(ROOT, 'tests/lib/mutation-harness.js'), 'utf8');
+  eq(harnessSrc.indexOf("process.on('SIGTERM'"), -1,
+    'the harness registers no SIGTERM listener: it could never run, and registering it swallowed the stop');
+  eq(harnessSrc.indexOf("process.on('SIGINT'"), -1, '…nor SIGINT, unreachable for the same reason');
+  ok(harnessSrc.indexOf('writeJournal(target, mutant.id, before, after)') >= 0,
+    'control — the journal write IS in that file, so the two searches above read the right source');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
