@@ -88,7 +88,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/swing-weekly-candles-contract.sp
 // Ratchet. The suite file count as it stands TODAY. A Phase 1 audit advances it
 // in every contract that carries it; Phase 2 deletes that audit as the next
 // contract arrives, so this cycle leaves the count exactly where #452 put it.
-const TEST_FILE_COUNT = 167;
+const TEST_FILE_COUNT = 168;
 const LOCAL_SCRIPT_COUNT = 75;
 const MODULE_POSITION = 74;
 

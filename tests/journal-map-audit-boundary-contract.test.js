@@ -142,7 +142,7 @@ const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-alignment-deb
 // Ratchet. The suite file count as it stands TODAY. Phase 1 advanced it to 164;
 // this phase deletes that audit as this contract arrives, one for one, so the
 // count is unchanged.
-const TEST_FILE_COUNT = 167;
+const TEST_FILE_COUNT = 168;
 const LOCAL_SCRIPT_COUNT = 80;
 const MODULE_POSITION = 79;
 
@@ -292,7 +292,12 @@ const RETIRED_MUTANTS = 89 + 82;
 // had not touched.
 const CONTRACT_SPEC_MUTANTS = 93;
 const MUTANT_BUDGET = 250;
-const LAYER_CONTRACT_SPECS = 1;
+// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: the audit's between
+// Phase 1 and Phase 2, the newest contract's after it. The predicate is every
+// `.spec.js` but the coverage spec, NOT `-contract.spec.js` — the narrower one
+// could not see an audit spec at all, so it read 1 during Phase 1 while TWO
+// specs were committed, and that blind spot is what overflowed the ceiling.
+const LAYER_SPECS = 1;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -1167,9 +1172,8 @@ section('8. Reachability, the chain, and exact production scope');
     eq(budgetNow, MUTANT_BUDGET, 'the ceiling is unchanged at 250');
     ok(declaredNow < budgetNow, '…and the live declared total is under it');
     const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
-      .filter((f) => /-contract\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
-    eq(layerSpecs.length, LAYER_CONTRACT_SPECS,
-      'exactly LAYER_CONTRACT_SPECS layer contract spec is committed');
+      .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
+    eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
     eq(layerSpecs.indexOf(path.basename(CONTRACT_SPEC_REL)), -1,
       '…and it is NOT this one: the newest layer keeps a spec, and only the newest');
   }
