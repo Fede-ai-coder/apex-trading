@@ -1444,6 +1444,33 @@ section('10. The change set, the ratchet and the budget');
     + 'not about how the command is being called');
   ok(fs.existsSync(path.join(ROOT, NEWEST_CONTRACT)),
     '…while the CONTRACT it targeted still ships and still runs: the spec retired, not the file');
+  // NEWEST_CONTRACT IS NAMED BY ITS CHAIN, not by existing. Every sibling contract
+  // exists, so the existence check above is satisfied by any of them — and a
+  // mutant pointing at a different contract SURVIVED the first full pass. It had
+  // been load-bearing while this file derived CHAIN by parsing that contract;
+  // giving this contract its own CHAIN literal took that away and left the
+  // constant checked by nothing. The outgoing layer's contract is the one whose
+  // own chain ends one entry before ours.
+  const newestChain = fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8')
+    .match(/^const CHAIN = \[([\s\S]*?)^\];/m)[1]
+    .split('\n').map((l) => l.trim()).filter((l) => l.startsWith("'"))
+    .map((l) => l.replace(/^'|',?$/g, ''));
+  eq(newestChain[newestChain.length - 1], CHAIN[CHAIN.length - 2],
+    '…and its own chain ends at the layer immediately before this one, which is what makes '
+    + 'it THE outgoing contract rather than merely a contract that exists');
+  eq(newestChain.length, CHAIN_LENGTH - 1,
+    '…one entry shorter than ours, so a contract from any other cycle fails here too');
+
+  // BASE_SHA IS NAMED BY WHAT ONLY THAT COMMIT CARRIES. index.html is
+  // byte-identical at the base and at its parent — #471 changed tests only — so
+  // every document fact in §1 and §9 holds at BOTH, and a mutant moving BASE_SHA
+  // one commit back also SURVIVED the first full pass. What separates them is the
+  // mutation journal that #471 put in the harness.
+  ok(git(['show', BASE_SHA + ':tests/lib/mutation-harness.js']).indexOf('JOURNAL_REL') >= 0,
+    'the base commit carries the harness journal, which identifies THIS commit and not the '
+    + 'predecessor whose index.html is byte-identical to it');
+  eq(git(['show', BASE_SHA + '~1:tests/lib/mutation-harness.js']).indexOf('JOURNAL_REL'), -1,
+    '…and its parent does NOT carry it, so that check discriminates rather than merely passing');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
