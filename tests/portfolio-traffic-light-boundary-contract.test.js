@@ -180,6 +180,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
 const DXLINK_GREEKS_FETCH_U = require('./lib/dxlink-greeks-fetch-undo.js');
@@ -201,10 +202,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_SPY_PRICE = PORTFOLIO_SPY_PRICE_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_SPY_PRICE_U.undoPortfolioSpyPrice(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-spy-price.js'), 'utf8'))
+const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(LIVE_INDEX)
+  ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_SPY_PRICE = PORTFOLIO_SPY_PRICE_U.isApplied(PRE_APEX_STORAGE_RECOVERY)
+  ? PORTFOLIO_SPY_PRICE_U.undoPortfolioSpyPrice(
+      PRE_APEX_STORAGE_RECOVERY, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-spy-price.js'), 'utf8'))
+  : PRE_APEX_STORAGE_RECOVERY;
 const PRE_PORTFOLIO_TECHNICAL_PARITY = PORTFOLIO_TECHNICAL_PARITY_U.isApplied(PRE_PORTFOLIO_SPY_PRICE)
   ? PORTFOLIO_TECHNICAL_PARITY_U.undoPortfolioTechnicalParity(
       PRE_PORTFOLIO_SPY_PRICE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-parity.js'), 'utf8'))
