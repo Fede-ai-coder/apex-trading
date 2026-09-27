@@ -146,6 +146,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 
+const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const UNDO = require('./lib/portfolio-spy-price-undo.js');
 
 const MODULE_REL = 'js/portfolio/portfolio-spy-price.js';
@@ -265,7 +266,7 @@ const INJECTION_POINTS = [
 // TWO of them guard every reference on their own list, this one and the one
 // that shipped before it. That is an `eq` over the set with the precedent
 // named, not an adjective about this one.
-const MODULES_PINNING_DEPENDENCIES = 13;
+const MODULES_PINNING_DEPENDENCIES = 14;
 const MODULES_GUARDING_EVERY_REFERENCE = 2;
 const MODULE_ALREADY_GUARDING = 'js/services/swing-weekly-candles.js';
 // outboundModule is NOT among the zeroes here, and it is the only direction of
@@ -456,11 +457,15 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('PORTFOLIO SPY PRICE — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited by #468 · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so the peel the comment here used to promise is now
+// present: #470's storage-recovery layer comes off first, and LIVE_INDEX is once
+// again this layer's shipped document rather than the head of the tree. Every
+// older contract in this chain already carries the same idiom.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = APEX_STORAGE_RECOVERY_U.isApplied(HEAD_INDEX)
+  ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1449,8 +1454,8 @@ section('9. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL].sort(),
-    'production footprint is exactly index.html plus the one new module');
+    ['index.html', MODULE_REL, 'js/services/apex-storage-recovery.js'].sort(),
+    'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
   // in the contract that carried it: a mutant pointing it at a NEIGHBOURING
@@ -1495,6 +1500,7 @@ section('9. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
+    rel === 'js/services/apex-storage-recovery.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
   // THE RATCHET, which this phase does not move: the audit leaves as this

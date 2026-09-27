@@ -30,7 +30,7 @@ module.exports = {
       find: "const FIXTURE_DERIVED = 'DERIVED_VALUE';",
       replace: "const FIXTURE_DERIVED = 'CHECKED_PIN';" },
     { id: 'DECLARED_MUTANTS',
-      find: 'const DECLARED_MUTANTS = 141;',
+      find: 'const DECLARED_MUTANTS = 144;',
       replace: 'const DECLARED_MUTANTS = 140;' },
     { id: 'MUTANT_BUDGET',
       find: 'const MUTANT_BUDGET = 250;',
