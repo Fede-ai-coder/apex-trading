@@ -168,7 +168,7 @@ const BASE_LOCAL_SCRIPTS = 82;
 const LOCAL_SCRIPT_COUNT = 83;
 const MODULE_POSITION = 82;
 const BASE_TEST_FILE_COUNT = 167;
-const TEST_FILE_COUNT = 168;
+const TEST_FILE_COUNT = 169;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-spy-price-boundary-audit.test.js';
@@ -180,7 +180,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-spy-price-contract.spe
 // that really existed rather than one that never did. It is also the revision
 // the spec's own numbers are read out of, now that the file is gone.
 const SPEC_RETIRED_FROM = '0d0a3ec';
-const RATCHETED_CONTRACTS = 30;
+const RATCHETED_CONTRACTS = 31;
 // Chain-order retirement: the layer that was newest at the base is no longer
 // newest, so its spec goes. §9 pins that path by what the BASE commit carried,
 // because absence alone is satisfied by any wrong path, including one that

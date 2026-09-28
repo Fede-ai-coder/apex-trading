@@ -155,12 +155,12 @@ const BASE_LF = 25420;
 const BASE_SHA256 = 'cd9caf4339b47b890dd096468a42b92515fa879859df606629b7c8964a613dfa';
 const LOCAL_SCRIPTS = 83;
 const BASE_TEST_FILE_COUNT = 168;
-const TEST_FILE_COUNT = 168;
+const TEST_FILE_COUNT = 169;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-apex-storage-recovery-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/apex-storage-recovery-audit.spec.js';
-const RATCHETED_CONTRACTS = 30;
+const RATCHETED_CONTRACTS = 31;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 const NEWEST_CONTRACT = 'tests/portfolio-spy-price-boundary-contract.test.js';
 const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/portfolio-spy-price-contract.spec.js';
@@ -171,8 +171,13 @@ const BASE_DECLARED_MUTANTS = 141;
 const RETIRED_SPEC_REL = 'tests/mutation-specs/apex-storage-recovery-audit.spec.js';
 const RETIRED_MUTANTS = 135;
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/apex-storage-recovery-contract.spec.js';
+// THIS CONTRACT'S OWN SPEC IS NOW RETIRED, one phase after it arrived, which is
+// the rhythm #470 shipped. What it HELD is a fact about the commit that last
+// carried it and stays true forever, so §10 reads it out of that revision
+// instead of `require`-ing a path that no longer exists.
+const SPEC_RETIRED_FROM = '8acdfb8';
+const CONTRACT_SPEC_MUTANTS = 138;
 const BASE_SPECS = 2;
-const CEILING_HEADROOM = 106;
 const MUTANT_BUDGET = 250;
 // EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME, and from this cycle
 // that is uniform across both phases: this audit's spec now, the next layer's
@@ -1379,11 +1384,17 @@ section('10. The change set, the ratchet and the budget');
   // has to be told — including the newest spec's own mutant anchor.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files with this contract in it');
-  // THE AUDIT WAS RENAMED, NOT ADDED BESIDE ITS REPLACEMENT, so the count does
-  // not move this phase. That is asserted as the two commit facts rather than as
-  // a difference of zero: a difference is silent about which file is which, and
-  // "zero" would keep holding after the next audit landed.
-  eq(TEST_FILE_COUNT - BASE_TEST_FILE_COUNT, 0, '…the same count the base carried');
+  // THE AUDIT WAS RENAMED, NOT ADDED BESIDE ITS REPLACEMENT, so this phase added
+  // no test file. That is asserted as the two commit facts, NOT as a difference
+  // against the live TEST_FILE_COUNT: the live count ratchets every time a later
+  // cycle lands an audit, so `TEST_FILE_COUNT - BASE_TEST_FILE_COUNT === 0` was
+  // a statement about a PAST change set written against a constant that keeps
+  // moving, and it expired the moment the next audit arrived. The count at the
+  // BASE commit is the half that cannot drift, and it is read out of git below.
+  eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
+    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f))
+    .filter((f) => f !== AUDIT_REL).length + 1, BASE_TEST_FILE_COUNT,
+  'the base carried BASE_TEST_FILE_COUNT test files, of which exactly one was the audit');
   ok(git(['show', BASE_SHA + ':' + AUDIT_REL]).length > 0,
     '…because the base carried the AUDIT at that count');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)) && fs.existsSync(path.join(ROOT, CONTRACT_REL)),
@@ -1400,8 +1411,18 @@ section('10. The change set, the ratchet and the budget');
     .test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
   '…and every one of them now pins the ratcheted value, this audit included');
   // THE BUDGET, executed rather than narrated.
-  const contractSpec = require(path.join(ROOT, CONTRACT_SPEC_REL));
-  eq(contractSpec.target, CONTRACT_REL, 'the arriving spec targets THIS contract');
+  // READ OUT OF THE REVISION THAT LAST CARRIED IT. This contract's spec was
+  // retired by the next cycle's Phase 1, so `require`-ing it would throw; what
+  // it held is a fact about SPEC_RETIRED_FROM and stays true forever.
+  const contractSpecAt = git(['show', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]);
+  eq((contractSpecAt.match(/\n\s*\{ id: /g) || []).length, CONTRACT_SPEC_MUTANTS,
+    'this contract\'s spec carried CONTRACT_SPEC_MUTANTS mutants, one per pin');
+  ok(contractSpecAt.indexOf("target: '" + CONTRACT_REL + "'") >= 0,
+    '…and it targeted THIS contract, not a neighbouring one');
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    '…and it is retired now, so the cycle in flight carries the mutation pass');
+  eq(git(['cat-file', '-e', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]), '',
+    '…from a path that revision really carried, not merely one that never existed');
   const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
   const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
   const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
@@ -1411,17 +1432,27 @@ section('10. The change set, the ratchet and the budget');
   // PHASE 2 NOW RETIRES EXACTLY ONE SPEC — the audit's. The outgoing contract's
   // went in Phase 1, which is the rhythm #470 shipped, so the total moves by the
   // difference between two comparable specs instead of peaking.
-  eq(declaredNow, BASE_DECLARED_MUTANTS - RETIRED_MUTANTS + contractSpec.mutants.length,
-    'the live total is the base, LESS the audit spec this phase retires, PLUS this '
-    + 'contract\'s own — the arithmetic of the change rather than the total it reaches');
+  // THE ARITHMETIC OF THIS LAYER'S OWN PHASE, read at the commit that shipped
+  // it. Pinning `declaredNow` here was a statement about a PAST change set
+  // written against a number every later audit moves by design — the same
+  // mistake that made this cycle's Phase 1 fail on contracts it had not
+  // touched. What stays true forever is the arithmetic AT SPEC_RETIRED_FROM.
+  eq(Number(git(['show', SPEC_RETIRED_FROM + ':' + COVERAGE_CONTRACT])
+    .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]),
+  BASE_DECLARED_MUTANTS - RETIRED_MUTANTS + CONTRACT_SPEC_MUTANTS,
+  'at the commit that shipped this layer the declared total was the base, LESS the audit '
+  + 'spec that phase retired, PLUS this contract\'s own');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/mutation-specs/'])
     .split('\n').filter(Boolean).length, BASE_SPECS,
   '…the base having carried BASE_SPECS specs, read out of git');
   eq(fs.readdirSync(path.join(ROOT, 'tests/mutation-specs')).length, BASE_SPECS,
     '…and today carrying the same number: one retires as one arrives');
   eq(budgetNow, MUTANT_BUDGET, 'the ceiling is unchanged at 250');
-  ok(declaredNow < budgetNow, '…and the declared total is under it');
-  eq(budgetNow - declaredNow, CEILING_HEADROOM, 'CEILING_HEADROOM mutants of room remain');
+  // THE CEILING INVARIANT is the part that stays true however many layers ship
+  // after this one. The HEADROOM is not: it was `250 - declaredNow` at this
+  // layer's own commit, and every later cycle moves it, so it is gone rather
+  // than re-pinned at a number that would expire again next cycle.
+  ok(declaredNow < budgetNow, '…and the live declared total is under it');
   // ABSENCE ALONE IS NOT A PIN: any wrong path is also absent, so the retired
   // spec is named by what the BASE commit carried.
   ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC_REL)),
@@ -1474,9 +1505,9 @@ section('10. The change set, the ratchet and the budget');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
-  eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)],
-    '…and after Phase 2 it is THIS contract\'s, which is the other half of the invariant '
-    + 'the old `-contract.spec.js` predicate could not see');
+  eq(layerSpecs.indexOf(path.basename(CONTRACT_SPEC_REL)), -1,
+    '…and it is NOT this one any more: the spec moved on to the cycle in flight, which is '
+    + 'the other half of the invariant the old `-contract.spec.js` predicate could not see');
 }
 
 console.log('\n' + pass + ' assertions passed.');
