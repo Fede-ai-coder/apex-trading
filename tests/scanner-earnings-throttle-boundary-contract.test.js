@@ -249,6 +249,7 @@ console.log('relocation only · audited #446 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY_U = require('./lib/portfolio-technical-parity-undo.js');
@@ -266,10 +267,14 @@ const CHART_INTERACTIONS_U = require('./lib/chart-interactions-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(LIVE_INDEX)
-  ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
+const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(PRE_PORTFOLIO_LEG_QUANTITY)
+  ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
+      PRE_PORTFOLIO_LEG_QUANTITY, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
+  : PRE_PORTFOLIO_LEG_QUANTITY;
 const PRE_PORTFOLIO_SPY_PRICE = PORTFOLIO_SPY_PRICE_U.isApplied(PRE_APEX_STORAGE_RECOVERY)
   ? PORTFOLIO_SPY_PRICE_U.undoPortfolioSpyPrice(
       PRE_APEX_STORAGE_RECOVERY, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-spy-price.js'), 'utf8'))
@@ -745,7 +750,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   // base carries the module #449 cut as well. Re-terminated each time the chain
   // grows, rather than loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js'].sort(),
+    ['index.html', MODULE_REL, 'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and the layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -781,7 +786,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');

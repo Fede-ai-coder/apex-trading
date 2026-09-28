@@ -401,7 +401,17 @@ console.log('measurement only · base=' + BASE_SHA);
 // this layer's shipped document. When a later cycle cuts again, a peel goes here
 // and LIVE_INDEX stops being the head of the tree — the idiom every older
 // contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+//
+// AND A LATER CYCLE HAS NOW CUT: #474 shipped js/portfolio/portfolio-leg-quantity.js
+// after this layer, so the head of the tree is no longer this layer's shipped
+// document. That peel goes here, exactly as the sentence above anticipated, and
+// LIVE_INDEX below is this layer's OWN extracted document rather than the head.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
+const LIVE_INDEX = PORTFOLIO_LEG_QUANTITY_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1034,12 +1044,18 @@ section('4. THE FINDING: the banner names a FAMILY, and its region holds a secon
     // quotes it in order to check it. While this file was the temporary audit it
     // was not a `-boundary-contract`, so the census saw one — the kind of
     // "ONLY" that stops being true because the file asserting it moved.
+    // AND THE COUNT MOVED AGAIN, for the third time: #474's audit was renamed
+    // into a `-boundary-contract` too, so the census that read ONE and then TWO
+    // now reads THREE. That is why the list is enumerated rather than counted —
+    // a bare number would have needed editing without saying which file joined.
     eq(fs.readdirSync(path.join(ROOT, 'tests'))
       .filter((f) => /-boundary-contract\.test\.js$/.test(f))
       .filter((f) => carriesVerdict(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8')))
       .sort(),
-    [path.basename(CONTRACT_REL), path.basename(DEAD_RULE_CONTRACT)].sort(),
-    '…and exactly TWO contracts carry that verdict — the one that pins it and this one, '
+    [path.basename(CONTRACT_REL), path.basename(DEAD_RULE_CONTRACT),
+      'portfolio-leg-quantity-boundary-contract.test.js'].sort(),
+    '…and exactly THREE contracts carry that verdict — the one that pins it, this one, and '
+    + 'the layer cut after it, '
     + 'counted over all of them');
   }
 }
@@ -1346,9 +1362,14 @@ section('9. The relocation is the whole of the production change');
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status)));
+  // A LATER LAYER HAS SHIPPED, so the production footprint against THIS layer's
+  // base is no longer two paths: it is this layer's module, the document, and
+  // the module of every layer cut after it. The list is enumerated rather than
+  // counted so the next cycle adds a name instead of editing a number.
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    'the production footprint is the document, this layer\'s module, and the module of '
+    + 'every layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
@@ -1378,8 +1399,10 @@ section('10. The change set, the ratchet and the budget');
     '…because the audit is GONE: replaced one-for-one, not left beside its replacement');
   ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
-  ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL),
-    '…and every other changed path is a test artifact');
+  ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL
+    || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'CLAUDE.md'),
+  '…and every other changed path is a test artifact, this layer\'s module, or the module of '
+  + 'a layer cut after it');
   // THE RATCHET. One file arrives, and every contract that pins the suite size
   // has to be told — including the newest spec's own mutant anchor.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,

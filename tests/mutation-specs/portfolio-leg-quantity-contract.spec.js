@@ -1,66 +1,50 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — canonical leg quantity TEMPORARY boundary audit.
+// Mutation spec — canonical leg quantity PERMANENT boundary contract.
 //
-// One mutant per pinned constant. The coverage contract proves on every push
-// that each `find` still appears exactly once in the target and that no pin is
-// left uncovered, then applies all of them against a baseline it verifies green
-// first. This spec retires with the audit in Phase 2.
+// One mutant per pinned constant. This spec arrives as the audit's retires, and
+// it is the ONLY non-coverage spec committed until the next cycle's Phase 1
+// retires it in turn.
 //
-// THE FINDING IS A PAIR OF SERIES, so all four move independently. NINE_SERIES
-// and SPLIT_SERIES are the two metrics that disagree; INBOUND_SERIES and
-// SIBLING_SERIES are the two directions that explain why. Each mutant perturbs
-// its series at the position that carries the claim — NINE_SERIES and
-// INBOUND_SERIES stop falling, SPLIT_SERIES and SIBLING_SERIES stop rising — so
-// a single mutant could not tell which half of the finding had gone.
+// THE PINS THAT THIS PHASE MADE LOAD-BEARING are the ones the audit could not
+// have: UNDO_REL, CONTRACT_REL and CONTRACT_SPEC_REL name artifacts that did not
+// exist in Phase 1, and CHAIN now ends at this layer rather than being parsed
+// off the outgoing contract. Each moves to a REAL neighbour of the same kind —
+// never to a path that does not exist, because a constant whose only use is an
+// existence or membership test is satisfied by any sibling that also ships, and
+// a mutant pointing at an absent file proves nothing about it. That survivor was
+// found in #461, #465 and #466.
+//
+// THE THREE SELF-EXCLUSIONS this contract carries — §3's dependency denominator,
+// §5's dead-rule ordinal census and §8's suite census — are each pinned by a
+// constant that moves here, because all three were written the naive way first
+// and each failed on its own author.
 //
 // ZEROES RUN UPWARD, because zero is also what a predicate measuring nothing
 // returns. CHAIN_OUTBOUND, FOUNDATION_OUTBOUND, TOP_LEVEL_STATEMENT_LINES,
 // LARGER_AT_THE_SAME_SCORE, BANNERS_NAMING_AN_OWNER_THEY_GOVERN,
-// LAYERS_ON_THESE_HUBS and SUITES_READING_INDEX_DIRECTLY all move to ONE — the
-// world where the thing being reported as absent is present. MONOLITH_-
-// DEPENDENCIES and EVALUATION_TIME_READS are empty ARRAYS, and both move to
-// `Object`: a name the region really does mention, but which is a host global
-// rather than a monolith declaration. That is the exact confusion §3 separates,
-// so the mutant tests the distinction rather than merely the emptiness.
-//
-// A PATH IS MUTATED TO A REAL NEIGHBOUR, never to one that does not exist. A
-// constant whose only use is an existence or a membership test is satisfied by
-// any sibling that also ships, so a mutant pointing at an absent file proves
-// nothing about it. That exact survivor was found in #461 (CONTRACT_REL), #465
-// (RETIRED_CONTRACT_REL) and #466 (AUDIT_SPEC_REL). So MODULE_REL_IF_CUT moves
-// to a module that DOES exist and IS in the chain — the two things §9 asserts
-// it is not — and AUDIT_REL, AUDIT_SPEC_REL, COVERAGE_CONTRACT, NEWEST_CONTRACT,
-// NEWEST_CONTRACT_SPEC, RETIRED_SPEC_REL, PUBLISHED_BY, LOADER_REL,
-// MODULE_CONSUMER and DEAD_RULE_CONTRACT each move to a committed file of the
-// same kind.
-//
-// AHEAD_OWNERS AND OWNERS_EXPECTED ARE COMPARED AS SETS OR IN ORDER, so
-// swapping two entries could survive one of them. Each mutant replaces a name
-// with a DIFFERENT REAL DECLARATION instead — the perturbation both comparisons
-// still catch. OWNERS_EXPECTED takes `_portfolioResolveLegQuantity`, which is
-// the sixth owner and so exists but is precisely the one this boundary leaves
-// behind.
+// LAYERS_ON_THESE_HUBS and SUITES_READING_INDEX_DIRECTLY all move to ONE.
+// MONOLITH_DEPENDENCIES and EVALUATION_TIME_READS are empty ARRAYS, and both
+// move to `Object`: a name the region really does mention, but a host global
+// rather than a monolith declaration — the exact confusion §3 separates.
 //
 // PROSE PINNED BY EQUALITY IS MUTATED THE WAY THAT LINE ACTUALLY DRIFTS.
-// BANNER_LINE is a banner, so it loses one rule character. DEAD_RULE_VERDICT
-// loses its LAST character, because `indexOf` matches a substring and §5 pins
-// the verdict against its closing quote for exactly that reason. PROSE_CLAIM
-// becomes `fourteen suites` — the number that is actually correct — so the
-// mutant checks that §8 reads the production sentence rather than its own
-// conclusion about it.
+// BANNER_LINE loses one rule character; DEAD_RULE_VERDICT loses its LAST
+// character, because `indexOf` matches a substring; PROSE_CLAIM becomes
+// `fourteen suites` — the number that is actually correct — so the mutant
+// checks that §8 reads the production sentence rather than its own conclusion.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-portfolio-leg-quantity-boundary-audit.test.js',
-  runs: ['tests/temporary-portfolio-leg-quantity-boundary-audit.test.js'],
+  target: 'tests/portfolio-leg-quantity-boundary-contract.test.js',
+  runs: ['tests/portfolio-leg-quantity-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-  { id: "MODULE_REL_IF_CUT",
-    find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-leg-quantity.js';",
-    replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-spy-price.js';", },
+  { id: "MODULE_REL",
+    find: "const MODULE_REL = 'js/portfolio/portfolio-leg-quantity.js';",
+    replace: "const MODULE_REL = 'js/portfolio/portfolio-spy-price.js';", },
   { id: "BASE_SHA",
-    find: "const BASE_SHA = '8acdfb8';",
-    replace: "const BASE_SHA = 'aced93f';", },
+    find: "const BASE_SHA = '4168e32';",
+    replace: "const BASE_SHA = '8acdfb8';", },
   { id: "BASE_CHARS",
     find: "const BASE_CHARS = 1463808;",
     replace: "const BASE_CHARS = 1463809;", },
@@ -77,17 +61,26 @@ module.exports = {
     find: "const LOCAL_SCRIPTS = 84;",
     replace: "const LOCAL_SCRIPTS = 85;", },
   { id: "BASE_TEST_FILE_COUNT",
-    find: "const BASE_TEST_FILE_COUNT = 168;",
-    replace: "const BASE_TEST_FILE_COUNT = 169;", },
+    find: "const BASE_TEST_FILE_COUNT = 169;",
+    replace: "const BASE_TEST_FILE_COUNT = 170;", },
   { id: "TEST_FILE_COUNT",
     find: "const TEST_FILE_COUNT = 169;",
     replace: "const TEST_FILE_COUNT = 170;", },
   { id: "AUDIT_REL",
     find: "const AUDIT_REL = 'tests/temporary-portfolio-leg-quantity-boundary-audit.test.js';",
     replace: "const AUDIT_REL = 'tests/mutation-coverage-contract.test.js';", },
+  { id: "CONTRACT_REL",
+    find: "const CONTRACT_REL = 'tests/portfolio-leg-quantity-boundary-contract.test.js';",
+    replace: "const CONTRACT_REL = 'tests/apex-storage-recovery-boundary-contract.test.js';", },
+  { id: "UNDO_REL",
+    find: "const UNDO_REL = 'tests/lib/portfolio-leg-quantity-undo.js';",
+    replace: "const UNDO_REL = 'tests/lib/apex-storage-recovery-undo.js';", },
   { id: "AUDIT_SPEC_REL",
     find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-leg-quantity-audit.spec.js';",
     replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+  { id: "CONTRACT_SPEC_REL",
+    find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-leg-quantity-contract.spec.js';",
+    replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
   { id: "RATCHETED_CONTRACTS",
     find: "const RATCHETED_CONTRACTS = 31;",
     replace: "const RATCHETED_CONTRACTS = 32;", },
@@ -97,18 +90,15 @@ module.exports = {
   { id: "NEWEST_CONTRACT",
     find: "const NEWEST_CONTRACT = 'tests/apex-storage-recovery-boundary-contract.test.js';",
     replace: "const NEWEST_CONTRACT = 'tests/portfolio-spy-price-boundary-contract.test.js';", },
-  { id: "NEWEST_CONTRACT_SPEC",
-    find: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/apex-storage-recovery-contract.spec.js';",
-    replace: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
   { id: "BASE_DECLARED_MUTANTS",
-    find: "const BASE_DECLARED_MUTANTS = 144;",
-    replace: "const BASE_DECLARED_MUTANTS = 145;", },
+    find: "const BASE_DECLARED_MUTANTS = 149;",
+    replace: "const BASE_DECLARED_MUTANTS = 150;", },
   { id: "RETIRED_SPEC_REL",
-    find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/apex-storage-recovery-contract.spec.js';",
+    find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-leg-quantity-audit.spec.js';",
     replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
   { id: "RETIRED_MUTANTS",
-    find: "const RETIRED_MUTANTS = 138;",
-    replace: "const RETIRED_MUTANTS = 139;", },
+    find: "const RETIRED_MUTANTS = 143;",
+    replace: "const RETIRED_MUTANTS = 144;", },
   { id: "BASE_SPECS",
     find: "const BASE_SPECS = 2;",
     replace: "const BASE_SPECS = 3;", },
@@ -145,6 +135,9 @@ module.exports = {
   { id: "RAW_CHARS",
     find: "const RAW_CHARS = 3335;",
     replace: "const RAW_CHARS = 3336;", },
+  { id: "MODULE_CHARS_PLUS_SEPARATOR",
+    find: "const MODULE_CHARS_PLUS_SEPARATOR = 3335;",
+    replace: "const MODULE_CHARS_PLUS_SEPARATOR = 3336;", },
   { id: "BODY_CHARS",
     find: "const BODY_CHARS = 3334;",
     replace: "const BODY_CHARS = 3335;", },
@@ -247,6 +240,9 @@ module.exports = {
   { id: "BY_CONSUMER_SPLIT",
     find: "const BY_CONSUMER_SPLIT = 2;",
     replace: "const BY_CONSUMER_SPLIT = 3;", },
+  { id: "HOST_GLOBAL_REFS",
+    find: "const HOST_GLOBAL_REFS = { Object: 1, isFinite: 2, Number: 1 };",
+    replace: "const HOST_GLOBAL_REFS = { Object: 1, isFinite: 3, Number: 1 };", },
   { id: "EVALUATION_TIME_READS",
     find: "const EVALUATION_TIME_READS = [];",
     replace: "const EVALUATION_TIME_READS = ['Object'];", },
@@ -301,6 +297,9 @@ module.exports = {
   { id: "BANNER_REGION_OWNERS",
     find: "const BANNER_REGION_OWNERS = 17;",
     replace: "const BANNER_REGION_OWNERS = 18;", },
+  { id: "EXTRA_BANNER_OWNERS",
+    find: "const EXTRA_BANNER_OWNERS = 12;",
+    replace: "const EXTRA_BANNER_OWNERS = 13;", },
   { id: "DEAD_RULE_EXTRA_UNITS",
     find: "const DEAD_RULE_EXTRA_UNITS = 4362;",
     replace: "const DEAD_RULE_EXTRA_UNITS = 4363;", },
@@ -319,6 +318,12 @@ module.exports = {
   { id: "DEAD_RULE_VERDICT",
     find: "const DEAD_RULE_VERDICT = 'is pinned here as dead rather than adopted';",
     replace: "const DEAD_RULE_VERDICT = 'is pinned here as dead rather than adopte';", },
+  { id: "VERDICT_CARRIERS",
+    find: "const VERDICT_CARRIERS = 3;",
+    replace: "const VERDICT_CARRIERS = 4;", },
+  { id: "DEAD_RULE_ORDINAL",
+    find: "const DEAD_RULE_ORDINAL = 3;",
+    replace: "const DEAD_RULE_ORDINAL = 4;", },
   { id: "DASH_BANNERS",
     find: "const DASH_BANNERS = 76;",
     replace: "const DASH_BANNERS = 77;", },
@@ -425,11 +430,11 @@ module.exports = {
     find: "const LOADER_REL = 'tests/lib/load-app-source.js';",
     replace: "const LOADER_REL = 'tests/lib/extraction-boundary.js';", },
   { id: "CHAIN_LENGTH",
-    find: "const CHAIN_LENGTH = 40;",
-    replace: "const CHAIN_LENGTH = 41;", },
-  { id: "SIZE_RANK_IF_CUT",
-    find: "const SIZE_RANK_IF_CUT = 2;",
-    replace: "const SIZE_RANK_IF_CUT = 3;", },
+    find: "const CHAIN_LENGTH = 41;",
+    replace: "const CHAIN_LENGTH = 42;", },
+  { id: "SIZE_RANK",
+    find: "const SIZE_RANK = 2;",
+    replace: "const SIZE_RANK = 3;", },
   { id: "SMALLEST_LAYER_CHARS",
     find: "const SMALLEST_LAYER_CHARS = 1761;",
     replace: "const SMALLEST_LAYER_CHARS = 1762;", },
@@ -443,8 +448,8 @@ module.exports = {
     find: "const PURE_ASCII_LAYERS = 2;",
     replace: "const PURE_ASCII_LAYERS = 3;", },
   { id: "LAYERS_OPENING_ON_BANNER",
-    find: "const LAYERS_OPENING_ON_BANNER = 22;",
-    replace: "const LAYERS_OPENING_ON_BANNER = 23;", },
+    find: "const LAYERS_OPENING_ON_BANNER = 23;",
+    replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
   { id: "LAYERS_PINNING_EDGE_HOSTS",
     find: "const LAYERS_PINNING_EDGE_HOSTS = 7;",
     replace: "const LAYERS_PINNING_EDGE_HOSTS = 8;", },
@@ -475,17 +480,9 @@ module.exports = {
     covers: ["ZERO_DIRECTIONS"],
     find: "  inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,\n  siblingModules: 0, staticMarkup: 0, generatedMarkup: 0, outboundGenerated: 0,\n};",
     replace: "  inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,\n  siblingModules: 1, staticMarkup: 0, generatedMarkup: 0, outboundGenerated: 0,\n};", },
-  { id: "EXTRA_BANNER_OWNERS",
-    find: "const EXTRA_BANNER_OWNERS = 12;",
-    replace: "const EXTRA_BANNER_OWNERS = 13;", },
-  { id: "HOST_GLOBAL_REFS",
-    find: "const HOST_GLOBAL_REFS = { Object: 1, isFinite: 2, Number: 1 };",
-    replace: "const HOST_GLOBAL_REFS = { Object: 1, isFinite: 3, Number: 1 };", },
-  { id: "VERDICT_CARRIERS",
-    find: "const VERDICT_CARRIERS = 3;",
-    replace: "const VERDICT_CARRIERS = 2;", },
-  { id: "DEAD_RULE_ORDINAL",
-    find: "const DEAD_RULE_ORDINAL = 3;",
-    replace: "const DEAD_RULE_ORDINAL = 4;", },
+  { id: "CHAIN",
+    covers: ["CHAIN"],
+    find: "  'js/services/apex-storage-recovery.js',\n  'js/portfolio/portfolio-leg-quantity.js',\n];",
+    replace: "  'js/services/apex-storage-recovery.js',\n  'js/portfolio/portfolio-technical-parity.js',\n];", },
   ],
 };

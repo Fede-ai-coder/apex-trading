@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_LEG_QUANTITY = require('./portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY = require('./apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE = require('./portfolio-spy-price-undo.js');
 const PORTFOLIO_TECHNICAL_PARITY = require('./portfolio-technical-parity-undo.js');
@@ -220,6 +221,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_LEG_QUANTITY_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-leg-quantity.js'),
+  'utf8'
+);
 const APEX_STORAGE_RECOVERY_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'apex-storage-recovery.js'),
   'utf8'
@@ -385,9 +390,12 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preApexStorageRecovery = APEX_STORAGE_RECOVERY.isApplied(html)
-    ? APEX_STORAGE_RECOVERY.undoApexStorageRecovery(html, APEX_STORAGE_RECOVERY_SOURCE)
+  const prePortfolioLegQuantity = PORTFOLIO_LEG_QUANTITY.isApplied(html)
+    ? PORTFOLIO_LEG_QUANTITY.undoPortfolioLegQuantity(html, PORTFOLIO_LEG_QUANTITY_SOURCE)
     : html;
+  const preApexStorageRecovery = APEX_STORAGE_RECOVERY.isApplied(prePortfolioLegQuantity)
+    ? APEX_STORAGE_RECOVERY.undoApexStorageRecovery(prePortfolioLegQuantity, APEX_STORAGE_RECOVERY_SOURCE)
+    : prePortfolioLegQuantity;
   const prePortfolioSpyPrice = PORTFOLIO_SPY_PRICE.isApplied(preApexStorageRecovery)
     ? PORTFOLIO_SPY_PRICE.undoPortfolioSpyPrice(preApexStorageRecovery, PORTFOLIO_SPY_PRICE_SOURCE)
     : preApexStorageRecovery;
