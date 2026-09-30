@@ -163,6 +163,7 @@ console.log('JOURNAL SNAPSHOT PREFETCH — PERMANENT BOUNDARY CONTRACT');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
@@ -187,10 +188,14 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(LIVE_INDEX)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(PRE_BACKEND_FULL_REFRESH_VALIDATION)
+  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
+      PRE_BACKEND_FULL_REFRESH_VALIDATION, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+  : PRE_BACKEND_FULL_REFRESH_VALIDATION;
 const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(PRE_PORTFOLIO_LEG_QUANTITY)
   ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
       PRE_PORTFOLIO_LEG_QUANTITY, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))

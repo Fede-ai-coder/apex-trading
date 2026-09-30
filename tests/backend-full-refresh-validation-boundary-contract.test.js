@@ -106,34 +106,44 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 
-const MODULE_REL_IF_CUT = 'js/portfolio/backend-full-refresh-validation.js';
+const UNDO = require('./lib/backend-full-refresh-validation-undo.js');
+
+// The module this layer shipped. The audit called it MODULE_REL while
+// the cut was still a recommendation; it is no longer hypothetical.
+const MODULE_REL = 'js/portfolio/backend-full-refresh-validation.js';
 
 // ── The base ─────────────────────────────────────────────────────────────────
-const BASE_SHA = 'f00e596';
+// The commit that carried the AUDIT — the pre-extraction state this contract
+// reconstructs. index.html is byte-identical at f00e596 and here, but only this
+// commit carries the audit that §10 asserts was replaced one-for-one.
+const BASE_SHA = 'c7efffc';
 const BASE_CHARS = 1460538;
 const BASE_UTF8 = 1489157;
 const BASE_LF = 25260;
 const BASE_SHA256 = '3bfa332025683970702a7a889f5f8d0ce35ec49f0ba4eca836d3c6adca3f965c';
 const LOCAL_SCRIPTS = 85;
-const BASE_TEST_FILE_COUNT = 169;
 const TEST_FILE_COUNT = 170;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-backend-full-refresh-validation-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-audit.spec.js';
+const CONTRACT_REL = 'tests/backend-full-refresh-validation-boundary-contract.test.js';
+const CONTRACT_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-contract.spec.js';
+const UNDO_REL = 'tests/lib/backend-full-refresh-validation-undo.js';
 const RATCHETED_CONTRACTS = 32;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
-const NEWEST_CONTRACT = 'tests/portfolio-leg-quantity-boundary-contract.test.js';
-const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/portfolio-leg-quantity-contract.spec.js';
-const BASE_DECLARED_MUTANTS = 153;
-// The spec this cycle retires — the outgoing contract's, which now goes in
-// Phase 1 — and what it carried. §10 asserts the arithmetic, not the total.
-const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-leg-quantity-contract.spec.js';
-const RETIRED_MUTANTS = 147;
+// The contract that was newest before this one shipped.
+const PREVIOUS_CONTRACT = 'tests/portfolio-leg-quantity-boundary-contract.test.js';
+const BASE_DECLARED_MUTANTS = 135;
+// THE SPEC THIS PHASE RETIRES is the AUDIT's, and only the audit's: the
+// outgoing contract's spec went in Phase 1, which is the rhythm. §10 asserts
+// the arithmetic, not the total it happens to reach.
+const RETIRED_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-audit.spec.js';
+const RETIRED_MUTANTS = 129;
 const BASE_SPECS = 2;
 const MUTANT_BUDGET = 250;
-// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this audit's spec
-// now, the next layer's contract spec after Phase 2. The predicate is every
+// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this contract's spec
+// now, the next cycle's audit spec after its Phase 1. The predicate is every
 // `.spec.js` but the coverage spec, NOT `-contract.spec.js`, which could not
 // see an audit spec at all.
 const LAYER_SPECS = 1;
@@ -277,8 +287,8 @@ const BETTER_SCORING = 0;
 const LARGER_AT_THE_SAME_SCORE = 1;
 
 // ── Where this layer would sit ───────────────────────────────────────────────
-const CHAIN_LENGTH = 41;
-const SIZE_RANK_IF_CUT = 2;
+const CHAIN_LENGTH = 42;
+const SIZE_RANK = 2;
 const SMALLEST_LAYER_CHARS = 1761;
 const LARGEST_LAYER_CHARS = 71811;
 const LAYERS_LARGER_THAN_THIS_CUT = 40;
@@ -333,12 +343,24 @@ function locallyBound(src) {
 function codeLines(src) { return src.split('\n').filter((l) => !isBlankOrComment(l)).length; }
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
-console.log('CANONICAL LEG QUANTITY — PERMANENT BOUNDARY CONTRACT');
+console.log('BACKEND FULL-REFRESH VALIDATION — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// MEASUREMENT ONLY: nothing is peeled and nothing has moved, so the shipped
-// document IS the one this audit measures.
-const INDEX = APP_LOADER.loadIndexHtml();
+// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
+// this layer's shipped document. When a later cycle cuts again, a peel goes here
+// and LIVE_INDEX stops being the head of the tree — the idiom every older
+// contract in this chain already carries.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
+const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+const LIVE_MONOLITH = LIVE_TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+
+// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
+// copy of it: the undo helper runs first, so every coordinate this file
+// inherited from the audit is now proved by the reconstruction that shipped
+// rather than by a document that no longer exists.
+const INDEX = UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, MODULE);
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
 const CODE = TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
@@ -532,11 +554,61 @@ async function main() {
 // CHAIN, read off the newest contract rather than written here: that file
 // carries the list ending at its own layer, and copying it would be a second
 // place to drift. Phase 2 gives this cycle its own literal.
-const CHAIN = fs.readFileSync(path.join(ROOT, NEWEST_CONTRACT), 'utf8')
-  .match(/^const CHAIN = \[([\s\S]*?)^\];/m)[1]
-  .split('\n').map((l) => l.trim()).filter((l) => l.startsWith("'"))
-  .map((l) => l.replace(/^'|',?$/g, ''));
+// CHAIN, chronological, oldest first — this cycle's own literal, as the audit
+// said Phase 2 would give it. Reading it off the previous newest contract was
+// right while this layer had not shipped; now this file IS the newest, so the
+// list ends at its own layer and the next cycle reads it from here.
+const CHAIN = [
+  'js/services/journal-core.js',
+  'js/services/mcx-regime-policy.js',
+  'js/ui/journal-ui.js',
+  'js/services/journal-remote-persistence.js',
+  'js/services/journal-backend-write-through.js',
+  'js/services/journal-migration.js',
+  'js/services/journal-manual-import.js',
+  'js/ui/journal-backup-restore.js',
+  'js/ui/mcx-macro-check.js',
+  'js/ui/mcx-charts.js',
+  'js/services/apex-post-auth-init.js',
+  'js/ui/tt-reconnect.js',
+  'js/ui/journal-close-legs.js',
+  'js/ui/journal-trade-forms.js',
+  'js/ui/journal-trade-detail.js',
+  'js/portfolio/portfolio-data-fetch.js',
+  'js/portfolio/backend-portfolios.js',
+  'js/portfolio/portfolio-expiry-manual.js',
+  'js/portfolio/portfolio-traffic-light.js',
+  'js/ui/backend-candle-store-chart.js',
+  'js/services/journal-rich-snapshot.js',
+  'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-prefetch.js',
+  'js/portfolio/portfolio-dxlink-greeks.js',
+  'js/config/strategy-templates.js',
+  'js/portfolio/portfolio-vega-monitor.js',
+  'js/services/scanner-ivr-throttle.js',
+  'js/services/scanner-earnings-throttle.js',
+  'js/ui/chart-interactions.js',
+  'js/services/journal-snapshot-helpers.js',
+  'js/services/swing-weekly-candles.js',
+  'js/services/swing-direction.js',
+  'js/portfolio/backend-positions-aggregate.js',
+  'js/portfolio/portfolio-technical-merge.js',
+  'js/portfolio/portfolio-technical-alignment-debug.js',
+  'js/services/journal-map-audit.js',
+  'js/services/dxlink-greeks-fetch.js',
+  'js/portfolio/portfolio-technical-parity.js',
+  'js/portfolio/portfolio-spy-price.js',
+  'js/services/apex-storage-recovery.js',
+  'js/portfolio/portfolio-leg-quantity.js',
+  'js/portfolio/backend-full-refresh-validation.js',
+];
 const CHAIN_SET = new Set(CHAIN);
+// THE SELF-INCLUSION GUARD. CHAIN now ends at THIS layer and this file is its
+// contract, so any census over CHAIN that reads contracts counts this cut as
+// evidence for a claim about the layers that preceded it. Every such census
+// runs over PRIOR_LAYERS and asserts this layer's own half separately — the
+// trap that fired five times in the previous cycle, in exactly these places.
+const PRIOR_LAYERS = CHAIN.slice(0, CHAIN.length - 1);
 const OWNER_KIND = new Map();
 for (const s of SIBLINGS) {
   for (const n of s.owners) if (!OWNER_KIND.has(n)) OWNER_KIND.set(n, CHAIN_SET.has(s.rel) ? 'chain' : 'foundation');
@@ -653,7 +725,7 @@ eq(assertSeam(CODE, RAW_AT_IN_CODE, BODY_END_IN_CODE), RAW_END_IN_CODE,
   eq(RAW_CHARS - FN_ONLY_UNITS, DOC_BLOCK_CHARS, '…exactly DOC_BLOCK_CHARS smaller');
 }
 // What the move would cost.
-eq(RAW_CHARS - NET_REDUCTION, ('<script src="./' + MODULE_REL_IF_CUT + '"></script>\n').length,
+eq(RAW_CHARS - NET_REDUCTION, ('<script src="./' + MODULE_REL + '"></script>\n').length,
   'index.html would fall by NET_REDUCTION units net: the span leaves and a tag arrives');
 eq(BASE_CHARS - NET_REDUCTION, INDEX_AFTER, '…leaving index.html at INDEX_AFTER');
 eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH, '…and the monolith at RESIDUAL_MONOLITH');
@@ -684,7 +756,7 @@ eq(REC.deps, MONOLITH_DEPENDENCIES,
 // NOT A FIRST, and the denominator is the layers that pin the constant.
 {
   const pinned = [];
-  for (const rel of CHAIN) {
+  for (const rel of PRIOR_LAYERS) {
     const base = path.basename(rel).replace(/\.js$/, '');
     const f = fs.readdirSync(path.join(ROOT, 'tests'))
       .filter((x) => x.endsWith('-boundary-contract.test.js'))
@@ -782,7 +854,7 @@ section('4. THE FINDING: a refusal that outlived its reason');
   // that killed it, which no other file declares.
   const ordinalPin = /^const DEAD_RULE_ORDINAL = (\d+);$/m;
   const declaring = (re) => fs.readdirSync(path.join(ROOT, 'tests'))
-    .filter((f) => f.endsWith('.test.js') && f !== path.basename(AUDIT_REL))
+    .filter((f) => f.endsWith('.test.js') && f !== path.basename(CONTRACT_REL))
     .filter((f) => re.test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8')));
   eq(declaring(ordinalPin).length, DEAD_RULE_ORDINAL_DECLARERS,
     'DEAD_RULE_ORDINAL_DECLARERS files declare the ordinal, so declaring it names none of them');
@@ -1099,22 +1171,37 @@ section('8. Reachability, and where this layer would sit');
     '…and the owner of this cut is NOT among them: it is live code');
 }
 {
-  ok(CHAIN.indexOf(MODULE_REL_IF_CUT) < 0, 'this module is not in the chain yet');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)), '…and its path does not exist yet');
+  // THE AUDIT ASSERTED THE OPPOSITE of the first two: while the cut was still a
+  // recommendation this module was absent from the chain and from disk. It
+  // ships now, so the claims are inverted rather than deleted — an assertion
+  // that stops being made is the way this programme loses coverage.
+  ok(CHAIN.indexOf(MODULE_REL) >= 0, 'this module is IN the chain now');
+  eq(CHAIN[CHAIN.length - 1], MODULE_REL, '…as its newest layer, at the end of the list');
+  ok(fs.existsSync(path.join(ROOT, MODULE_REL)), '…and its path exists');
   eq(CHAIN.length, CHAIN_LENGTH, 'the chain is CHAIN_LENGTH layers long');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const sizes = sources.map((s) => s.length).sort((a, b) => a - b);
   eq(sizes[0], SMALLEST_LAYER_CHARS, 'the smallest shipped layer is SMALLEST_LAYER_CHARS units');
   eq(sizes[sizes.length - 1], LARGEST_LAYER_CHARS, '…the largest LARGEST_LAYER_CHARS');
-  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK_IF_CUT,
-    'this cut would rank SIZE_RANK_IF_CUT by size — the SECOND SMALLEST layer, and the audit '
+  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK,
+    'this layer ranks SIZE_RANK by size — the SECOND SMALLEST layer, and the contract '
     + 'says so rather than selling a 2,936-unit cut as a substantial one');
   eq(sizes.filter((u) => u > BODY_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
     '…with LAYERS_LARGER_THAN_THIS_CUT layers larger than it');
-  eq(SIZE_RANK_IF_CUT + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH + 1,
-    '…the rank and that count partitioning the chain plus this cut, so neither drifts alone');
-  eq(sizes[1], DISPLACED_LAYER_CHARS,
-    '…and the layer it would displace into third place is DISPLACED_LAYER_CHARS units, the one '
+  // The chain now CONTAINS this layer, so the partition is over CHAIN_LENGTH
+  // itself. While the cut was a recommendation the chain excluded it and the
+  // sum was CHAIN_LENGTH + 1 — the `+ 1` moved out when the layer moved in,
+  // rather than being left to make the total drift by one forever.
+  eq(SIZE_RANK + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH,
+    '…the rank and that count partitioning the chain, so neither drifts alone');
+  // sizes NOW CONTAINS THIS LAYER, so slot 1 is this cut and the layer it
+  // displaced has moved to slot 2. The audit read slot 1 for the displaced
+  // layer because the chain excluded this one; both slots are asserted here so
+  // the displacement is measured rather than assumed to have happened.
+  eq(sizes[1], BODY_CHARS,
+    '…this layer occupies the second-smallest slot itself');
+  eq(sizes[2], DISPLACED_LAYER_CHARS,
+    '…and the layer it displaced into third place is DISPLACED_LAYER_CHARS units, the one '
     + 'the previous cycle shipped');
   ok(BODY_CHARS > SMALLEST_LAYER_CHARS && BODY_CHARS < DISPLACED_LAYER_CHARS,
     '…so it lands between them and displaces no superlative');
@@ -1129,7 +1216,7 @@ section('8. Reachability, and where this layer would sit');
 // exception, and this audit does not inherit its property by assumption.
 {
   const pinned = [];
-  for (const rel of CHAIN) {
+  for (const rel of PRIOR_LAYERS) {
     const base = path.basename(rel).replace(/\.js$/, '');
     const f = fs.readdirSync(path.join(ROOT, 'tests'))
       .filter((x) => x.endsWith('-boundary-contract.test.js'))
@@ -1147,19 +1234,121 @@ section('8. Reachability, and where this layer would sit');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('9. Production is byte-identical to the base');
+section('9. The relocation is the whole of the production change');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
+  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
+  // production paths, the document and the new module, and no third.
   const all = Array.from(new Set(changed.concat(status)));
-  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), [],
-    'NOT ONE production file differs from the base: this PR measures, it does not move');
+  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
+    ['index.html', MODULE_REL].sort(),
+    'exactly TWO production paths differ from the base: the document and the new module');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
-    '…and the base commit\'s index.html is the length measured above');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)),
-    '…with the module this audit recommends not yet written');
+    '…and the base commit\'s index.html is the length the reconstruction reproduces');
+  eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
+    '…byte for byte: the reconstruction IS that document, not a copy of its numbers');
+  ok(!git(['show', BASE_SHA + ':index.html']).includes(UNDO.TAG),
+    '…and the base carried no tag for this module');
+  ok(fs.existsSync(path.join(ROOT, MODULE_REL)),
+    '…while the module the audit recommended is now written');
+
+  // THE SHIPPED DOCUMENT is what the audit predicted, to the byte.
+  eq(LIVE_INDEX.length, UNDO.EXTRACTED_CHARS, 'the shipped index.html is the extracted length');
+  eq(Buffer.byteLength(LIVE_INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…its byte length');
+  eq((LIVE_INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…its line-feed count');
+  eq(sha256(LIVE_INDEX), UNDO.EXTRACTED_SHA256, '…and its digest');
+  eq(LIVE_INDEX.length, INDEX_AFTER,
+    '…which is INDEX_AFTER, the figure the audit forecast before anything moved');
+  eq(LIVE_LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS,
+    '…carrying one more local script than the base');
+  eq(count(LIVE_INDEX, UNDO.TAG), 1, 'exactly one tag for this module');
+  eq(count(LIVE_INDEX, UNDO.ANCHOR_TAG + UNDO.TAG + UNDO.INLINE_OPEN), 1,
+    '…immediately after the previous layer and immediately before the inline monolith');
+
+  // THE MODULE IS THE AUDITED BLOCK VERBATIM — asserted as bytes, not numbers.
+  eq(MODULE.length, UNDO.MODULE_CHARS, 'the shipped module is MODULE_CHARS units');
+  eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…its byte length');
+  eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…its line-feed count');
+  eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and its digest');
+  eq(MODULE, CODE.slice(RAW_AT_IN_CODE, BODY_END_IN_CODE),
+    'the module IS the audited block of the reconstructed monolith, byte for byte — not a '
+    + 'copy of its measurements');
+  eq(sha256(MODULE), BODY_SHA256,
+    '…and its digest is the BODY_SHA256 the audit pinned before the move');
+  eq(CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE), MODULE + UNDO.SEPARATOR,
+    '…with the raw fragment being the module plus the one structural separator');
+  ok(MODULE.endsWith('}\n') && !MODULE.endsWith('\n\n'),
+    '…and the module ends on a real line of code, not on the separator it gave up');
+}
+// THE UNDO'S SIX REACHABLE GUARDS, each driven by PLANTING the exact violation
+// it claims to catch. A guard that is never made to fire is a guard nobody has
+// checked, and its EXACT message is asserted so a mutant cannot pass by raising
+// some other error. BASE_IDENTITY is deliberately absent: the helper's header
+// states it is a redundant final gate, unreachable once the module digest and
+// the whole-document digest have both passed.
+{
+  const E = 'BACKEND_FULL_REFRESH_VALIDATION_UNDO_';
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(null, MODULE), E + 'BAD_INPUT',
+    'a non-string document is refused');
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, null), E + 'BAD_INPUT',
+    '…and a non-string module');
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, MODULE.slice(0, -1)),
+    E + 'MODULE_IDENTITY', 'a truncated module is refused');
+  // A MODULE THAT RE-ABSORBED THE SEPARATOR IS CAUGHT BY SIZE, not by the
+  // separator gate — it is 2,937 units, not 2,936 — which is exactly what the
+  // helper's own gate-1 comment claims. Asserting MODULE_SEPARATOR here would
+  // be wrong about the helper, as the previous cycle's first draft was.
+  eq((MODULE + '\n').length, RAW_CHARS,
+    'control — a module that re-absorbed the separator is one unit too long, the raw length');
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, MODULE + '\n'),
+    E + 'MODULE_IDENTITY', '…so SIZE refuses it, before the separator gate is reached');
+  {
+    // THE SEPARATOR GATE, reached on its own terms: a module of the RIGHT length
+    // and the RIGHT line-feed count that still ends on a blank line. Without
+    // this the gate would be unreachable and its message never proved.
+    const blankEnded = MODULE.slice(0, -2).replace('\n', ' ') + '\n\n';
+    eq(blankEnded.length, MODULE.length, 'control — the blank-ended module is the right length');
+    eq((blankEnded.match(/\n/g) || []).length, (MODULE.match(/\n/g) || []).length,
+      '…and has the same line-feed count, so only the separator gate can refuse it');
+    ok(blankEnded.endsWith('\n\n'), '…and it really does end on a blank line');
+    throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, blankEnded),
+      E + 'MODULE_SEPARATOR',
+      '…and the separator gate refuses it with its OWN error, so a caller learns which '
+      + 'mistake it made');
+  }
+  {
+    // Same length, same line-feed count, different bytes: only the digest can
+    // catch this one, which is why the digest is a separate gate.
+    const swapped = MODULE.replace('normalizedTickers', 'normalizedTickerX');
+    eq(swapped.length, MODULE.length, 'control — the tampered module is the same length');
+    ok(swapped !== MODULE, '…and really does differ from it');
+    throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX, swapped),
+      E + 'MODULE_IDENTITY', '…and a same-length tampered module is still refused');
+  }
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX.replace(UNDO.TAG, ''), MODULE),
+    E + 'TAG_IDENTITY', 'a document with no tag is refused');
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX + UNDO.TAG, MODULE),
+    E + 'TAG_IDENTITY', '…and one with a duplicate tag');
+  {
+    // The tag moved to the top of the document: present exactly once, but no
+    // longer adjacent to the anchor and the inline open.
+    const moved = UNDO.TAG + LIVE_INDEX.replace(UNDO.TAG, '');
+    eq(count(moved, UNDO.TAG), 1, 'control — the moved tag is still present exactly once');
+    throwsWith(() => UNDO.undoBackendFullRefreshValidation(moved, MODULE),
+      E + 'TAG_ADJACENCY', '…so it is ADJACENCY that refuses a reordered tag, not identity');
+  }
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(LIVE_INDEX.replace('<body', '<body '), MODULE),
+    E + 'EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
+  throwsWith(() => UNDO.undoBackendFullRefreshValidation(INDEX, MODULE),
+    E + 'TAG_IDENTITY',
+    'and the ALREADY-UNEXTRACTED document is refused too: undoing twice is not a no-op');
+  // isApplied is ROUTING, not safety — the helper's header says so.
+  eq(UNDO.isApplied(LIVE_INDEX), true, 'isApplied is true for the shipped document');
+  eq(UNDO.isApplied(INDEX), false, '…and false once this layer is peeled off');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1170,16 +1359,35 @@ section('10. The change set, the ratchet and the budget');
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status))).sort();
-  ok(all.indexOf(AUDIT_REL) >= 0, 'this audit is part of the change');
-  ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec');
-  ok(all.every((rel) => rel.startsWith('tests/')), '…and every changed path is a test artifact');
-  // THE RATCHET.
+  ok(all.indexOf(CONTRACT_REL) >= 0, 'this permanent contract is part of the change');
+  // CONTRACT_REL NAMES THIS FILE. A mutant pointing it at a neighbouring
+  // contract would otherwise survive, because every other use is satisfied by
+  // that file too.
+  eq(fs.readFileSync(path.join(ROOT, CONTRACT_REL), 'utf8'), fs.readFileSync(__filename, 'utf8'),
+    '…and CONTRACT_REL is the path of THIS file, byte for byte');
+  ok(all.indexOf(UNDO_REL) >= 0, '…and the byte-exact undo helper');
+  ok(all.indexOf(AUDIT_REL) >= 0, '…and the temporary audit\'s removal is visible in it');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)),
+    '…because the audit is GONE: replaced one-for-one, not left beside its replacement');
+  ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
+  ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL),
+    '…and every other changed path is a test artifact');
+  // THE RATCHET. The audit was RENAMED into this contract, so the suite file
+  // count does NOT move this phase. That is asserted as the two commit facts,
+  // never as a difference against the live TEST_FILE_COUNT: the live count
+  // ratchets whenever a later cycle lands an audit, and pinning a difference
+  // against it is what made the previous cycle's Phase 1 fail on a contract it
+  // had not touched.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
-    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files with this audit in it');
-  eq(TEST_FILE_COUNT - BASE_TEST_FILE_COUNT, 1, '…exactly one more than the base');
+    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files with this contract in it');
+  ok(git(['show', BASE_SHA + ':' + AUDIT_REL]).length > 0,
+    '…and the base carried the AUDIT at that count');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)) && fs.existsSync(path.join(ROOT, CONTRACT_REL)),
+    '…while today it is the CONTRACT: one file replaced, not one added');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
-    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, BASE_TEST_FILE_COUNT,
-  '…and BASE_TEST_FILE_COUNT is what the base commit carried, read out of git');
+    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
+  '…the base commit carrying the SAME count, read out of git, because the rename moves none');
   const RATCHETED = /^const TEST_FILE_COUNT = \d+;$/m;
   const contracts = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => f.endsWith('.test.js') &&
@@ -1187,21 +1395,21 @@ section('10. The change set, the ratchet and the budget');
   eq(contracts.length, RATCHETED_CONTRACTS, 'RATCHETED_CONTRACTS files pin the suite file count');
   ok(contracts.every((f) => new RegExp('^const TEST_FILE_COUNT = ' + TEST_FILE_COUNT + ';$', 'm')
     .test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
-  '…and every one of them now pins the ratcheted value, this audit included');
-  ok(contracts.indexOf(path.basename(AUDIT_REL)) >= 0,
-    '…this audit being one of them, so it ratchets itself rather than exempting itself');
+  '…and every one of them now pins the ratcheted value, this contract included');
+  ok(contracts.indexOf(path.basename(CONTRACT_REL)) >= 0,
+    '…this contract being one of them, so it ratchets itself rather than exempting itself');
   // THE BUDGET.
-  const auditSpec = require(path.join(ROOT, AUDIT_SPEC_REL));
-  eq(auditSpec.target, AUDIT_REL, 'the audit spec targets this audit');
+  const contractSpec = require(path.join(ROOT, CONTRACT_SPEC_REL));
+  eq(contractSpec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
   const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
   const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
   const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
   eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
     .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
   'the base declared BASE_DECLARED_MUTANTS mutants');
-  eq(declaredNow, BASE_DECLARED_MUTANTS + auditSpec.mutants.length - RETIRED_MUTANTS,
-    '…and the live total is the base, LESS the spec this cycle retires, PLUS this audit\'s own '
-    + '— the arithmetic of the change rather than the total it happens to reach');
+  eq(declaredNow, BASE_DECLARED_MUTANTS + contractSpec.mutants.length - RETIRED_MUTANTS,
+    '…and the live total is the base, LESS the audit spec this phase retires, PLUS this '
+    + 'contract\'s own — the arithmetic of the change rather than the total it reaches');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/mutation-specs/'])
     .split('\n').filter(Boolean).length, BASE_SPECS,
   '…the base having carried BASE_SPECS specs, read out of git');
@@ -1211,25 +1419,33 @@ section('10. The change set, the ratchet and the budget');
   ok(declaredNow < budgetNow, '…and the declared total is under it');
   // ABSENCE ALONE IS NOT A PIN.
   ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC_REL)),
-    'the outgoing layer\'s spec is retired, in Phase 1 as the rhythm runs');
+    'the AUDIT\'s spec is retired, in Phase 2 as the rhythm runs');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + RETIRED_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely one that never existed');
-  ok(fs.existsSync(path.join(ROOT, NEWEST_CONTRACT)),
-    '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
-  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + NEWEST_CONTRACT + "'") >= 0,
-    '…and it is the contract that retired spec TARGETED, not merely a contract that exists');
-  eq(RETIRED_SPEC_REL, NEWEST_CONTRACT_SPEC,
-    'the retired path IS the newest layer\'s spec: the retirement is in chain order');
-  eq(git(['cat-file', '-e', BASE_SHA + ':' + NEWEST_CONTRACT_SPEC]), '',
-    '…a path the base commit really carried');
+  eq(RETIRED_SPEC_REL, AUDIT_SPEC_REL,
+    'the retired path IS the audit\'s spec — Phase 2 retires that one and no other, because '
+    + 'the outgoing contract\'s spec already went in Phase 1');
+  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + AUDIT_REL + "'") >= 0,
+    '…and it is the audit that retired spec TARGETED, not merely a file that existed');
+  // PREVIOUS_CONTRACT MUST BE THE CONTRACT OF THE LAYER THIS ONE DISPLACED, not
+  // merely a file that exists. Its only use was an existence check, which every
+  // shipped contract satisfies, so a mutant pointing it at a neighbouring
+  // contract survived the first pass. It is now derived from the chain.
+  eq(PREVIOUS_CONTRACT,
+    'tests/' + path.basename(CHAIN[CHAIN.length - 2], '.js') + '-boundary-contract.test.js',
+    'PREVIOUS_CONTRACT is the contract of the layer immediately before this one in the chain');
+  ok(fs.existsSync(path.join(ROOT, PREVIOUS_CONTRACT)),
+    '…while the contract that was newest before this one still ships and still runs');
+  ok(!fs.existsSync(path.join(ROOT, 'tests/mutation-specs/portfolio-leg-quantity-contract.spec.js')),
+    '…with its own spec still retired from the phase before, not quietly restored');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
-  eq(layerSpecs, [path.basename(AUDIT_SPEC_REL)], '…and during Phase 1 it is THIS audit\'s');
+  eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)], '…and after Phase 2 it is THIS contract\'s');
 }
 
 console.log('\n' + pass + ' assertions passed.');
-console.log('BACKEND_FULL_REFRESH_VALIDATION_AUDIT_OK');
+console.log('BACKEND_FULL_REFRESH_VALIDATION_CONTRACT_OK');
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

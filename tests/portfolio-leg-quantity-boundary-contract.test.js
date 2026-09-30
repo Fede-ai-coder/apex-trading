@@ -141,12 +141,17 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const UNDO = require('./lib/portfolio-leg-quantity-undo.js');
 
 const MODULE_REL = 'js/portfolio/portfolio-leg-quantity.js';
 
 // ── The base ─────────────────────────────────────────────────────────────────
 const BASE_SHA = '4168e32';
+// The commit that SHIPPED this layer. §10 measures this layer's production
+// change between two fixed commits rather than against the working tree,
+// because a live diff answers correctly only until the next layer lands.
+const SHIPPED_SHA = 'f00e596';
 const BASE_CHARS = 1463808;
 const BASE_UTF8 = 1492447;
 const BASE_LF = 25328;
@@ -459,13 +464,16 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('CANONICAL LEG QUANTITY — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// MEASUREMENT ONLY: nothing is peeled and nothing has moved, so the shipped
-// document IS the one this audit measures.
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// THIS IS NO LONGER THE NEWEST LAYER. backend-full-refresh-validation was cut
+// after it, so the shipped document is one layer further along and a peel goes
+// here — the idiom every older contract in this chain already carries, and the
+// one the previous wording said would arrive. LIVE_INDEX is this layer's own
+// shipped document: the head of the tree with the newer layer taken back off.
+const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(SHIPPED_INDEX)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+  : SHIPPED_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1525,13 +1533,16 @@ section('9. Reachability, and where this layer would sit');
 section('10. The relocation is the whole of the production change, and the undo refuses');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
-  const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
-    .split('\n').filter(Boolean).map((l) => l.slice(3));
-  const all = Array.from(new Set(changed.concat(status)));
-  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
+  // THIS LAYER's production change is a fact about the commit that shipped it,
+  // not about the working tree. The earlier form unioned a live `git diff` with
+  // `git status`, which answered TWO only until the next layer added its own
+  // module — a live value pinned against a historical one, which expires by
+  // construction. Measured between the two fixed commits it stays true.
+  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA, SHIPPED_SHA])
+    .split('\n').filter(Boolean);
+  eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
     ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    'exactly TWO production paths differ between the base and the commit that shipped this layer');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
@@ -1621,10 +1632,13 @@ section('10. The relocation is the whole of the production change, and the undo 
 section('11. The change set, the ratchet and the budget');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
-  const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
-    .split('\n').filter(Boolean).map((l) => l.slice(3));
-  const all = Array.from(new Set(changed.concat(status))).sort();
+  // THE CHANGE SET THIS LAYER SHIPPED, read between the two fixed commits. The
+  // earlier form unioned a live `git diff` with `git status`, so it described
+  // the working tree rather than this layer — and stopped being this layer's
+  // change the moment the next cycle touched a file. Between BASE_SHA and
+  // SHIPPED_SHA it is a historical fact and stays true.
+  const all = git(['diff', '--name-only', '--no-renames', BASE_SHA, SHIPPED_SHA])
+    .split('\n').filter(Boolean).sort();
   ok(all.indexOf(CONTRACT_REL) >= 0, 'this permanent contract is part of the change');
   ok(all.indexOf(UNDO_REL) >= 0, '…and the byte-exact undo helper');
   ok(all.indexOf(AUDIT_REL) >= 0, '…and the temporary audit\'s removal is visible in it');
