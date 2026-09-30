@@ -100,6 +100,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
@@ -165,8 +166,8 @@ const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 1;
 const LAYERS_WITH_A_DEPENDENCY = 14;
-const CONTRACTS_PINNING_NINE = 11;
-const PINNED_NINE_SCORES = [1, 2, 2, 2, 5, 5, 6, 6, 7, 8, 10];
+const CONTRACTS_PINNING_NINE = 12;
+const PINNED_NINE_SCORES = [1, 1, 2, 2, 2, 5, 5, 6, 6, 7, 8, 10];
 
 // ── The banner region that hid it, and the screen that did not ───────────────
 const HOST_REGION = [921786, 1017315];
@@ -243,6 +244,7 @@ const LAYERS_WITH_RAW_PAIR = 22;
 const LAYERS_WITHOUT_SEPARATOR = 8;
 const LAYERS_OPENING_ON_A_BANNER = 21;
 const PURE_ASCII_LAYERS = 1;
+const LAYERS_AT_LOWEST_NINE = 2;
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
 function eq(a, b, m) { assert.deepStrictEqual(a, b, m); pass++; }
@@ -288,10 +290,14 @@ console.log('BACKEND POSITIONS AGGREGATE — PERMANENT BOUNDARY CONTRACT');
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // Two layers were cut AFTER this one, so both are newer: peel them NEWEST-FIRST
 // and everything below measures this layer's own document.
-const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(LIVE_INDEX)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(PRE_BACKEND_FULL_REFRESH_VALIDATION)
+  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
+      PRE_BACKEND_FULL_REFRESH_VALIDATION, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+  : PRE_BACKEND_FULL_REFRESH_VALIDATION;
 const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(PRE_PORTFOLIO_LEG_QUANTITY)
   ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
       PRE_PORTFOLIO_LEG_QUANTITY, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
@@ -651,8 +657,17 @@ eq(REC.nine, FULL_NINE, 'nine directions, total score 1 — one inbound edge and
   eq(pinned, PINNED_NINE_SCORES,
     '…and PINNED_NINE_SCORES is the whole sorted multiset of them, so a new layer joining the\n'
     + '     set fails here rather than passing unnoticed');
-  ok(FULL_NINE < pinned[1],
-    '…so all that can be said is that 1 is the lowest of the layers that pin one at all. '
+  // THE STRICT INEQUALITY HAS GONE. It said this layer's score was below every
+  // other pinning layer's — a UNIQUENESS claim, and it held only until a layer
+  // tied it. The backend full-refresh validator scores the same, so the claim
+  // is now what can actually be measured: this layer sits AT the minimum, and
+  // how many layers share that minimum is a counted constant rather than an
+  // inequality that silently becomes false the cycle something ties it.
+  eq(FULL_NINE, pinned[0],
+    '…so all that can be said is that this layer sits at the LOWEST score among the layers '
+    + 'that pin one at all');
+  eq(pinned.filter((v) => v === FULL_NINE).length, LAYERS_AT_LOWEST_NINE,
+    '…with LAYERS_AT_LOWEST_NINE of them at that score, so "lowest" is not read as "only". '
     + 'The metric is younger than the chain, and HOW MUCH younger is CHAIN_LENGTH in the newest '
     + 'contract rather than a numeral here, which is how the last one went stale');
 }
@@ -922,7 +937,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -950,7 +965,7 @@ section('8. Reachability, the chain, and exact production scope');
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
     rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');

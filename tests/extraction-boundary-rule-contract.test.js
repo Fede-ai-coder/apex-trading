@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const BACKEND_FULL_REFRESH_VALIDATION = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE = require('./lib/portfolio-spy-price-undo.js');
@@ -197,6 +198,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = BACKEND_FULL_REFRESH_VALIDATION.undoBackendFullRefreshValidation(
+    doc, read('js/portfolio/backend-full-refresh-validation.js'));
   doc = PORTFOLIO_LEG_QUANTITY.undoPortfolioLegQuantity(doc, read('js/portfolio/portfolio-leg-quantity.js'));
   doc = APEX_STORAGE_RECOVERY.undoApexStorageRecovery(doc, read('js/services/apex-storage-recovery.js'));
   doc = PORTFOLIO_SPY_PRICE.undoPortfolioSpyPrice(doc, read('js/portfolio/portfolio-spy-price.js'));

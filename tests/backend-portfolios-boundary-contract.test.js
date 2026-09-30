@@ -186,6 +186,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
 const PORTFOLIO_SPY_PRICE_U = require('./lib/portfolio-spy-price-undo.js');
@@ -209,10 +210,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(LIVE_INDEX)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(PRE_BACKEND_FULL_REFRESH_VALIDATION)
+  ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
+      PRE_BACKEND_FULL_REFRESH_VALIDATION, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
+  : PRE_BACKEND_FULL_REFRESH_VALIDATION;
 const PRE_APEX_STORAGE_RECOVERY = APEX_STORAGE_RECOVERY_U.isApplied(PRE_PORTFOLIO_LEG_QUANTITY)
   ? APEX_STORAGE_RECOVERY_U.undoApexStorageRecovery(
       PRE_PORTFOLIO_LEG_QUANTITY, fs.readFileSync(path.join(ROOT, 'js/services/apex-storage-recovery.js'), 'utf8'))
@@ -679,7 +684,8 @@ section('10. Production footprint');
   const tracked = git(['ls-files', 'js/']).trim().split('\n').filter(Boolean);
   ok(tracked.includes(MODULE_REL), 'the module is tracked');
   eq(tracked.filter((f) => f.startsWith('js/portfolio/')).sort(),
-    ['js/portfolio/backend-portfolios.js',
+    ['js/portfolio/backend-full-refresh-validation.js',
+    'js/portfolio/backend-portfolios.js',
     'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-backend-candles.js',
      'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js',
      'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-spy-price.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js'],
