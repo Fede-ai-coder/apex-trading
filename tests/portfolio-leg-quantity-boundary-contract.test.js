@@ -158,7 +158,7 @@ const BASE_LF = 25328;
 const BASE_SHA256 = 'f838cb8fce06df6395aa8ea73075d8e0b37818c5852824763fa6e01c580c0250';
 const LOCAL_SCRIPTS = 84;
 const BASE_TEST_FILE_COUNT = 169;
-const TEST_FILE_COUNT = 170;
+const TEST_FILE_COUNT = 171;
 
 // ── The files of this change ─────────────────────────────────────────────────
 // THE AUDIT THIS FILE IS, RENAMED — and the contract it became. git records the
@@ -174,7 +174,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-leg-quantity-contract.
 // instead of `require`-ing a path that no longer exists.
 const SPEC_RETIRED_FROM = 'f00e596';
 const CONTRACT_SPEC_MUTANTS = 147;
-const RATCHETED_CONTRACTS = 32;
+const RATCHETED_CONTRACTS = 33;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 const NEWEST_CONTRACT = 'tests/apex-storage-recovery-boundary-contract.test.js';
 const BASE_DECLARED_MUTANTS = 149;
