@@ -1,19 +1,29 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// BACKEND FULL-REFRESH VALIDATION — TEMPORARY BOUNDARY AUDIT.
+// BACKEND FULL-REFRESH VALIDATION — PERMANENT BOUNDARY CONTRACT.
 //
-// MEASUREMENT ONLY. Nothing moves in this PR: index.html and every shipped
-// module are byte-identical to f00e596, and §9 asserts that against git rather
-// than trusting the diff. Phase 2 deletes this file and ships the cut it
-// recommends.
-//
-// THE RECOMMENDATION: [910727,913664) in monolith coordinates, 2,937 units raw
-// and 2,936 of body, ONE owner, to js/portfolio/backend-full-refresh-validation.js.
+// THE CUT IS MADE. [910727,913664) in monolith coordinates — 2,937 units raw
+// and 2,936 of body, ONE owner — now live in
+// js/portfolio/backend-full-refresh-validation.js.
 // `_validateBackendFullRefreshPayload` (2,709) checks a backend full-refresh
 // payload before any legacy step is skipped and returns
 // `{ valid, warnings[] }` — a pure function over its two arguments, with no
 // side effects and no globals of any kind.
+//
+// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE: the undo helper runs
+// first and rebuilds the pre-extraction index.html byte for byte, which is what
+// keeps the coordinates inherited from audit #475 proved rather than remembered.
+//
+// ── A NOTE ON THESE FIRST LINES, repaired one cycle late ───────────────────
+//
+// THEY WERE WRONG FOR A CYCLE. The Phase 2 conversion carried the audit's
+// header over unchanged, so this file opened by calling itself a TEMPORARY
+// BOUNDARY AUDIT, saying MEASUREMENT ONLY — NOTHING MOVES IN THIS PR, and
+// promising that Phase 2 would delete it. All three were false the moment the
+// cut shipped. The contract one layer forward asserts that no such phrase
+// survives ABOVE this note — the quotes in this paragraph are the record of
+// the repair, not a description of the file — so it is checked, not re-read.
 //
 // ── THE FINDING: A REFUSAL THAT OUTLIVED ITS REASON ────────────────────────
 //
@@ -107,6 +117,9 @@ const {
 } = require('./lib/extraction-boundary.js');
 
 const UNDO = require('./lib/backend-full-refresh-validation-undo.js');
+// The layer cut AFTER this one, peeled off before this layer's own document is
+// reconstructed. Newest-first, which is the rule the whole chain follows.
+const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL while
 // the cut was still a recommendation; it is no longer hypothetical.
@@ -356,11 +369,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('BACKEND FULL-REFRESH VALIDATION — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1250,13 +1269,17 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer
+  // moved exactly the audited bytes and nothing else, so the claim is inverted
+  // rather than dropped. It now reads against a base that LATER layers have
+  // also moved past, so the footprint is the document, this layer's module, and
+  // the module of every layer cut after it — the idiom every older contract in
+  // this chain already carries, adopted here the cycle it first applied.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-snapshot-fallback.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
@@ -1381,8 +1404,9 @@ section('10. The change set, the ratchet and the budget');
     '…because the audit is GONE: replaced one-for-one, not left beside its replacement');
   ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
-  ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL),
-    '…and every other changed path is a test artifact');
+  ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html'
+    || rel === MODULE_REL || rel === 'js/portfolio/portfolio-snapshot-fallback.js'),
+  '…and every other changed path is a test artifact or a later layer\'s module');
   // THE RATCHET. The audit was RENAMED into this contract, so the suite file
   // count does NOT move this phase. That is asserted as the two commit facts,
   // never as a difference against the live TEST_FILE_COUNT: the live count

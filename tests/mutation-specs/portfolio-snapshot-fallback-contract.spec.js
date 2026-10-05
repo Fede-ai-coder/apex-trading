@@ -1,17 +1,19 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary portfolio snapshot fallback audit.
+// Mutation spec — the PERMANENT portfolio snapshot fallback contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// TWO PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE and ZERO_DIRECTIONS are
-// multi-line declarations, so the generator's single-line pattern never matches
-// them. That is the completeness gap the coverage contract exists to find, and
-// it found both the previous two cycles — DOC_FIRST_LINE in #475 and CHAIN in
-// #476 — so they are written in by hand here from the start.
+// THREE PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, ZERO_DIRECTIONS and CHAIN
+// are multi-line declarations, so the generator's single-line pattern never
+// matches them. That is the completeness gap the coverage contract exists to
+// find, and it found DOC_FIRST_LINE in #475 and CHAIN in #476, so they are
+// written in by hand. CHAIN joins the list in THIS phase: while this file was
+// an audit it READ the chain off the newest contract and declared nothing to
+// mutate, and Phase 2 gives it a 43-entry literal of its own.
 //
 // ZEROES MOVE UPWARD, because zero is also what a predicate measuring nothing
 // returns: CHAIN_OUTBOUND, TOP_LEVEL_STATEMENT_LINES and BETTER_SCORING all go
@@ -19,16 +21,16 @@
 // that gain an entry instead.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-portfolio-snapshot-fallback-boundary-audit.test.js',
-  runs: ['tests/temporary-portfolio-snapshot-fallback-boundary-audit.test.js'],
+  target: 'tests/portfolio-snapshot-fallback-boundary-contract.test.js',
+  runs: ['tests/portfolio-snapshot-fallback-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-snapshot-fallback.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-snapshot-fallback.jX';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/portfolio/portfolio-snapshot-fallback.js';",
+      replace: "const MODULE_REL = 'js/portfolio/portfolio-snapshot-fallback.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '08a8b04';",
-      replace: "const BASE_SHA = '08a8b0X';", },
+      find: "const BASE_SHA = 'e6e65ec';",
+      replace: "const BASE_SHA = 'e6e65eX';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1457675;",
       replace: "const BASE_CHARS = 1457676;", },
@@ -59,21 +61,27 @@ module.exports = {
     { id: "COVERAGE_CONTRACT",
       find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
       replace: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.jX';", },
-    { id: "NEWEST_CONTRACT",
-      find: "const NEWEST_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.js';",
-      replace: "const NEWEST_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.jX';", },
-    { id: "NEWEST_CONTRACT_SPEC",
-      find: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/backend-full-refresh-validation-contract.spec.js';",
-      replace: "const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/backend-full-refresh-validation-contract.spec.jX';", },
+    { id: "PREVIOUS_CONTRACT",
+      find: "const PREVIOUS_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.js';",
+      replace: "const PREVIOUS_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.jX';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/portfolio-snapshot-fallback-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/portfolio-snapshot-fallback-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-snapshot-fallback-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-snapshot-fallback-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/portfolio-snapshot-fallback-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/portfolio-snapshot-fallback-undo.jX';", },
     { id: "BASE_DECLARED_MUTANTS",
-      find: "const BASE_DECLARED_MUTANTS = 137;",
-      replace: "const BASE_DECLARED_MUTANTS = 138;", },
+      find: "const BASE_DECLARED_MUTANTS = 110;",
+      replace: "const BASE_DECLARED_MUTANTS = 111;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-contract.spec.js';",
-      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-contract.spec.jX';", },
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-snapshot-fallback-audit.spec.js';",
+      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-snapshot-fallback-audit.spec.jX';", },
     { id: "RETIRED_MUTANTS",
-      find: "const RETIRED_MUTANTS = 131;",
-      replace: "const RETIRED_MUTANTS = 132;", },
+      find: "const RETIRED_MUTANTS = 104;",
+      replace: "const RETIRED_MUTANTS = 105;", },
     { id: "BASE_SPECS",
       find: "const BASE_SPECS = 2;",
       replace: "const BASE_SPECS = 3;", },
@@ -297,8 +305,8 @@ module.exports = {
       find: "const RUNNER_UP_NINE = 4;",
       replace: "const RUNNER_UP_NINE = 5;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 42;",
-      replace: "const CHAIN_LENGTH = 43;", },
+      find: "const CHAIN_LENGTH = 43;",
+      replace: "const CHAIN_LENGTH = 44;", },
     { id: "SMALLEST_LAYER_CHARS",
       find: "const SMALLEST_LAYER_CHARS = 1761;",
       replace: "const SMALLEST_LAYER_CHARS = 1762;", },
@@ -311,15 +319,18 @@ module.exports = {
     { id: "LARGEST_LAYER_CHARS",
       find: "const LARGEST_LAYER_CHARS = 71811;",
       replace: "const LARGEST_LAYER_CHARS = 71812;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 3;",
-      replace: "const SIZE_RANK_IF_CUT = 4;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 3;",
+      replace: "const SIZE_RANK = 4;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 40;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 41;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-snapshot-fallback.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-snapshot-fallback.js\"></script>\\X';", },
+    { id: "PURE_ASCII_LAYERS",
+      find: "const PURE_ASCII_LAYERS = 2;",
+      replace: "const PURE_ASCII_LAYERS = 3;", },
+    { id: "LAYERS_OPENING_ON_BANNER",
+      find: "const LAYERS_OPENING_ON_BANNER = 23;",
+      replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 2998;",
       replace: "const NET_REDUCTION = 2999;", },
@@ -336,6 +347,14 @@ module.exports = {
       replace: "  '// Boolean squeeze from an entry snapshot (1D preferred, then 4H) → thX';", },
     // ZERO_DIRECTIONS is a multi-line object literal; flipping ONE of its seven
     // zeroes is what a weakened `all seven are zero` claim looks like.
+    // CHAIN is a 43-entry multi-line literal, so the generator's single-line
+    // pattern cannot see it — the gap the coverage contract found in #476,
+    // where the chain shipped with no mutant at all. Dropping the LAST entry is
+    // what a weakened "the chain ends at this layer" claim looks like.
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/portfolio/portfolio-snapshot-fallback.js',\n];",
+      replace: "];", },
     { id: "ZERO_DIRECTIONS",
       covers: ["ZERO_DIRECTIONS"],
       find: "  inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,",
