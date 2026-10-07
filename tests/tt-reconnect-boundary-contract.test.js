@@ -50,6 +50,7 @@ const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-g
 const U = require('./lib/tt-reconnect-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const MODULE_REL = 'js/ui/tt-reconnect.js';
 const MODULE_SRC = './' + MODULE_REL;
 const CONTRACT_REL = 'tests/tt-reconnect-boundary-contract.test.js';
@@ -806,8 +807,7 @@ eq(countLiteral(MODULE.replace(RECONNECT_CALL, ''), RECONNECT_CALL), 0,
 // ─────────────────────────────────────────────────────────────────────────────
 section('11. Exact production scope');
 // ─────────────────────────────────────────────────────────────────────────────
-const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'])
-  .trim().split(/\r?\n/).filter(Boolean);
+const committed = extractionChangedPaths(ROOT, BASE_SHA);
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
