@@ -4706,7 +4706,7 @@
     "version": "2.1.0",
     "manifestVersion": "2.1.0",
     "manifestIdentitySha256": "5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb",
-    "manifestFileContentSha256": "ceaebd13644e61b383e268a47785df453426919232b9e7a5a77f170fbe694ade",
+    "manifestFileContentSha256": "70f034e14c08450b3309af36eb7c1be2a42beae4ebbbf84d76270d6668355f0f",
     "fixtureCount": 50,
     "producerAudit": {
       "question": "Which residual/partial-close fields does any producer actually write?",
