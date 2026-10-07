@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const UNDO = require('./lib/portfolio-leg-quantity-undo.js');
 
@@ -464,16 +465,21 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('CANONICAL LEG QUANTITY — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS NO LONGER THE NEWEST LAYER. backend-full-refresh-validation was cut
-// after it, so the shipped document is one layer further along and a peel goes
-// here — the idiom every older contract in this chain already carries, and the
-// one the previous wording said would arrive. LIVE_INDEX is this layer's own
-// shipped document: the head of the tree with the newer layer taken back off.
+// THIS IS NO LONGER THE NEWEST LAYER. TWO layers were cut after it now —
+// backend-full-refresh-validation and then portfolio-snapshot-fallback — so the
+// shipped document is two layers further along and both peel here, NEWEST
+// FIRST. LIVE_INDEX is this layer's own shipped document: the head of the tree
+// with every newer layer taken back off. The chain grows by a line here each
+// cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(SHIPPED_INDEX)
-  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(SHIPPED_INDEX)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
   : SHIPPED_INDEX;
+const LIVE_INDEX = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+  : PRE_PORTFOLIO_SNAPSHOT_FALLBACK;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));

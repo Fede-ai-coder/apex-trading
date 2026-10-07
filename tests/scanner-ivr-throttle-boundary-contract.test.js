@@ -58,6 +58,7 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const APP_LOADER = require('./lib/load-app-source.js');
 const {
   maskLiterals, stripComments, scanTopLevelDeclarations, functionBodyRanges,
@@ -251,6 +252,7 @@ console.log('relocation only · audited #444 · base=' + BASE_SHA);
 // this layer's own extracted document, not the live one, and §8 keeps the two
 // apart: the production footprint is measured against the LIVE tree.
 const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
 const APEX_STORAGE_RECOVERY_U = require('./lib/apex-storage-recovery-undo.js');
@@ -271,10 +273,14 @@ const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(LIVE_INDEX)
-  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+  : PRE_PORTFOLIO_SNAPSHOT_FALLBACK;
 const PRE_PORTFOLIO_LEG_QUANTITY = PORTFOLIO_LEG_QUANTITY_U.isApplied(PRE_BACKEND_FULL_REFRESH_VALIDATION)
   ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
       PRE_BACKEND_FULL_REFRESH_VALIDATION, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
@@ -705,7 +711,7 @@ section('7. Every documented failure, with its exact message');
 section('8. Exact production scope, and the temporary audit is gone');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const committed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
@@ -714,7 +720,7 @@ section('8. Exact production scope, and the temporary audit is gone');
   // is the point: this assertion is re-terminated each time the chain grows,
   // rather than being loosened to a prefix match that would stop noticing.
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/services/scanner-earnings-throttle.js',
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/services/scanner-earnings-throttle.js',
       'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', 'js/services/swing-weekly-candles.js', 'js/services/swing-direction.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
@@ -751,7 +757,7 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');

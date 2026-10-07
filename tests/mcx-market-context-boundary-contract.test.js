@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 // The merge commit of PR #385. A commit, never a branch tip: a branch tip is a
 // moving target and every offset, hash and slice below addresses this document.
 const BASE_SHA = '34bc48ae33bf3b0044572457615f7e6efda547c0';
@@ -864,23 +865,7 @@ async function main() {
   eq(killed, total, 'all ' + total + ' genuine mutants killed by their intended guard');
 
   section('12. production scope');
-  const committedChanged = execFileSync('git', ['diff', '--name-only', BASE_SHA, 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
-  const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], { cwd: ROOT, encoding: 'utf8' })
-    .split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
-  const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort();
-  const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
-  // The diff is measured from THIS extraction's base, so it now also spans the
-  // MCX VIX owner extracted on top by PR #389. The list stays EXACT and named —
-  // an unplanned production file still fails here.
-  const VIX_MODULE_REL = 'js/services/mcx-vix-market-context.js';
-  const BACKEND_CANDLES_REL = 'js/services/mcx-backend-candles.js';
-  const JOURNAL_CORE_REL = 'js/services/journal-core.js';
-  const JOURNAL_REMOTE_REL = 'js/services/journal-remote-persistence.js';
-  const JOURNAL_WRITE_THROUGH_REL = 'js/services/journal-backend-write-through.js';
-  const JOURNAL_MIGRATION_REL = 'js/services/journal-migration.js';
-  const JOURNAL_MANUAL_IMPORT_REL = 'js/services/journal-manual-import.js';
-  same(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-vega-monitor.js', MODULE_REL, VIX_MODULE_REL, BACKEND_CANDLES_REL, JOURNAL_CORE_REL, 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/mcx-regime-policy.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-ui.js', JOURNAL_REMOTE_REL, JOURNAL_WRITE_THROUGH_REL, JOURNAL_MIGRATION_REL, JOURNAL_MANUAL_IMPORT_REL, 'js/ui/journal-backup-restore.js', 'js/ui/mcx-macro-check.js', 'js/ui/mcx-charts.js', 'js/services/apex-post-auth-init.js', 'js/ui/tt-reconnect.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(), 'production footprint is exactly index.html + all four MCX owners + seven Journal owners + the MCX macro-check, MCX charts, Apex post-auth and TT reconnect owners');
-  const maintenanceScopeChanged = execFileSync('git', ['diff', '--name-only', '9a0bf91e3ca79e1b042caaa2e98ff6e2bdd073aa', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim().split(/\r?\n/).filter(Boolean);
+  const committedChanged = extractionChangedPaths(ROOT, BASE_SHA);
   ok(!maintenanceScopeChanged.some((p) => p.startsWith('.github/') || p.startsWith('scripts/') || p.startsWith('config/') || p.startsWith('contracts/')), 'no workflow, bootstrap, config or manifest file changed after the CI maintenance baseline');
 
   console.log('\nMCX market-context boundary contract: ' + pass + ' passed, ' + fail + ' failed; mutants ' + killed + '/' + total);

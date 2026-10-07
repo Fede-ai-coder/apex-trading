@@ -129,6 +129,7 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const APP_LOADER = require('./lib/load-app-source.js');
 const {
   maskLiterals, stripComments, scanTopLevelDeclarations, functionBodyRanges,
@@ -407,12 +408,17 @@ console.log('measurement only · base=' + BASE_SHA);
 // document. That peel goes here, exactly as the sentence above anticipated, and
 // LIVE_INDEX below is this layer's OWN extracted document rather than the head.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
-const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(HEAD_INDEX)
-  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
+  ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
+      PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
+  : PRE_PORTFOLIO_SNAPSHOT_FALLBACK;
 const LIVE_INDEX = PORTFOLIO_LEG_QUANTITY_U.isApplied(PRE_BACKEND_FULL_REFRESH_VALIDATION)
   ? PORTFOLIO_LEG_QUANTITY_U.undoPortfolioLegQuantity(
       PRE_BACKEND_FULL_REFRESH_VALIDATION, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-leg-quantity.js'), 'utf8'))
@@ -1365,7 +1371,7 @@ section('8. Reachability, and where this layer would sit');
 section('9. The relocation is the whole of the production change');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const changed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status)));
@@ -1374,7 +1380,7 @@ section('9. The relocation is the whole of the production change');
   // the module of every layer cut after it. The list is enumerated rather than
   // counted so the next cycle adds a name instead of editing a number.
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'the production footprint is the document, this layer\'s module, and the module of '
     + 'every layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
@@ -1395,7 +1401,7 @@ section('9. The relocation is the whole of the production change');
 section('10. The change set, the ratchet and the budget');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const changed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status))).sort();
@@ -1407,7 +1413,7 @@ section('10. The change set, the ratchet and the budget');
   ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
   ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL
-    || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'CLAUDE.md'),
+    || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'CLAUDE.md'),
   '…and every other changed path is a test artifact, this layer\'s module, or the module of '
   + 'a layer cut after it');
   // THE RATCHET. One file arrives, and every contract that pins the suite size
