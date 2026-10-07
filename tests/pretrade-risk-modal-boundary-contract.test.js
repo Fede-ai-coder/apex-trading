@@ -24,6 +24,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 // The merge commit of PR #383. A commit, never a branch tip: a branch tip is a
 // moving target and every offset, hash and slice below addresses this document.
 const BASE_SHA = '0552fd129b9448a52ba379cae705e4077f8ad1e7';
@@ -530,7 +531,7 @@ eq(harness,0,'no mutation harness errors');
 eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by their intended guard');
 
 section('11. production scope');
-const committedChanged=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+const committedChanged=extractionChangedPaths(ROOT, BASE_SHA);
 const statusChanged=execFileSync('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:ROOT,encoding:'utf8'}).split(/\r?\n/).filter(Boolean).map(line=>line.slice(3));
 const changed=Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 const changedProduction=changed.filter(p=>p==='index.html'||p.startsWith('js/')).sort();
