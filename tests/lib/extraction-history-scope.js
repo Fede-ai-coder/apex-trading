@@ -77,6 +77,8 @@ function extractionCommits(root, baseSha, head) {
 }
 
 function extractionChangedPaths(root, baseSha, head) {
+  // Read-only projection: callers may union working-tree status separately, but
+  // committed ownership comes only from the qualifying history above.
   const paths = new Set();
   for (const commit of extractionCommits(root, baseSha, head)) {
     for (const entry of commit.entries) paths.add(entry.path);
