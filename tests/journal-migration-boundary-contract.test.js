@@ -15,6 +15,7 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = '450f792be44caa6a537e68f3d16b211f9fc2cacc';
 const BASE_TREE = '55dd52392c00956e4893d195e6edd7f6636c6e14';
 const MODULE_REL = 'js/services/journal-migration.js';
@@ -386,10 +387,7 @@ function externalUsage(name) {
   })).filter((entry) => entry.refs > 0);
 }
 function changedPaths() {
-  const committed = execFileSync('git', ['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean);
+  const committed = extractionChangedPaths(ROOT, BASE_SHA);
   const statusOutput = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
     cwd: ROOT,
     encoding: 'utf8',
