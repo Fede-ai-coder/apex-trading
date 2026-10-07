@@ -1090,6 +1090,8 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   // 9.37b a normative revision that touches no contract at all
   const m37b = clone(currentRev);
   m37b.contractsAdded = [];
+  m37b.contractsRewritten = [];
+  m37b.contractsRemoved = [];
   mustCatch(vRevisionRecord, m37b, null,
     'a revision declaring a normative change while touching no contract must be rejected');
 
