@@ -89,6 +89,7 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const APP_LOADER = require('./lib/load-app-source.js');
 const {
   maskLiterals, stripComments, scanTopLevelDeclarations, functionBodyRanges,
@@ -1010,7 +1011,7 @@ eq(count(INDEX, UNDO.TAG), 0,
 section('9. The relocation is the whole of the production change');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const changed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
@@ -1150,7 +1151,7 @@ section('9. The relocation is the whole of the production change');
 section('10. The change set, the ratchet and the budget');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const changed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status))).sort();
