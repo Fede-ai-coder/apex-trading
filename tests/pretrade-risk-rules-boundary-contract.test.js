@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = 'ade09125fa7d14a293643764bc04b235c067d30d';
 const MODULE_REL = 'js/services/pretrade-risk-rules.js';
 const TAG = '<script src="./js/services/pretrade-risk-rules.js"></script>\n';
@@ -319,7 +320,7 @@ eq(harness,0,'no mutation harness errors');
 eq(killed,mutants.length,'all '+mutants.length+' genuine mutants killed by their intended guard');
 
 section('7. production scope');
-const committedChanged=execFileSync('git',['diff','--name-only',BASE_SHA,'HEAD'],{cwd:ROOT,encoding:'utf8'}).trim().split(/\r?\n/).filter(Boolean);
+const committedChanged=extractionChangedPaths(ROOT, BASE_SHA);
 const statusChanged=execFileSync('git',['status','--porcelain=v1','--untracked-files=all'],{cwd:ROOT,encoding:'utf8'}).split(/\r?\n/).filter(Boolean).map(line=>line.slice(3));
 const changed=Array.from(new Set(committedChanged.concat(statusChanged))).sort();
 // The diff is measured from the PRE-#382 base, so it spans ALL THREE stacked
