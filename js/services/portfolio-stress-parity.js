@@ -53,7 +53,7 @@ var PORTFOLIO_SCOPE_SEMANTICS_VERSION = '2.1.0';
 // The FILE-CONTENT sha256 of the manifest copy in this repository. Deliberately
 // a DIFFERENT constant from the identity hash above: one proves the fixtures are
 // the ones both tiers agreed on, the other proves the file was copied intact.
-var PORTFOLIO_SCOPE_PARITY_MANIFEST_FILE_SHA256 = 'ceaebd13644e61b383e268a47785df453426919232b9e7a5a77f170fbe694ade';
+var PORTFOLIO_SCOPE_PARITY_MANIFEST_FILE_SHA256 = '70f034e14c08450b3309af36eb7c1be2a42beae4ebbbf84d76270d6668355f0f';
 
 // The backend commit the manifest copy and these identifiers were taken from.
 var PORTFOLIO_SCOPE_PARITY_SOURCE_COMMIT = '3e2f100';
