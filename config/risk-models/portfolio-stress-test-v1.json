@@ -477,7 +477,8 @@
         "Full scenario repricing already exists for option value and P&L, but the Greek values attached to each evaluated option leg are the frozen snapshot vendor Greeks. Repricing price without repricing Delta means the current engine cannot describe state-dependent directional exposure.",
         "The minimum SPY matrix is downside-only (0, -5, -10, -15, -20). That is insufficient to test an upside-convex hedge whose Delta can move from negative to positive during a rally.",
         "The current Portfolio Beta-Weighted Delta is not wrong when it is negative. It is an instantaneous local exposure. Re-signing it to reflect hedge intent would corrupt the metric; the missing object is a separate scenario exposure profile.",
-        "Backend PR #220 and frontend companion PR #360 are merged, while implementationStatus still described both as draft/unmerged. This revision records the merge state without claiming a production deployment that has not been re-verified."
+        "Backend PR #220 and frontend companion PR #360 are merged, while implementationStatus still described both as draft/unmerged. This revision records the merge state without claiming a production deployment that has not been re-verified.",
+        "Raw economic Delta is denominated in shares of each underlying and therefore is not a valid cross-symbol portfolio sum. Revision 1.3.0 keeps model/economic Delta at leg/underlying scope and uses SPY-equivalent Beta-Weighted Delta as the first portfolio-wide directional aggregate."
       ],
       "mutationChanges": [
         "A future backend implementation must fail if scenario exposure reuses snapshot vendor Delta instead of a model Delta evaluated at the scenario state.",
@@ -3507,7 +3508,7 @@
       "id": "PST-EXPOSURE-004",
       "title": "Option economic Delta uses explicit contract scale",
       "level": "MUST",
-      "text": "For an option leg, economicDelta = modelDeltaPerShare x signedContracts x contractMultiplier, applied exactly once. For an equity/ETF leg, economicDelta = signedShares. Model-derived Delta has an APEX-controlled economic unit and MUST NOT inherit the unresolved raw dxFeed Greek scale."
+      "text": "For an option leg, economicDelta = modelDeltaPerShare x signedContracts x contractMultiplier, applied exactly once. For an equity/ETF leg, economicDelta = signedShares. These are per-leg/per-underlying quantities. APEX MUST NOT sum raw economic Delta across different underlyings; cross-symbol portfolio aggregation MUST first normalize through beta and the underlying/SPY spot ratio into SPY-equivalent units. Model-derived Delta has an APEX-controlled economic unit and MUST NOT inherit the unresolved raw dxFeed Greek scale."
     },
     {
       "id": "PST-EXPOSURE-005",
@@ -3836,9 +3837,7 @@
       "hydrationPathBreakdown",
       "perSymbolShockDiagnostics",
       "scenarioExposure",
-      "modelDeltaBase",
-      "modelDeltaStressed",
-      "modelDeltaChange",
+      "perLegModelDeltaDiagnostics",
       "modelBwDeltaSpyEqBase",
       "modelBwDeltaSpyEqStressed",
       "modelBwDeltaSpyEqChange",
@@ -4818,7 +4817,7 @@
       "optionStressed": "economicDeltaStressed = modelDeltaPerShareStressed x signedContracts x contractMultiplier",
       "equityBase": "economicDeltaBase = signedShares",
       "equityStressed": "economicDeltaStressed = signedShares",
-      "applicationRule": "Quantity and multiplier are applied exactly once."
+      "applicationRule": "Quantity and multiplier are applied exactly once. Economic Delta remains a per-leg/per-underlying quantity; raw economic Delta from different underlyings MUST NOT be summed into a portfolio total because the share units differ. Cross-underlying aggregation begins only after beta/spot normalization into SPY-equivalent units."
     },
     "spyEquivalentBetaWeightedDelta": {
       "baseFormula": "modelBwDeltaSpyEqBase = sum(economicDeltaBase_i x beta_i x currentSpot_i / currentSpy)",
@@ -4833,12 +4832,10 @@
       "difference"
     ],
     "perResultSetFields": [
-      "modelDeltaBase",
-      "modelDeltaStressed",
-      "modelDeltaChange",
       "modelBwDeltaSpyEqBase",
       "modelBwDeltaSpyEqStressed",
       "modelBwDeltaSpyEqChange",
+      "deltaMethod",
       "status",
       "reason"
     ],
@@ -4851,6 +4848,14 @@
     "authority": {
       "statusRule": "Scenario exposure carries its own metric status. The authoritative status is the worst of the result-set status and the exposure metric status.",
       "unavailableRule": "Missing required exposure input yields null/UNAVAILABLE, never zero and never a silent fallback."
-    }
+    },
+    "perLegFields": [
+      "modelDeltaPerShareBase",
+      "modelDeltaPerShareStressed",
+      "modelDeltaMethod",
+      "economicDeltaBase",
+      "economicDeltaStressed",
+      "economicDeltaChange"
+    ]
   }
 }
