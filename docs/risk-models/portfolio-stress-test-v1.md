@@ -66,6 +66,11 @@ economicDeltaStressed_i =
 
 For shares, economic Delta is simply the signed share quantity.
 
+**Economic Delta remains a leg/underlying-local quantity.** AAPL-share Delta and
+MSFT-share Delta do not share a unit and MUST NOT be added into an unweighted
+portfolio "Delta" total. Cross-underlying aggregation starts only after beta and
+the underlying/SPY spot ratio convert each leg into SPY-equivalent units.
+
 The SPY-equivalent model exposure for one scenario is then:
 
 ```
@@ -1526,6 +1531,10 @@ EQUITY / ETF:
 economicDelta = signedShares
 ```
 
+These values stay at **leg / same-underlying scope**. APEX MUST NOT sum raw
+economic Delta across different underlyings; that would add unlike share units.
+The first valid portfolio-wide directional sum is the SPY-equivalent normalization below.
+
 and calculate the SPY-equivalent exposure separately at the base and stressed states:
 
 ```
@@ -1808,7 +1817,7 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-EXPOSURE-001` | Spot Beta-Weighted Delta remains instantaneous | MUST NOT | The current Portfolio BWΔ MUST NOT be re-signed, inverted, zeroed or adjusted to encode hedge intent. State-dependent protection belongs to the Stress Engine scenario profile. |
 | `PST-EXPOSURE-002` | Scenario Greeks are model-derived | MUST | Nonlinear option legs MUST receive model-derived Delta at the base and each stressed state. Reusing frozen vendor Delta as stressed Delta is forbidden. |
 | `PST-EXPOSURE-003` | Base and stressed Delta are apples-to-apples | MUST | Base/stressed Delta use the same pricing model, exercise style, rate/yield policy, maturity convention and deterministic derivative method. The method/version is reported. |
-| `PST-EXPOSURE-004` | Economic option Delta uses explicit scale | MUST | Option economic Delta = model Delta per share × signed contracts × contract multiplier, exactly once. Equity/ETF economic Delta = signed shares. |
+| `PST-EXPOSURE-004` | Economic option Delta uses explicit scale | MUST | Option economic Delta = model Delta per share × signed contracts × contract multiplier, exactly once. Equity/ETF economic Delta = signed shares. These quantities remain per leg / per underlying: APEX MUST NOT sum raw economic Delta across different underlyings. Cross-symbol portfolio aggregation begins only after conversion into SPY-equivalent units. |
 | `PST-EXPOSURE-005` | Scenario SPY-equivalent BWΔ is state-dependent | MUST | Compute base and stressed SPY-equivalent BWΔ from the corresponding economic Delta and base/stressed spot ratios; report the change. Beta remains frozen from the run snapshot; SPY is the self-benchmark. |
 | `PST-EXPOSURE-006` | Vendor and model exposure never masquerade as one series | MUST NOT | A current vendor/raw or Portfolio BWΔ MUST NOT be compared directly with a stressed model Delta and labelled a model change. Stress changes are model-base vs model-stressed. |
 | `PST-EXPOSURE-007` | Nonlinear portfolios require a profile | MUST NOT | With material nonlinear option exposure, directional posture, hedge adequacy and rebalancing MUST NOT be inferred from spot BWΔ alone. |
@@ -2063,17 +2072,22 @@ change character only after spot moves.
 For each scenario the backend computes, from the same frozen snapshot and the same repricer:
 
 ```
-modelDeltaBase
-modelDeltaStressed
-modelDeltaChange
+PER OPTION LEG:
+modelDeltaPerShareBase
+modelDeltaPerShareStressed
+economicDeltaBase
+economicDeltaStressed
+economicDeltaChange
 
+PER RESULT SET / PORTFOLIO:
 modelBwDeltaSpyEqBase
 modelBwDeltaSpyEqStressed
 modelBwDeltaSpyEqChange
 ```
 
-The base and stressed Delta MUST be same-model values. Reusing the current vendor Delta as
-the stressed Delta is forbidden. A crossover may be identified only inside an ordered slice
+Base and stressed option Delta MUST be same-model values. Raw economic Delta stays
+leg/underlying-local; only the SPY-equivalent values are summed across different symbols.
+Reusing the current vendor Delta as the stressed Delta is forbidden. A crossover may be identified only inside an ordered slice
 with the same VIX and horizon when adjacent scenarios bracket zero. Any interpolation is
 labelled **APPROXIMATE** and reports its bracket.
 
@@ -2158,9 +2172,10 @@ scenarioExposure       status
 ### Required outputs
 
 Actual Stress P&L; Proposed Stress P&L; Difference; P&L % NLV; current value; stressed value;
-Long Put Contribution; Short Put P&L; Long Call P&L; Short Call P&L; equity/ETF P&L; current observed Delta/Beta-Weighted Delta; modelDeltaBase;
-modelDeltaStressed; modelDeltaChange; modelBwDeltaSpyEqBase; modelBwDeltaSpyEqStressed;
-modelBwDeltaSpyEqChange; scenario-exposure status/diagnostics; nullable upside Delta crossover;
+Long Put Contribution; Short Put P&L; Long Call P&L; Short Call P&L; equity/ETF P&L; current observed Delta/Beta-Weighted Delta; per-leg
+modelDeltaPerShareBase/modelDeltaPerShareStressed and economic Delta diagnostics;
+modelBwDeltaSpyEqBase; modelBwDeltaSpyEqStressed; modelBwDeltaSpyEqChange;
+scenario-exposure status/diagnostics; nullable upside Delta crossover;
 Gamma; Vega; Theta; overlay debit/credit; overlay contribution; worst
 positions; best protections; data coverage; missing data; stale data; fallbacks; model
 version; elapsed time; cache status; reuse diagnostics; **hydration-path breakdown**
