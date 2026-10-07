@@ -35,6 +35,7 @@ const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = '395f19575cdc543b3a370e2168e2e6cfb823a4a7';
 const MODULE_REL = 'js/ui/journal-ui.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
@@ -513,9 +514,7 @@ same(topLevelNames(MODULE + '\nfunction foreignJournalUiOwner(){}'), MANIFEST.co
 ok(fnCount(INDEX + '\n' + baseSlice, 'runJournalPanel') > 0, 'inline-duplication mutant is visible to zero-residue guard');
 
 section('6. production scope');
-const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
-  cwd: ROOT, encoding: 'utf8',
-}).trim().split(/\r?\n/).filter(Boolean);
+const changed = extractionChangedPaths(ROOT, BASE_SHA);
 const changedProduction = changed.filter((p) => p === 'index.html' || p.startsWith('js/')).sort();
 same(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL,
