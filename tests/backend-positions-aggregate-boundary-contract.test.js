@@ -92,6 +92,7 @@ const vm = require('vm');
 const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const APP_LOADER = require('./lib/load-app-source.js');
 const {
   maskLiterals, stripComments, scanTopLevelDeclarations, functionBodyRanges,
@@ -937,7 +938,7 @@ section('8. Reachability, the chain, and exact production scope');
     + 'pair is not the tell the separator is');
 }
 {
-  const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const committed = extractionChangedPaths(ROOT, BASE_SHA);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
