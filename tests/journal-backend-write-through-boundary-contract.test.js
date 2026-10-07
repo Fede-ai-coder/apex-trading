@@ -33,6 +33,7 @@ const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = '9dc2148f91e0ae12aa405f2488b16ab9e03922ef';
 const BASE_TREE = '0769a850de8cbd4c5d93c915ce10081fc23a8438';
 const MODULE_REL = 'js/services/journal-backend-write-through.js';
@@ -948,9 +949,7 @@ eq(identifierCountMasked(maskLiterals('// _tradeForBackend\n"_tradeForBackend"; 
   'identifier inventory ignores comments, strings and suffix collisions');
 
 section('8. Production scope and temporary-audit replacement');
-const committedChanged = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
-  cwd: ROOT, encoding: 'utf8',
-}).trim().split(/\r?\n/).filter(Boolean);
+const committedChanged = extractionChangedPaths(ROOT, BASE_SHA);
 const statusChanged = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
   cwd: ROOT, encoding: 'utf8',
 }).split(/\r?\n/).filter(Boolean).map((line) => line.slice(3));
