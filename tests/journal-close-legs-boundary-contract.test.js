@@ -74,6 +74,7 @@ const {
 const U = require('./lib/journal-close-legs-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const MODULE_REL = 'js/ui/journal-close-legs.js';
 const MODULE_SRC = './' + MODULE_REL;
 const CONTRACT_REL = 'tests/journal-close-legs-boundary-contract.test.js';
@@ -761,8 +762,7 @@ ok(topLevelHits(MODULE + 'var _x = document.title;\n', /\b(?:document|window)\s*
 // ─────────────────────────────────────────────────────────────────────────────
 section('12. Exact production scope, and the temporary audit is gone');
 // ─────────────────────────────────────────────────────────────────────────────
-const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'])
-  .trim().split(/\r?\n/).filter(Boolean);
+const committed = extractionChangedPaths(ROOT, BASE_SHA);
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
