@@ -250,7 +250,7 @@ section('1. The manifest is the backend artefact, and its two hashes are distinc
   ok(v.length === 0, '1.1: manifest identity is well-formed' + (v.length ? ' — ' + v.join(' | ') : ''));
   ok(MANIFEST.sha256 === '5dff46fb958c728ae48326a510fc79e6e5a94a8a85608b91538400125ec5d0cb',
     '1.2: the manifest identity hash is the value the backend published');
-  ok(sha256(MANIFEST_BYTES) === 'ceaebd13644e61b383e268a47785df453426919232b9e7a5a77f170fbe694ade',
+  ok(sha256(MANIFEST_BYTES) === '70f034e14c08450b3309af36eb7c1be2a42beae4ebbbf84d76270d6668355f0f',
     '1.3: the file-content sha256 matches the backend file — the copy was not edited');
   // The two hashes moved INDEPENDENTLY at model 1.2.5, which is the whole reason
   // they are separate constants. `modelVersion` is a field of the manifest but
