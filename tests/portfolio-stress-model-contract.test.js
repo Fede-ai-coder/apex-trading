@@ -371,6 +371,10 @@ function vScenarioExposureModel(m) {
       String(ed.equityStressed || '') !== 'economicDeltaStressed = signedShares') {
     out.push('equity scenario Delta is not signed shares');
   }
+  if (!/MUST NOT be summed/i.test(String(ed.applicationRule || '')) ||
+      !/SPY-equivalent/i.test(String(ed.applicationRule || ''))) {
+    out.push('raw economic Delta is not protected from invalid cross-underlying aggregation');
+  }
   for (const key of ['baseFormula', 'stressedFormula', 'changeFormula']) {
     if (!String(bw[key] || '').includes('modelBwDeltaSpyEq')) out.push('missing SPY-equivalent formula ' + key);
   }
@@ -381,9 +385,18 @@ function vScenarioExposureModel(m) {
   for (const set of ['actual', 'overlay', 'proposed', 'difference']) {
     if (!(x.requiredResultSets || []).includes(set)) out.push('scenario exposure missing result set ' + set);
   }
-  for (const field of ['modelDeltaBase','modelDeltaStressed','modelDeltaChange',
-    'modelBwDeltaSpyEqBase','modelBwDeltaSpyEqStressed','modelBwDeltaSpyEqChange','status','reason']) {
-    if (!(x.perResultSetFields || []).includes(field)) out.push('scenario exposure missing field ' + field);
+  for (const field of ['modelBwDeltaSpyEqBase','modelBwDeltaSpyEqStressed',
+    'modelBwDeltaSpyEqChange','deltaMethod','status','reason']) {
+    if (!(x.perResultSetFields || []).includes(field)) out.push('scenario exposure missing result-set field ' + field);
+  }
+  for (const field of ['modelDeltaPerShareBase','modelDeltaPerShareStressed','modelDeltaMethod',
+    'economicDeltaBase','economicDeltaStressed','economicDeltaChange']) {
+    if (!(x.perLegFields || []).includes(field)) out.push('scenario exposure missing per-leg field ' + field);
+  }
+  for (const forbidden of ['modelDeltaBase','modelDeltaStressed','modelDeltaChange']) {
+    if ((x.perResultSetFields || []).includes(forbidden)) {
+      out.push('scenario exposure illegally aggregates cross-underlying raw Delta as ' + forbidden);
+    }
   }
   if (!/MUST NOT be inferred from spot Beta-Weighted Delta alone/i.test(String(interp.nonlinearRule || ''))) {
     out.push('nonlinear interpretation still permits spot-BWΔ-only inference');
@@ -939,6 +952,12 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   m15d.scenarioExposureModel.modelDelta.stressedDefinition =
     'reuse current vendor delta under every scenario';
   mustCatch(vScenarioExposureModel, m15d, null, 'reusing vendor Delta as stressed model Delta must be rejected');
+
+  // 9.15e raw Delta from different underlyings cannot become a portfolio total
+  const m15e = clone(MODEL);
+  m15e.scenarioExposureModel.economicDelta.applicationRule =
+    'Sum every leg economic Delta directly into one portfolio Delta total.';
+  mustCatch(vScenarioExposureModel, m15e, null, 'cross-underlying raw Delta aggregation must be rejected');
 
   // 9.16 benchmark limits asserted instead of measured
   const m16 = clone(MODEL); m16.benchmarkPlan.limitsStatus = 'p95 under 800ms';
