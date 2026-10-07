@@ -1,6 +1,6 @@
 {
   "modelId": "portfolio-stress-test",
-  "version": "1.2.5",
+  "version": "1.3.0",
   "status": "specification",
   "runtimeImplemented": false,
   "architectureDecision": "reuse_first_backend_batch_frontend_render",
@@ -441,6 +441,50 @@
       "mutationChanges": [
         "Backend: four mutation proofs evaluate the pctNlvStatus expression extracted from the engine SOURCE — reverting to proposedComplete, hardcoding STATUS.VALID, dropping the usability gate, and re-adding the empty-branch override. A FIFTH case had to be added to the table for them to bite: a VALID descriptor carrying a ZERO nlv. Usability and status are correlated in all four declared cases, so 'gate on usability' and 'echo the descriptor status' were indistinguishable there, and the mutation proof passed while the guard it claimed to protect was untested.",
         "Frontend: four cases run REAL backend cells captured verbatim from runPortfolioStressTest() at apex-backend 12f3ba1, rather than synthetic contradictory payloads. The first is the case that motivated the fix and could not previously exist."
+      ]
+    },
+    {
+      "version": "1.3.0",
+      "summary": "Formalizes state-dependent portfolio exposure inside the Stress Engine: spot Beta-Weighted Delta remains an instantaneous observed metric, while nonlinear option risk is evaluated with model-derived base/stressed Delta and SPY-equivalent Beta-Weighted Delta across bilateral SPY scenarios.",
+      "normativeChange": "CORRECTIVE_EXTENSION",
+      "contractsAdded": [
+        "PST-EXPOSURE-001",
+        "PST-EXPOSURE-002",
+        "PST-EXPOSURE-003",
+        "PST-EXPOSURE-004",
+        "PST-EXPOSURE-005",
+        "PST-EXPOSURE-006",
+        "PST-EXPOSURE-007",
+        "PST-EXPOSURE-008",
+        "PST-EXPOSURE-009",
+        "PST-EXPOSURE-010"
+      ],
+      "contractsRewritten": [
+        "PST-MATRIX-003",
+        "PST-MATRIX-004"
+      ],
+      "contractsRemoved": [],
+      "reason": "The merged backend already full-reprices option P&L under each scenario, but its scenario Greek path still aggregates the frozen vendor Greeks and deliberately leaves economic option Beta-Weighted Delta unavailable because the vendor Greek scale is not proven. That means the model requirement to show the change in Beta-Weighted Delta is not actually satisfied for nonlinear option portfolios, and the downside-only matrix cannot reveal an upside delta sign transition such as a call backspread used as rally protection.",
+      "reDerived": [
+        "apex-backend dev-4h-backend head: 470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+        "apex-trading dev-clean head at revision start: e6e65ecbea51ec4ba388ca36d56e8ec4fc146ca2",
+        "backend PR #220 and frontend companion PR #360 are merged; the canonical specification's implementationStatus was stale",
+        "portfolio-stress-engine.js currently returns frozen vendor Greeks from evaluateLeg and aggregateGreeks; it does not calculate stressed scenario Greeks",
+        "portfolio-stress-beta-weighted.test.js explicitly keeps combined option betaWeightedDelta UNAVAILABLE because the vendor Greek economic scale is unproven"
+      ],
+      "factualCorrections": [
+        "The specification already required 'change in Beta-Weighted Delta', but the merged backend cannot currently publish an economic option Beta-Weighted Delta: it intentionally returns betaWeightedDelta=null for option-containing exposure because raw dxFeed Greek scale is not proven. The requirement existed; the runtime capability did not.",
+        "Full scenario repricing already exists for option value and P&L, but the Greek values attached to each evaluated option leg are the frozen snapshot vendor Greeks. Repricing price without repricing Delta means the current engine cannot describe state-dependent directional exposure.",
+        "The minimum SPY matrix is downside-only (0, -5, -10, -15, -20). That is insufficient to test an upside-convex hedge whose Delta can move from negative to positive during a rally.",
+        "The current Portfolio Beta-Weighted Delta is not wrong when it is negative. It is an instantaneous local exposure. Re-signing it to reflect hedge intent would corrupt the metric; the missing object is a separate scenario exposure profile.",
+        "Backend PR #220 and frontend companion PR #360 are merged, while implementationStatus still described both as draft/unmerged. This revision records the merge state without claiming a production deployment that has not been re-verified.",
+        "Raw economic Delta is denominated in shares of each underlying and therefore is not a valid cross-symbol portfolio sum. Revision 1.3.0 keeps model/economic Delta at leg/underlying scope and uses SPY-equivalent Beta-Weighted Delta as the first portfolio-wide directional aggregate."
+      ],
+      "mutationChanges": [
+        "A future backend implementation must fail if scenario exposure reuses snapshot vendor Delta instead of a model Delta evaluated at the scenario state.",
+        "A future contract test must fail if the bilateral SPY grid loses all positive shocks.",
+        "A future response test must fail if model-derived stressed exposure overwrites or is substituted for the observed/current Portfolio Beta-Weighted Delta.",
+        "A future interpretation test must fail if a Delta crossover alone is labelled sufficient proof that the portfolio is hedged."
       ]
     }
   ],
@@ -3106,15 +3150,15 @@
     },
     {
       "id": "PST-MATRIX-003",
-      "title": "Minimum grid",
+      "title": "Minimum bilateral SPY grid",
       "level": "MUST",
-      "text": "The minimum matrix is SPY 0%, -5%, -10%, -15%, -20% by VIX current, +50%, +100%, +200%."
+      "text": "The minimum matrix MUST preserve the existing downside points and add symmetric upside coverage: SPY -20%, -15%, -10%, -5%, 0%, +5%, +10%, +15%, +20% by VIX current, +50%, +100%, +200% (36 cells). These are diagnostic hypotheses, not forecasts. Additional custom and VIX-down scenarios MAY be added, but the required positive SPY shocks MUST NOT be removed because nonlinear rally hedges can change Delta sign only on the upside."
     },
     {
       "id": "PST-MATRIX-004",
-      "title": "Cell fields",
+      "title": "Cell fields include state-dependent exposure",
       "level": "MUST",
-      "text": "Each cell MUST carry scenarioId, spyReturn, stressedSpyPrice, vixTarget, actualStressPnl, proposedStressPnl, difference, actualStressPnlPctNlv, proposedStressPnlPctNlv and status."
+      "text": "Each cell MUST carry scenarioId, spyReturn, stressedSpyPrice, vixTarget, actualStressPnl, proposedStressPnl, difference, actualStressPnlPctNlv, proposedStressPnlPctNlv, status and scenarioExposure. scenarioExposure MUST preserve Actual/Overlay/Proposed/Difference separation and MUST NOT substitute stressed model exposure for the current observed Portfolio Beta-Weighted Delta."
     },
     {
       "id": "PST-MATRIX-005",
@@ -3441,6 +3485,66 @@
       "title": "pctNlvStatus describes the denominator, never the completeness of a result set",
       "level": "MUST NOT",
       "text": "`pctNlvStatus` MUST report whether the NLV can be divided by, and nothing else: the descriptor's own status when the NLV is usable and strictly positive, and UNAVAILABLE otherwise. It MUST NOT fold in the completeness of the Proposed set or of any other result set — those questions are owned by the result-set statuses and completeness flags. A DEGRADED NLV MUST be reported as DEGRADED and never as VALID. An empty portfolio MUST NOT be reported as an unusable denominator. The same rule binds every metric status published beside a metric: one field, one question, or the consumer's worst-of-two rule is unsound because one side is quietly answering the other's question."
+    },
+    {
+      "id": "PST-EXPOSURE-001",
+      "title": "Spot Beta-Weighted Delta remains an instantaneous metric",
+      "level": "MUST NOT",
+      "text": "The current Portfolio Beta-Weighted Delta MUST NOT be re-signed, inverted, zeroed or otherwise adjusted to encode a hedge's intended role. A negative spot Beta-Weighted Delta remains negative if that is the measured current exposure; state-dependent protection is represented separately by the Stress Engine scenario profile."
+    },
+    {
+      "id": "PST-EXPOSURE-002",
+      "title": "Scenario Greeks are model-derived at the scenario state",
+      "level": "MUST",
+      "text": "For nonlinear option legs the Stress Engine MUST calculate model-derived Delta at the base state and at each stressed state from the declared repricer inputs. Reusing the frozen vendor Delta as the stressed Delta is forbidden because it removes the Gamma/convexity the stress analysis exists to measure."
+    },
+    {
+      "id": "PST-EXPOSURE-003",
+      "title": "Base and stressed Delta are apples-to-apples",
+      "level": "MUST",
+      "text": "modelDeltaPerShareBase and modelDeltaPerShareStressed MUST use the same pricing model, exercise style, rate/yield policy, maturity convention and deterministic derivative method. The derivative method and version MUST be reported so modelDeltaChange is a same-model comparison."
+    },
+    {
+      "id": "PST-EXPOSURE-004",
+      "title": "Option economic Delta uses explicit contract scale",
+      "level": "MUST",
+      "text": "For an option leg, economicDelta = modelDeltaPerShare x signedContracts x contractMultiplier, applied exactly once. For an equity/ETF leg, economicDelta = signedShares. These are per-leg/per-underlying quantities. APEX MUST NOT sum raw economic Delta across different underlyings; cross-symbol portfolio aggregation MUST first normalize through beta and the underlying/SPY spot ratio into SPY-equivalent units. Model-derived Delta has an APEX-controlled economic unit and MUST NOT inherit the unresolved raw dxFeed Greek scale."
+    },
+    {
+      "id": "PST-EXPOSURE-005",
+      "title": "Scenario SPY-equivalent Beta-Weighted Delta is state-dependent",
+      "level": "MUST",
+      "text": "For each result set and scenario, APEX MUST compute modelBwDeltaSpyEqBase = sum(economicDeltaBase_i x beta_i x currentSpot_i/currentSpy) and modelBwDeltaSpyEqStressed = sum(economicDeltaStressed_i x beta_i x stressedSpot_i/stressedSpy), with modelBwDeltaSpyEqChange = stressed - base. Beta is frozen from the run snapshot; SPY is the self-benchmark."
+    },
+    {
+      "id": "PST-EXPOSURE-006",
+      "title": "Observed vendor exposure and model scenario exposure never masquerade as one series",
+      "level": "MUST NOT",
+      "text": "APEX MUST NOT compare a current vendor/raw Delta or current Portfolio Beta-Weighted Delta directly with a stressed model-derived Delta and label the difference as modelDeltaChange. Stress changes MUST be base-model versus stressed-model. Observed current exposure may be displayed beside the model profile only with explicit source/model labels."
+    },
+    {
+      "id": "PST-EXPOSURE-007",
+      "title": "Nonlinear portfolios require an exposure profile, not a sign shortcut",
+      "level": "MUST NOT",
+      "text": "When material nonlinear option exposure is present, APEX MUST NOT infer directional posture, hedge adequacy or required rebalancing from the sign of spot Beta-Weighted Delta alone. The relevant object is the bilateral scenario exposure profile together with scenario P&L."
+    },
+    {
+      "id": "PST-EXPOSURE-008",
+      "title": "Delta crossover is a conditional model state transition",
+      "level": "MUST",
+      "text": "A Delta/Beta-Weighted-Delta crossover may be emitted only when ordered adjacent scenarios with the same VIX and horizon bracket zero. It is a conditional transition in the declared stress model, not proof that the position is bullish, bearish or hedged. Interpolation, if used, MUST be labelled APPROXIMATE and report the bracketing scenarios."
+    },
+    {
+      "id": "PST-EXPOSURE-009",
+      "title": "Hedge adequacy is a P&L question",
+      "level": "MUST NOT",
+      "text": "A position MUST NOT be labelled adequate rally/downside protection solely because stressed Delta changes sign or becomes favorable. Hedge effectiveness MUST be supported by scenario P&L / Proposed-minus-Actual marginal benefit, or by a separately specified attribution that reconciles to portfolio Stress P&L."
+    },
+    {
+      "id": "PST-EXPOSURE-010",
+      "title": "Scenario exposure has independent status and null safety",
+      "level": "MUST",
+      "text": "Scenario exposure MUST carry its own VALID/DEGRADED/UNAVAILABLE metric status and reason. Authority is the worst of the result-set status and the exposure metric status. Missing beta, spot, SPY, model Delta, multiplier or required pricing input MUST yield null/UNAVAILABLE rather than zero or a silent fallback."
     }
   ],
   "scenarioModel": {
@@ -3539,11 +3643,15 @@
   },
   "matrix": {
     "minimumSpyReturns": [
-      0,
-      -0.05,
-      -0.1,
+      -0.2,
       -0.15,
-      -0.2
+      -0.1,
+      -0.05,
+      0,
+      0.05,
+      0.1,
+      0.15,
+      0.2
     ],
     "minimumVixTargets": [
       "current",
@@ -3551,7 +3659,7 @@
       "+100%",
       "+200%"
     ],
-    "minimumCellCount": 20,
+    "minimumCellCount": 36,
     "requestShape": "one request containing every scenario",
     "cellFields": [
       "scenarioId",
@@ -3563,7 +3671,8 @@
       "difference",
       "actualStressPnlPctNlv",
       "proposedStressPnlPctNlv",
-      "status"
+      "status",
+      "scenarioExposure"
     ],
     "forbidden": [
       "one request per cell",
@@ -3726,7 +3835,13 @@
       "cacheStatus",
       "reuseDiagnostics",
       "hydrationPathBreakdown",
-      "perSymbolShockDiagnostics"
+      "perSymbolShockDiagnostics",
+      "scenarioExposure",
+      "perLegModelDeltaDiagnostics",
+      "modelBwDeltaSpyEqBase",
+      "modelBwDeltaSpyEqStressed",
+      "modelBwDeltaSpyEqChange",
+      "upsideDeltaCrossover"
     ]
   },
   "endpointProposal": {
@@ -3923,11 +4038,11 @@
     {
       "id": "PST-OPEN-014",
       "question": "What are the final performance limits?",
-      "evidence": "benchmarkPlan.limitsStatus is TO_BE_DERIVED_FROM_MEASUREMENT. No implementation exists to measure.",
-      "implication": "PST-PERF-003 already forbids asserting limits in advance; only the measured values remain open.",
+      "evidence": "The merged PR #220 benchmarked 20 scenarios. Revision 1.3.0 expands the mandatory minimum to a bilateral 36-scenario SPY grid, so the old measurements remain historical evidence but are not sufficient to set the new production limit.",
+      "implication": "PST-PERF-003 still forbids asserting a limit in advance. Re-run the benchmark at 10/30/60/100 legs x 36 scenarios before the scenario-exposure implementation is promoted.",
       "category": "PERFORMANCE",
       "status": "OPEN",
-      "mustResolveBefore": "PR 2 completion",
+      "mustResolveBefore": "scenario-exposure backend implementation completion",
       "governedBy": [
         "PST-PERF-003"
       ]
@@ -3953,19 +4068,19 @@
     "loadPoints": [
       {
         "legs": 10,
-        "scenarios": 20
+        "scenarios": 36
       },
       {
         "legs": 30,
-        "scenarios": 20
+        "scenarios": 36
       },
       {
         "legs": 60,
-        "scenarios": 20
+        "scenarios": 36
       },
       {
         "legs": 100,
-        "scenarios": 20
+        "scenarios": 36
       }
     ],
     "metrics": [
@@ -3986,7 +4101,7 @@
       "actualPlusOverlay",
       "fullMatrix"
     ],
-    "limitsStatus": "TO_BE_DERIVED_FROM_MEASUREMENT",
+    "limitsStatus": "TO_BE_REDERIVED_FOR_BILATERAL_36_SCENARIO_GRID",
     "referenceBaseline": "POST /portfolio/live-refresh executes one batch request per 60s refresh cycle with zero per-leg, zero per-cell and zero option-chain requests. The stress endpoint must not regress from that shape."
   },
   "prPlan": [
@@ -4552,38 +4667,39 @@
     "purpose": "Per-TIER implementation status. The single `runtimeImplemented` boolean cannot express a product that exists in one tier, exists in draft in another and does not exist in a third; overloading it would have turned partial delivery into an apparent completion. It stays false until the modelled product is reachable from the UI.",
     "runtimeImplementedMeaning": "runtimeImplemented answers ONE question: can a user reach the Portfolio Stress Test from the application? It is false, and it must stay false until the renderer and the tab exist.",
     "backendEngine": {
-      "status": "IMPLEMENTED_IN_DRAFT_PR_220",
+      "status": "MERGED_TO_DEV_4H_BACKEND",
       "repository": "Fede-ai-coder/apex-backend",
       "pullRequest": 220,
-      "pullRequestState": "draft",
-      "branch": "claude/portfolio-stress-engine-v1",
-      "commit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
-      "deployed": false,
-      "note": "Implemented and audited at the commit above. The pull request is a DRAFT: not ready, not merged, not deployed."
+      "pullRequestState": "merged",
+      "sourceHeadCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
+      "mergeCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+      "deployed": "UNVERIFIED_AFTER_MERGE",
+      "note": "The engine is merged into dev-4h-backend. This specification does not claim which commit Railway currently serves until GET /version or deployment metadata is re-verified."
     },
     "frontendParityAndClientContract": {
-      "status": "IMPLEMENTED_IN_THIS_DRAFT_PR",
+      "status": "MERGED_TO_DEV_CLEAN",
       "repository": "Fede-ai-coder/apex-trading",
-      "branch": "claude/portfolio-stress-backend-parity-v1",
       "pullRequest": 360,
-      "pullRequestState": "draft",
+      "pullRequestState": "merged",
+      "sourceHeadCommit": "ec9383f7edfc378b8b1d4228c9a0f4d9c33397f5",
+      "mergeCommit": "8555ded1e90e55aa99c26abe7474c55df3869237",
       "delivers": [
-        "contracts/portfolio-scope-parity-manifest.json — a byte-identical copy of the backend manifest at 2.1.0",
-        "js/services/portfolio-stress-parity.js — the single frontend scope-parity identity owner",
-        "js/services/portfolio-stress-response.js — the status-bound, null-safe response contract",
-        "js/services/portfolio-stress-client.js — the request/dispatch adapter, no UI, no injectable transport",
-        "the reconciled quantity owner in index.html (semantics 2.1.0)"
+        "contracts/portfolio-scope-parity-manifest.json",
+        "js/services/portfolio-stress-parity.js",
+        "js/services/portfolio-stress-response.js",
+        "js/services/portfolio-stress-client.js"
       ]
     },
     "frontendRendererAndUi": {
       "status": "NOT_IMPLEMENTED",
-      "note": "No Stress Test tab, no page, no matrix renderer, no scenario builder, no Overlay editor and no Overlay persistence exist. They are a later PR."
+      "note": "No Stress Test tab/page, matrix renderer, scenario builder or Overlay editor is user-reachable. runtimeImplemented therefore remains false."
     },
     "productionDeployment": {
-      "status": "NOT_YET_UPDATED",
-      "deployedBackendCommit": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
-      "candidateBackendCommit": "12f3ba1821d809d5d9dbf86b86e8199e84e14119",
-      "note": "The deployed backend is still 25dd8424. The candidate commit is NOT deployed, and GET /version returning 25dd8424 is evidence of what is deployed TODAY — never evidence that the candidate reached Railway."
+      "status": "UNVERIFIED_AFTER_BACKEND_MERGE",
+      "lastVerifiedBeforeMerge": "25dd84245d8176bd6c3daa05be98e52afe0a934a",
+      "mergedDevBackendCommit": "470316ba3ef194ee6c56d9eb22da04b435d29f3c",
+      "currentDeployedCommit": null,
+      "note": "The old 25dd8424 observation is historical evidence only. Re-check GET /version or Railway before claiming the merged Stress Engine is deployed."
     }
   },
   "crossTierScopeSemantics": {
@@ -4683,6 +4799,63 @@
         "before": "quantitySource, positionSide and terminalReason had no manifest field and were pinned in the FRONTEND test file, making the frontend the authority for what the backend produces",
         "after": "generated by the backend owner and consumed by the frontend"
       }
+    ]
+  },
+  "scenarioExposureModel": {
+    "purpose": "Measure state-dependent directional exposure under the same frozen scenarios and repricing assumptions used for Stress P&L, without redefining the current Portfolio Beta-Weighted Delta.",
+    "sourceSeparation": {
+      "observedSpotBetaWeightedDelta": "Existing Portfolio metric. Instantaneous/current-state observation. It MUST NOT be re-signed or adjusted to encode hedge intent.",
+      "scenarioModelExposure": "Stress-engine model output produced by the same declared repricer used for scenario valuation. It is a separate model-derived family and MUST NOT overwrite vendor/raw Greeks."
+    },
+    "modelDelta": {
+      "baseDefinition": "modelDeltaPerShareBase = dV_model/dS at currentSpot, baseIV and baseTimeToExpiry",
+      "stressedDefinition": "modelDeltaPerShareStressed = dV_model/dS at stressedSpot, stressedIV and stressedTimeToExpiry",
+      "methodRule": "The derivative method MUST be deterministic, versioned and reported. Base and stressed Delta MUST use the same pricing model, exercise style, rate/yield policy and derivative convention."
+    },
+    "economicDelta": {
+      "optionBase": "economicDeltaBase = modelDeltaPerShareBase x signedContracts x contractMultiplier",
+      "optionStressed": "economicDeltaStressed = modelDeltaPerShareStressed x signedContracts x contractMultiplier",
+      "equityBase": "economicDeltaBase = signedShares",
+      "equityStressed": "economicDeltaStressed = signedShares",
+      "applicationRule": "Quantity and multiplier are applied exactly once. Economic Delta remains a per-leg/per-underlying quantity; raw economic Delta from different underlyings MUST NOT be summed into a portfolio total because the share units differ. Cross-underlying aggregation begins only after beta/spot normalization into SPY-equivalent units."
+    },
+    "spyEquivalentBetaWeightedDelta": {
+      "baseFormula": "modelBwDeltaSpyEqBase = sum(economicDeltaBase_i x beta_i x currentSpot_i / currentSpy)",
+      "stressedFormula": "modelBwDeltaSpyEqStressed = sum(economicDeltaStressed_i x beta_i x stressedSpot_i / stressedSpy)",
+      "changeFormula": "modelBwDeltaSpyEqChange = modelBwDeltaSpyEqStressed - modelBwDeltaSpyEqBase",
+      "betaState": "Beta is frozen from the run snapshot. SPY is the self-benchmark (beta 1, underlying/SPY ratio 1). Missing beta never becomes 1 for a non-SPY symbol."
+    },
+    "requiredResultSets": [
+      "actual",
+      "overlay",
+      "proposed",
+      "difference"
+    ],
+    "perResultSetFields": [
+      "modelBwDeltaSpyEqBase",
+      "modelBwDeltaSpyEqStressed",
+      "modelBwDeltaSpyEqChange",
+      "deltaMethod",
+      "status",
+      "reason"
+    ],
+    "interpretation": {
+      "nonlinearRule": "When material nonlinear option exposure exists, directional posture, hedge adequacy and rebalancing MUST NOT be inferred from spot Beta-Weighted Delta alone.",
+      "crossoverRule": "A sign change is a state transition in the model exposure profile. A crossover may be reported only when adjacent ordered scenarios under the same VIX/horizon bracket zero; any interpolation must be labelled approximate.",
+      "hedgeAdequacyRule": "Whether a structure protects the portfolio is determined from scenario P&L / marginal Proposed-minus-Actual benefit (or an explicitly defined attribution), not from the sign of spot Delta or from a crossover alone.",
+      "labelsAreDescriptive": true
+    },
+    "authority": {
+      "statusRule": "Scenario exposure carries its own metric status. The authoritative status is the worst of the result-set status and the exposure metric status.",
+      "unavailableRule": "Missing required exposure input yields null/UNAVAILABLE, never zero and never a silent fallback."
+    },
+    "perLegFields": [
+      "modelDeltaPerShareBase",
+      "modelDeltaPerShareStressed",
+      "modelDeltaMethod",
+      "economicDeltaBase",
+      "economicDeltaStressed",
+      "economicDeltaChange"
     ]
   }
 }

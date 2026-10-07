@@ -1524,8 +1524,8 @@ section('3. Batch discipline');
 mustHold(vNoNPlusOne, MODEL, null, '3.1: no request per cell, per leg per scenario or per position');
 {
   const c = new Map((MODEL.contracts || []).map((x) => [x.id, x]));
-  ok(!!c.get('PST-MATRIX-003') && /0%, -5%, -10%, -15%, -20%/.test(c.get('PST-MATRIX-003').text),
-    '3.2: the minimum SPY grid is pinned');
+  ok(!!c.get('PST-MATRIX-003') && /-20%, -15%, -10%, -5%, 0%, \+5%, \+10%, \+15%, \+20%/.test(c.get('PST-MATRIX-003').text),
+    '3.2: the bilateral minimum SPY grid is pinned');
   ok(!!c.get('PST-MATRIX-003') && /current, \+50%, \+100%, \+200%/.test(c.get('PST-MATRIX-003').text),
     '3.3: the minimum VIX grid is pinned');
   const ep = MODEL.endpointProposal || {};
