@@ -235,7 +235,7 @@ function vContractFamilies(m) {
     'PST-PARITY': 5, 'PST-OPTION-SYMBOL': 5, 'PST-SNAPSHOT': 6, 'PST-OVERLAY': 4,
     'PST-ENTRY': 3, 'PST-HYDRATION': 7, 'PST-UNDERLYING': 7, 'PST-EQUITY': 3,
     'PST-UNITS': 5, 'PST-TEMPORAL': 8, 'PST-BACKEND-TARGET': 3, 'PST-SCENARIO': 3, 'PST-IV': 5, 'PST-PRICING': 8,
-    'PST-RESULT': 4, 'PST-MATRIX': 5, 'PST-PERF': 3, 'PST-DATA': 5, 'PST-MONOLITH': 3,
+    'PST-RESULT': 4, 'PST-MATRIX': 5, 'PST-EXPOSURE': 10, 'PST-PERF': 3, 'PST-DATA': 5, 'PST-MONOLITH': 3,
   };
   const out = [];
   const counts = {};
@@ -335,19 +335,89 @@ function vScenarioModel(m) {
   return out;
 }
 
+// 12b. State-dependent exposure is a separate, model-derived family. The current
+//      Portfolio BWΔ remains untouched; base and stressed exposure use one model.
+function vScenarioExposureModel(m) {
+  const out = [];
+  const x = m.scenarioExposureModel || {};
+  const sep = x.sourceSeparation || {};
+  const md = x.modelDelta || {};
+  const ed = x.economicDelta || {};
+  const bw = x.spyEquivalentBetaWeightedDelta || {};
+  const interp = x.interpretation || {};
+  const auth = x.authority || {};
+
+  if (!/MUST NOT be re-signed/i.test(String(sep.observedSpotBetaWeightedDelta || ''))) {
+    out.push('observed spot BWΔ is not protected from re-signing');
+  }
+  if (!/separate model-derived/i.test(String(sep.scenarioModelExposure || ''))) {
+    out.push('scenario exposure is not declared a separate model-derived family');
+  }
+  if (!/dV_model\/dS/.test(String(md.baseDefinition || '')) ||
+      !/dV_model\/dS/.test(String(md.stressedDefinition || ''))) {
+    out.push('base/stressed model Delta definitions are missing');
+  }
+  if (!/same pricing model/i.test(String(md.methodRule || '')) ||
+      !/versioned/i.test(String(md.methodRule || ''))) {
+    out.push('model Delta method is not same-model and versioned');
+  }
+  if (!/signedContracts/.test(String(ed.optionBase || '')) ||
+      !/contractMultiplier/.test(String(ed.optionBase || '')) ||
+      !/signedContracts/.test(String(ed.optionStressed || '')) ||
+      !/contractMultiplier/.test(String(ed.optionStressed || ''))) {
+    out.push('option economic Delta does not explicitly apply signed contracts and multiplier');
+  }
+  if (String(ed.equityBase || '') !== 'economicDeltaBase = signedShares' ||
+      String(ed.equityStressed || '') !== 'economicDeltaStressed = signedShares') {
+    out.push('equity scenario Delta is not signed shares');
+  }
+  for (const key of ['baseFormula', 'stressedFormula', 'changeFormula']) {
+    if (!String(bw[key] || '').includes('modelBwDeltaSpyEq')) out.push('missing SPY-equivalent formula ' + key);
+  }
+  if (!/frozen from the run snapshot/i.test(String(bw.betaState || '')) ||
+      !/Missing beta never becomes 1/i.test(String(bw.betaState || ''))) {
+    out.push('beta state/fallback rule is not explicit');
+  }
+  for (const set of ['actual', 'overlay', 'proposed', 'difference']) {
+    if (!(x.requiredResultSets || []).includes(set)) out.push('scenario exposure missing result set ' + set);
+  }
+  for (const field of ['modelDeltaBase','modelDeltaStressed','modelDeltaChange',
+    'modelBwDeltaSpyEqBase','modelBwDeltaSpyEqStressed','modelBwDeltaSpyEqChange','status','reason']) {
+    if (!(x.perResultSetFields || []).includes(field)) out.push('scenario exposure missing field ' + field);
+  }
+  if (!/MUST NOT be inferred from spot Beta-Weighted Delta alone/i.test(String(interp.nonlinearRule || ''))) {
+    out.push('nonlinear interpretation still permits spot-BWΔ-only inference');
+  }
+  if (!/bracket zero/i.test(String(interp.crossoverRule || '')) ||
+      !/approximate/i.test(String(interp.crossoverRule || ''))) {
+    out.push('crossover bracketing/approximation rule is missing');
+  }
+  if (!/scenario P&L/i.test(String(interp.hedgeAdequacyRule || '')) ||
+      !/not from the sign/i.test(String(interp.hedgeAdequacyRule || ''))) {
+    out.push('hedge adequacy is not tied to P&L rather than sign');
+  }
+  if (!/worst of the result-set status and the exposure metric status/i.test(String(auth.statusRule || ''))) {
+    out.push('exposure metric has no independent status authority rule');
+  }
+  if (!/null\/UNAVAILABLE/i.test(String(auth.unavailableRule || ''))) {
+    out.push('exposure missing-input rule does not require null/UNAVAILABLE');
+  }
+  return out;
+}
+
 // 13. The matrix contract pins the minimum grid, the cell fields, and the ban on
 //     per-cell work.
 function vMatrix(m) {
   const out = [];
   const mx = m.matrix || {};
-  if (JSON.stringify(mx.minimumSpyReturns) !== JSON.stringify([0, -0.05, -0.1, -0.15, -0.2])) {
+  if (JSON.stringify(mx.minimumSpyReturns) !== JSON.stringify([-0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2])) {
     out.push('minimumSpyReturns is ' + JSON.stringify(mx.minimumSpyReturns));
   }
   for (const v of ['current', '+50%', '+100%', '+200%']) {
     if (!(mx.minimumVixTargets || []).includes(v)) out.push('minimumVixTargets missing ' + v);
   }
   const CELL = ['scenarioId', 'spyReturn', 'stressedSpyPrice', 'vixTarget', 'actualStressPnl',
-    'proposedStressPnl', 'difference', 'actualStressPnlPctNlv', 'proposedStressPnlPctNlv', 'status'];
+    'proposedStressPnl', 'difference', 'actualStressPnlPctNlv', 'proposedStressPnlPctNlv', 'scenarioExposure', 'status'];
   const have = new Set(mx.cellFields || []);
   for (const f of CELL) if (!have.has(f)) out.push('matrix cell missing field ' + f);
   const FORBID = ['one request per cell', 'a full pricing loop in the renderer',
@@ -367,10 +437,10 @@ function vBenchmarkPlan(m) {
     out.push('benchmark load points are ' + JSON.stringify(legs));
   }
   for (const p of b.loadPoints || []) {
-    if (p.scenarios !== 20) out.push('load point ' + p.legs + ' legs does not use 20 scenarios');
+    if (p.scenarios !== 36) out.push('load point ' + p.legs + ' legs does not use the bilateral 36-scenario grid');
   }
-  if (b.limitsStatus !== 'TO_BE_DERIVED_FROM_MEASUREMENT') {
-    out.push('benchmark limits are asserted rather than measured: ' + JSON.stringify(b.limitsStatus));
+  if (b.limitsStatus !== 'TO_BE_REDERIVED_FOR_BILATERAL_36_SCENARIO_GRID') {
+    out.push('benchmark limits were not invalidated for the bilateral 36-scenario grid: ' + JSON.stringify(b.limitsStatus));
   }
   return out;
 }
@@ -534,8 +604,12 @@ section('5. Snapshot, overlay, scenario, matrix and benchmark contracts');
 mustHold(vSnapshot, MODEL, null, '5.1: snapshot carries every identity field and invalidation trigger');
 mustHold(vOverlay, MODEL, null, '5.2: overlay is additive, ephemeral and fully specified');
 mustHold(vScenarioModel, MODEL, null, '5.3: scenario model keeps SPY and VIX independent');
-mustHold(vMatrix, MODEL, null, '5.4: matrix pins the grid, the cell fields and the per-cell ban');
+mustHold(vScenarioExposureModel, MODEL, null, '5.3b: scenario exposure is same-model, state-dependent and separate from observed BWΔ');
+mustHold(vMatrix, MODEL, null, '5.4: matrix pins the bilateral grid, the cell fields and the per-cell ban');
 mustHold(vBenchmarkPlan, MODEL, null, '5.5: benchmark plan defers limits to measurement');
+ok((MODEL.matrix.minimumSpyReturns || []).some((x) => x > 0), '5.6: the mandatory matrix contains upside SPY shocks');
+ok((MODEL.matrix.minimumSpyReturns || []).some((x) => x < 0), '5.7: the mandatory matrix retains downside SPY shocks');
+ok(/MUST NOT be re-signed/i.test(String(MODEL.scenarioExposureModel.sourceSeparation.observedSpotBetaWeightedDelta)), '5.8: spot BWΔ semantics remain untouched');
 
 section('5b. Non-SPY shock and equity models');
 mustHold(vUnderlyingShockModel, MODEL, null, '5b.1: the per-symbol shock model is fully specified with declared precedence');
@@ -848,6 +922,23 @@ section('9. MUTATION PROOF — every validator is proven able to fail');
   // 9.15 presets presented as forecasts
   const m15 = clone(MODEL); m15.scenarioModel.presetSemantics = 'forecast of expected market moves';
   mustCatch(vScenarioModel, m15, null, 'presets presented as forecasts must be rejected');
+
+  // 9.15b a regression back to the old downside-only matrix
+  const m15b = clone(MODEL);
+  m15b.matrix.minimumSpyReturns = [0, -0.05, -0.1, -0.15, -0.2];
+  mustCatch(vMatrix, m15b, null, 'a downside-only matrix must be rejected');
+
+  // 9.15c a model that permits re-signing spot BWΔ to encode hedge intent
+  const m15c = clone(MODEL);
+  m15c.scenarioExposureModel.sourceSeparation.observedSpotBetaWeightedDelta =
+    'Current metric may be adjusted to show the intended hedge role.';
+  mustCatch(vScenarioExposureModel, m15c, null, 're-signing spot BWΔ must be rejected');
+
+  // 9.15d stressed exposure that is allowed to reuse snapshot/vendor Delta
+  const m15d = clone(MODEL);
+  m15d.scenarioExposureModel.modelDelta.stressedDefinition =
+    'reuse current vendor delta under every scenario';
+  mustCatch(vScenarioExposureModel, m15d, null, 'reusing vendor Delta as stressed model Delta must be rejected');
 
   // 9.16 benchmark limits asserted instead of measured
   const m16 = clone(MODEL); m16.benchmarkPlan.limitsStatus = 'p95 under 800ms';
