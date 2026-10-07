@@ -70,6 +70,7 @@ const {
 const U = require('./lib/journal-trade-forms-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const MODULE_REL = 'js/ui/journal-trade-forms.js';
 const MODULE_SRC = './' + MODULE_REL;
 const CONTRACT_REL = 'tests/journal-trade-forms-boundary-contract.test.js';
@@ -719,8 +720,7 @@ ok(WRITE_RE.test('_jtFormLegs[idx].expiry = 1;'.slice('_jtFormLegs'.length)),
 // ─────────────────────────────────────────────────────────────────────────────
 section('11. Exact production scope, and the temporary audit is gone');
 // ─────────────────────────────────────────────────────────────────────────────
-const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'])
-  .trim().split(/\r?\n/).filter(Boolean);
+const committed = extractionChangedPaths(ROOT, BASE_SHA);
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
