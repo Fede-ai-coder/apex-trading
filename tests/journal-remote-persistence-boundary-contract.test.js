@@ -34,6 +34,7 @@ const BACKUP_RESTORE_U = require('./lib/journal-backup-restore-undo.js');
 const MANUAL_U = require('./lib/journal-manual-import-undo.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = 'b82d2c8c616e91eff7197faf017ebc1451ced723';
 const MODULE_REL = 'js/services/journal-remote-persistence.js';
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
@@ -590,9 +591,7 @@ eq(identifierCount('jLastSyncShadow; jLastSync; jLastSyncCopy;', 'jLastSync'), 1
   'identifier guard ignores prefix/suffix collisions');
 
 section('7. production scope');
-const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
-  cwd: ROOT, encoding: 'utf8',
-}).trim().split(/\r?\n/).filter(Boolean);
+const changed = extractionChangedPaths(ROOT, BASE_SHA);
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 same(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL,
