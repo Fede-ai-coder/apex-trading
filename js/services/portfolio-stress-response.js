@@ -52,6 +52,11 @@
 //   is therefore forbidden here, unconditionally. `proposed` is read from
 //   `proposed` or it is null.
 //
+// THE v1.3 SCENARIO-EXPOSURE FAMILY
+//   Model-derived SPY-equivalent BWDelta is normalized as a separate family.
+//   It never overwrites the current/vendor Portfolio BWDelta, and raw economic
+//   Delta from different underlyings is never invented here as a portfolio sum.
+//
 // THE RAW RESPONSE IS NOT EXPOSED
 //   This module used to return the backend object under `response`, "so a future
 //   renderer can reach fields this contract does not model". That is an escape
