@@ -26,6 +26,7 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = '90118f5c36f0675e8d6aface275ece4f09cccd31';
 const BASE_TREE = '77c3827c6295cf8bd0846b89684bd96329f45b30';
 const BASE_SUBJECT = 'refactor(journal): extract backup restore UI (#405)';
@@ -430,10 +431,7 @@ function externalUsage(name) {
   })).filter((entry) => entry.refs > 0);
 }
 function changedPaths() {
-  const committed = execFileSync('git', ['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'], {
-    cwd: ROOT,
-    encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean);
+  const committed = extractionChangedPaths(ROOT, BASE_SHA);
   const statusOutput = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
     cwd: ROOT,
     encoding: 'utf8',
