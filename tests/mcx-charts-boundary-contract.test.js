@@ -41,6 +41,7 @@ const APP_LOADER = require('./lib/load-app-source.js');
 const { maskLiterals, scanTopLevelDeclarations } = require('./lib/eic-contract-guards.js');
 
 const ROOT = path.resolve(__dirname, '..');
+const { extractionChangedPaths } = require('./lib/extraction-history-scope.js');
 const BASE_SHA = '08adbc22cb90c19ae7942428785edde3db7461b5';
 const BASE_TREE = 'a219c0fae19afbefbd439df52695c6737ad3d64c';
 const BASE_SUBJECT = 'test(audit): measure MCX charts lifecycle boundary (A / B / C) (#407)';
@@ -1165,9 +1166,7 @@ throws(() => U.undoMcxCharts(INDEX, undefined), /BAD_INPUT/, 'an undefined modul
 // ─────────────────────────────────────────────────────────────────────────────
 section('12. Exact production scope and audit replacement');
 function changedPaths() {
-  const committed = execFileSync('git', ['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'], {
-    cwd: ROOT, encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean);
+  const committed = extractionChangedPaths(ROOT, BASE_SHA);
   const statusOutput = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
     cwd: ROOT, encoding: 'utf8',
   });
