@@ -413,7 +413,11 @@ const journalMapAuditTag = '<script src="./js/services/journal-map-audit.js"></s
 const dxlinkGreeksFetchTag = '<script src="./js/services/dxlink-greeks-fetch.js"></script>';
 const portfolioTechnicalParityTag = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
 const portfolioSpyPriceTag = '<script src="./js/portfolio/portfolio-spy-price.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
+const newestLayerTag = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
+// The role names shift down one each cycle; NO layer drops out of the chain
+// below, because a dropped link still passes on transitivity and would stop
+// checking the layer it named.
+const secondNewestLayerTag = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
 const previousLayerTag = '<script src="./js/portfolio/portfolio-leg-quantity.js"></script>';
 // The layer the one above displaced. Both names are ROLES, so each cycle
 // repoints them and adds a link here rather than leaving the displaced layer
@@ -422,7 +426,8 @@ const displacedLayerTag = '<script src="./js/services/apex-storage-recovery.js">
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
 const afterCiEnd = INDEX.indexOf('>', afterCiAt);
 const afterCiTag = afterCiEnd >= 0 ? INDEX.slice(afterCiAt, afterCiEnd + 1) : '';
-ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(previousLayerTag)
+ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(secondNewestLayerTag)
+  && INDEX.indexOf(secondNewestLayerTag) > INDEX.indexOf(previousLayerTag)
   && INDEX.indexOf(previousLayerTag) > INDEX.indexOf(displacedLayerTag)
   && INDEX.indexOf(displacedLayerTag) > INDEX.indexOf(portfolioSpyPriceTag)
   && INDEX.indexOf(portfolioSpyPriceTag) > INDEX.indexOf(portfolioTechnicalParityTag)
