@@ -99,6 +99,7 @@ const APEX_STORAGE_RECOVERY_TAG = '<script src="./js/services/apex-storage-recov
 const PORTFOLIO_LEG_QUANTITY_TAG = '<script src="./js/portfolio/portfolio-leg-quantity.js"></script>';
 const BACKEND_FULL_REFRESH_VALIDATION_TAG = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
 const PORTFOLIO_SNAPSHOT_FALLBACK_TAG = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 const REMOTE_MARKER =
   '// ══════════════════════════════════════════════════════════════\n' +
@@ -251,6 +252,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
@@ -276,10 +278,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(INDEX)
-  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(INDEX)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
   : INDEX;
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH;
 const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
   ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
       PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
@@ -456,7 +462,7 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REMOTE_TAG), 1, 'exactly one Journal Remote script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
   MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_CORE_TAG + '\n' +
-  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n',
+  REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n',
   'the full service tail, in load order, ends at the inline monolith — the\n   concatenation above IS the enumeration, so the message does not repeat it');
 ok(INDEX.indexOf(JOURNAL_UI_TAG) < INDEX.indexOf(REMOTE_TAG) &&
   INDEX.indexOf(REMOTE_TAG) < INDEX.indexOf(WRITE_TAG) &&
@@ -596,7 +602,7 @@ const changed = execFileSync('git', ['diff', '--name-only', BASE_SHA], {
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 same(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL,
-  'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-backend-write-through.js',
+  'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-backend-write-through.js',
   'js/services/journal-rich-snapshot.js',
   'js/portfolio/portfolio-backend-candles.js',
   'js/services/journal-snapshot-helpers.js',

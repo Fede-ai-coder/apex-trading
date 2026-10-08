@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const UNDO = require('./lib/portfolio-leg-quantity-undo.js');
@@ -472,10 +473,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(SHIPPED_INDEX)
-  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(SHIPPED_INDEX)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH;
 const LIVE_INDEX = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
   ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
       PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))

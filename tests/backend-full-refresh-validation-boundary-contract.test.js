@@ -119,6 +119,7 @@ const {
 const UNDO = require('./lib/backend-full-refresh-validation-undo.js');
 // The layer cut AFTER this one, peeled off before this layer's own document is
 // reconstructed. Newest-first, which is the rule the whole chain follows.
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL while
@@ -376,10 +377,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1277,7 +1282,7 @@ section('9. The relocation is the whole of the production change');
   // this chain already carries, adopted here the cycle it first applied.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-snapshot-fallback.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
@@ -1405,7 +1410,7 @@ section('10. The change set, the ratchet and the budget');
   ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
   ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html'
-    || rel === MODULE_REL || rel === 'js/portfolio/portfolio-snapshot-fallback.js'),
+    || rel === MODULE_REL || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js'),
   '…and every other changed path is a test artifact or a later layer\'s module');
   // THE RATCHET. The audit was RENAMED into this contract, so the suite file
   // count does NOT move this phase. That is asserted as the two commit facts,

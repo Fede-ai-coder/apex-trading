@@ -99,6 +99,9 @@ const {
 } = require('./lib/extraction-boundary.js');
 
 const UNDO = require('./lib/portfolio-snapshot-fallback-undo.js');
+// The layer cut AFTER this one, peeled off before this layer's own document is
+// reconstructed. Newest-first, which is the rule the whole chain follows.
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while
 // the cut was still a recommendation; it is no longer hypothetical.
@@ -319,11 +322,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('PORTFOLIO SNAPSHOT FALLBACK — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so nothing is peeled above it: the live document IS
-// this layer's shipped document. When a later cycle cuts again, a peel goes here
-// and LIVE_INDEX stops being the head of the tree — the idiom every older
-// contract in this chain already carries.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1027,13 +1036,16 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer
+  // moved exactly the audited bytes and nothing else, so the claim is inverted
+  // rather than dropped. It now reads against a base that a LATER layer has also
+  // moved past, so the footprint is the document, this layer's module, and the
+  // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-batch-fetch.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
