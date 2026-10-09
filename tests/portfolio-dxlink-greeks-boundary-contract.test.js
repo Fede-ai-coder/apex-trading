@@ -195,6 +195,7 @@ console.log('relocation only · audited #437 · base=' + BASE_SHA.slice(0, 7));
 // its own output by length and SHA-256, so the hop is proved, not assumed.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const RS_SKIP_BREAKDOWN_HTML_U = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
@@ -221,10 +222,14 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
+const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(LIVE_INDEX)
+  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(PRE_RS_SKIP_BREAKDOWN_HTML)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      PRE_RS_SKIP_BREAKDOWN_HTML, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
+  : PRE_RS_SKIP_BREAKDOWN_HTML;
 const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH)
   ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
       PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
@@ -348,11 +353,11 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // above is proved to return this contract's EXACT shipped state, and the live
 // state is pinned against the layer that now owns it. Without the second pair
 // the live document would be checked by nothing here.
-eq(LIVE_INDEX.length, PORTFOLIO_TECHNICAL_BATCH_FETCH_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, RS_SKIP_BREAKDOWN_HTML_U.EXTRACTED_CHARS,
   'the live document is the NEWEST layer\'s extracted length — the message names the\n   // role, not a layer, because naming the layer went stale the next cycle');
-eq(sha256(LIVE_INDEX), PORTFOLIO_TECHNICAL_BATCH_FETCH_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), RS_SKIP_BREAKDOWN_HTML_U.EXTRACTED_SHA256, '…and its digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 20, '…carrying one more local script for every layer cut since');
+  LOCAL_SCRIPT_COUNT + 21, '…carrying one more local script for every layer cut since');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -700,7 +705,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/portfolio-vega-monitor.js',
+    ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-vega-monitor.js',
       'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js',
       'js/ui/chart-interactions.js', 'js/services/journal-snapshot-helpers.js', MODULE_REL, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
@@ -740,7 +745,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'js/config/strategy-templates.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),

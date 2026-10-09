@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const RS_SKIP_BREAKDOWN_HTML = require('./rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH = require('./portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK = require('./portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION = require('./backend-full-refresh-validation-undo.js');
@@ -224,6 +225,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const RS_SKIP_BREAKDOWN_HTML_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'ui', 'rs-skip-breakdown-html.js'),
+  'utf8'
+);
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-technical-batch-fetch.js'),
   'utf8'
@@ -405,10 +410,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioTechnicalBatchFetch = PORTFOLIO_TECHNICAL_BATCH_FETCH.isApplied(html)
-    ? PORTFOLIO_TECHNICAL_BATCH_FETCH.undoPortfolioTechnicalBatchFetch(
-      html, PORTFOLIO_TECHNICAL_BATCH_FETCH_SOURCE)
+  const preRsSkipBreakdownHtml = RS_SKIP_BREAKDOWN_HTML.isApplied(html)
+    ? RS_SKIP_BREAKDOWN_HTML.undoRsSkipBreakdownHtml(
+      html, RS_SKIP_BREAKDOWN_HTML_SOURCE)
     : html;
+  const prePortfolioTechnicalBatchFetch = PORTFOLIO_TECHNICAL_BATCH_FETCH.isApplied(preRsSkipBreakdownHtml)
+    ? PORTFOLIO_TECHNICAL_BATCH_FETCH.undoPortfolioTechnicalBatchFetch(
+      preRsSkipBreakdownHtml, PORTFOLIO_TECHNICAL_BATCH_FETCH_SOURCE)
+    : preRsSkipBreakdownHtml;
   const prePortfolioSnapshotFallback = PORTFOLIO_SNAPSHOT_FALLBACK.isApplied(prePortfolioTechnicalBatchFetch)
     ? PORTFOLIO_SNAPSHOT_FALLBACK.undoPortfolioSnapshotFallback(
       prePortfolioTechnicalBatchFetch, PORTFOLIO_SNAPSHOT_FALLBACK_SOURCE)
