@@ -276,6 +276,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
@@ -301,10 +302,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_SNAPSHOT_FALLBACK = PORTFOLIO_SNAPSHOT_FALLBACK_U.isApplied(PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH)
+  ? PORTFOLIO_SNAPSHOT_FALLBACK_U.undoPortfolioSnapshotFallback(
+      PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-snapshot-fallback.js'), 'utf8'))
+  : PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH;
 const PRE_BACKEND_FULL_REFRESH_VALIDATION = BACKEND_FULL_REFRESH_VALIDATION_U.isApplied(PRE_PORTFOLIO_SNAPSHOT_FALLBACK)
   ? BACKEND_FULL_REFRESH_VALIDATION_U.undoBackendFullRefreshValidation(
       PRE_PORTFOLIO_SNAPSHOT_FALLBACK, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-full-refresh-validation.js'), 'utf8'))
@@ -674,8 +679,8 @@ eq(PRE_TT_RECONNECT.length, TT_RECONNECT_U.BASE_CHARS,
 eq(sha256(PRE_TT_RECONNECT), TT_RECONNECT_U.BASE_SHA256,
   'peeling the TT reconnect layer reaches the pinned post-#410 index hash');
 eq(APEX_POST_AUTH_U.isApplied(PRE_TT_RECONNECT), true, 'the post-#410 document carries the later Apex post-auth layer');
-eq(LIVE_INDEX.length, PORTFOLIO_SNAPSHOT_FALLBACK_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), PORTFOLIO_SNAPSHOT_FALLBACK_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(LIVE_INDEX.length, PORTFOLIO_TECHNICAL_BATCH_FETCH_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), PORTFOLIO_TECHNICAL_BATCH_FETCH_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
 // Re-terminated with the chain, again: the live pin moves up to the vega
 // monitor, and the strategy-templates document it used to name is asserted here
 // on the peeled state, so shifting the chain never leaves a slot pinned by
@@ -711,7 +716,7 @@ eq(PRE_RICH_SNAPSHOT.length, CANDLE_CHART_U.EXTRACTED_CHARS,
 eq(sha256(PRE_RICH_SNAPSHOT), CANDLE_CHART_U.EXTRACTED_SHA256,
   '…and its hash');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length,
-  PORTFOLIO_SNAPSHOT_FALLBACK_U.EXTRACTED_LOCAL_SCRIPTS,
+  PORTFOLIO_TECHNICAL_BATCH_FETCH_U.EXTRACTED_LOCAL_SCRIPTS,
   'the live shipped index carries the newest layer’s local-script count');
 eq(PRE_TT_RECONNECT.length, APEX_POST_AUTH_U.EXTRACTED_CHARS, '…peeling TT reconnect returns it to the post-Apex length');
 eq(sha256(PRE_TT_RECONNECT), APEX_POST_AUTH_U.EXTRACTED_SHA256, '…and to the post-Apex hash');
@@ -977,8 +982,8 @@ eq(APP_LOADER.parseScriptTags(INDEX).filter((entry) => entry.src && /^\.\//.test
 // module is second-to-last rather than last. The invariant this line protects —
 // the charts owner evaluates before the inline monolith that consumes it — is
 // unchanged and asserted in its stronger, current form.
-eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-35),
-  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', '(inline)'],
+eq(APP_LOADER.loadOrderedScriptSources().filter((p) => p.isAppJs && p.code != null).map((p) => p.src || '(inline)').slice(-36),
+  [MODULE_SRC, './js/services/apex-post-auth-init.js', './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', './js/portfolio/portfolio-technical-batch-fetch.js', '(inline)'],
   'in execution order the module runs immediately before the Apex post-auth owner, which precedes the TT reconnect and Journal Close Legs owners and then the inline monolith');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1176,7 +1181,7 @@ function changedPaths() {
 }
 const changed = changedPaths();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
 'js/services/journal-map-audit.js',
 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL, 'js/ui/tt-reconnect.js'].sort(),
   'production footprint is exactly index.html plus the MCX charts owner and the later Apex post-auth, TT reconnect and Journal Close Legs owners');
@@ -1199,7 +1204,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||

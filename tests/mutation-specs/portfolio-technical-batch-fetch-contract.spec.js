@@ -1,39 +1,39 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary portfolio technical batch fetch audit.
+// Mutation spec — the PERMANENT portfolio technical batch fetch contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// FOUR PINS NEED EXPLICIT `covers`: DECL_FIRST_LINE, ZERO_DIRECTIONS,
-// FAILURE_REASONS and RUNNERS_UP are multi-line declarations, so the generator's
-// single-line pattern never matches them. That is the completeness gap the
-// coverage contract exists to find, and it found DOC_FIRST_LINE in #475, CHAIN
-// in #476 and, in #478, the chain again — so they are written in by hand here
-// from the start.
+// FIVE PINS NEED EXPLICIT `covers`: DECL_FIRST_LINE, ZERO_DIRECTIONS,
+// FAILURE_REASONS, RUNNERS_UP and CHAIN are multi-line declarations, so the
+// generator's single-line pattern never matches them. That is the completeness
+// gap the coverage contract exists to find, so they are written in by hand.
+// CHAIN joins the list in THIS phase: while this file was an audit it READ the
+// chain off the newest contract and declared nothing to mutate, and Phase 2
+// gives it a 44-entry literal of its own.
 //
 // ZEROES MOVE UPWARD, because zero is also what a predicate measuring nothing
 // returns: CHAIN_OUTBOUND, COMMENT_LINES, BLANK_LINES, TOP_LEVEL_STATEMENT_LINES,
 // NON_LOCAL_ASSIGNMENTS, HOST_GLOBAL_MENTIONS and BETTER_SCORING all go to ONE,
 // and the empty ARRAYS gain an entry instead.
-//
-// A PATH IS MUTATED TO A REAL NEIGHBOUR, never to one that does not exist. A
-// constant whose only use is an existence or membership test is satisfied by any
-// sibling that also ships, and that survivor was found in #461, #465 and #466.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.js',
-  runs: ['tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.js'],
+  target: 'tests/portfolio-technical-batch-fetch-boundary-contract.test.js',
+  runs: ['tests/portfolio-technical-batch-fetch-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-technical-batch-fetch.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-snapshot-fallback.js';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/portfolio/portfolio-technical-batch-fetch.js';",
+      replace: "const MODULE_REL = 'js/portfolio/portfolio-technical-batch-fetch.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '454f79e';",
-      replace: "const BASE_SHA = '454f79X';", },
+      find: "const BASE_SHA = '09932fa';",
+      replace: "const BASE_SHA = '09932fX';", },
+    { id: "AUDIT_BASE_SHA",
+      find: "const AUDIT_BASE_SHA = '454f79e';",
+      replace: "const AUDIT_BASE_SHA = '454f79X';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1454677;",
       replace: "const BASE_CHARS = 1454678;", },
@@ -54,34 +54,40 @@ module.exports = {
       replace: "const TEST_FILE_COUNT = 173;", },
     { id: "AUDIT_REL",
       find: "const AUDIT_REL = 'tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.js';",
-      replace: "const AUDIT_REL = 'tests/mutation-coverage-contract.test.js';", },
+      replace: "const AUDIT_REL = 'tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.jX';", },
     { id: "AUDIT_SPEC_REL",
       find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-audit.spec.js';",
-      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-audit.spec.jX';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/portfolio-technical-batch-fetch-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/portfolio-technical-batch-fetch-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/portfolio-technical-batch-fetch-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/portfolio-technical-batch-fetch-undo.jX';", },
     { id: "RATCHETED_CONTRACTS",
       find: "const RATCHETED_CONTRACTS = 34;",
       replace: "const RATCHETED_CONTRACTS = 35;", },
     { id: "COVERAGE_CONTRACT",
       find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
-      replace: "const COVERAGE_CONTRACT = 'tests/portfolio-snapshot-fallback-boundary-contract.test.js';", },
+      replace: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.jX';", },
     { id: "PREVIOUS_CONTRACT",
       find: "const PREVIOUS_CONTRACT = 'tests/portfolio-snapshot-fallback-boundary-contract.test.js';",
-      replace: "const PREVIOUS_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.js';", },
-    { id: "PREVIOUS_CONTRACT_SPEC",
-      find: "const PREVIOUS_CONTRACT_SPEC = 'tests/mutation-specs/portfolio-snapshot-fallback-contract.spec.js';",
-      replace: "const PREVIOUS_CONTRACT_SPEC = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-snapshot-fallback-boundary-contract.test.jX';", },
     { id: "REFUSING_CONTRACT",
       find: "const REFUSING_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.js';",
-      replace: "const REFUSING_CONTRACT = 'tests/portfolio-leg-quantity-boundary-contract.test.js';", },
+      replace: "const REFUSING_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.jX';", },
     { id: "BASE_DECLARED_MUTANTS",
-      find: "const BASE_DECLARED_MUTANTS = 114;",
-      replace: "const BASE_DECLARED_MUTANTS = 115;", },
+      find: "const BASE_DECLARED_MUTANTS = 129;",
+      replace: "const BASE_DECLARED_MUTANTS = 130;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-snapshot-fallback-contract.spec.js';",
-      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-audit.spec.js';",
+      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-audit.spec.jX';", },
     { id: "RETIRED_MUTANTS",
-      find: "const RETIRED_MUTANTS = 108;",
-      replace: "const RETIRED_MUTANTS = 109;", },
+      find: "const RETIRED_MUTANTS = 123;",
+      replace: "const RETIRED_MUTANTS = 124;", },
     { id: "BASE_SPECS",
       find: "const BASE_SPECS = 2;",
       replace: "const BASE_SPECS = 3;", },
@@ -344,8 +350,8 @@ module.exports = {
       find: "const SCORE_TWO_BEST_NINE_COUNT = 1;",
       replace: "const SCORE_TWO_BEST_NINE_COUNT = 2;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 43;",
-      replace: "const CHAIN_LENGTH = 44;", },
+      find: "const CHAIN_LENGTH = 44;",
+      replace: "const CHAIN_LENGTH = 45;", },
     { id: "SMALLEST_LAYER_CHARS",
       find: "const SMALLEST_LAYER_CHARS = 1761;",
       replace: "const SMALLEST_LAYER_CHARS = 1762;", },
@@ -355,24 +361,21 @@ module.exports = {
     { id: "LARGEST_LAYER_CHARS",
       find: "const LARGEST_LAYER_CHARS = 71811;",
       replace: "const LARGEST_LAYER_CHARS = 71812;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 2;",
-      replace: "const SIZE_RANK_IF_CUT = 3;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 2;",
+      replace: "const SIZE_RANK = 3;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 42;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 43;", },
     { id: "PURE_ASCII_LAYERS",
-      find: "const PURE_ASCII_LAYERS = 2;",
-      replace: "const PURE_ASCII_LAYERS = 3;", },
-    { id: "PURE_ASCII_AFTER",
-      find: "const PURE_ASCII_AFTER = 3;",
-      replace: "const PURE_ASCII_AFTER = 4;", },
+      find: "const PURE_ASCII_LAYERS = 3;",
+      replace: "const PURE_ASCII_LAYERS = 4;", },
+    { id: "PURE_ASCII_BEFORE",
+      find: "const PURE_ASCII_BEFORE = 2;",
+      replace: "const PURE_ASCII_BEFORE = 3;", },
     { id: "LAYERS_OPENING_ON_BANNER",
       find: "const LAYERS_OPENING_ON_BANNER = 23;",
       replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-technical-batch-fetch.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-technical-batch-fetch.js\"></script>\\X';", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 1779;",
       replace: "const NET_REDUCTION = 1780;", },
@@ -385,6 +388,9 @@ module.exports = {
     { id: "LOCAL_SCRIPTS_AFTER",
       find: "const LOCAL_SCRIPTS_AFTER = 88;",
       replace: "const LOCAL_SCRIPTS_AFTER = 89;", },
+    { id: "TAG_LOCAL_INDEX",
+      find: "const TAG_LOCAL_INDEX = 87;",
+      replace: "const TAG_LOCAL_INDEX = 88;", },
     { id: "DECL_FIRST_LINE",
       covers: ["DECL_FIRST_LINE"],
       find: "const DECL_FIRST_LINE =\n  'async function _fetchPortfolioTechnicalBatch(batchSymbols, timeframes, perBatchTimeoutMs, isLatestSeqFn) {';",
@@ -397,6 +403,10 @@ module.exports = {
       covers: ["FAILURE_REASONS"],
       find: "  'aborted_json_parse', 'http_not_ok', 'invalid_json', 'request_error', 'stale_seq', 'timeout',\n];",
       replace: "  'aborted_json_parse', 'http_not_ok', 'invalid_json', 'request_error', 'stale_seq',\n];", },
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/portfolio/portfolio-snapshot-fallback.js',\n  'js/portfolio/portfolio-technical-batch-fetch.js',\n];",
+      replace: "  'js/portfolio/portfolio-snapshot-fallback.js',\n];", },
     { id: "RUNNERS_UP",
       covers: ["RUNNERS_UP"],
       find: "  [336585, 2, 1691],",
