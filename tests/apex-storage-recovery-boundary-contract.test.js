@@ -155,12 +155,12 @@ const BASE_LF = 25420;
 const BASE_SHA256 = 'cd9caf4339b47b890dd096468a42b92515fa879859df606629b7c8964a613dfa';
 const LOCAL_SCRIPTS = 83;
 const BASE_TEST_FILE_COUNT = 168;
-const TEST_FILE_COUNT = 172;
+const TEST_FILE_COUNT = 173;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-apex-storage-recovery-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/apex-storage-recovery-audit.spec.js';
-const RATCHETED_CONTRACTS = 34;
+const RATCHETED_CONTRACTS = 35;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 const NEWEST_CONTRACT = 'tests/portfolio-spy-price-boundary-contract.test.js';
 const NEWEST_CONTRACT_SPEC = 'tests/mutation-specs/portfolio-spy-price-contract.spec.js';
