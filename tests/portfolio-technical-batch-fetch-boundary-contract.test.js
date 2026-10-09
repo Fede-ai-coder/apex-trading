@@ -107,6 +107,12 @@ const MODULE_REL = 'js/portfolio/portfolio-technical-batch-fetch.js';
 // but only this commit carries the audit that §10 asserts was replaced
 // one-for-one.
 const BASE_SHA = '09932fa';
+// The commit that SHIPPED this layer. "The rename moved no files" is a fact about
+// these TWO commits; comparing the base commit's count against the LIVE
+// TEST_FILE_COUNT held only until the next cycle ratcheted it — a historical
+// value pinned against a live one, the pattern the previous contract had to be
+// converted for.
+const SHIPPED_SHA = '56e8b37';
 // The commit the AUDIT measured, one merge earlier. Phase 1 changed no production
 // byte, so §1 asserts its index.html is this one's.
 const AUDIT_BASE_SHA = '454f79e';
@@ -115,19 +121,24 @@ const BASE_UTF8 = 1483244;
 const BASE_LF = 25152;
 const BASE_SHA256 = '0757e6576b328511c3014d6746ac2c6ff9513b0d16999f8b5ef321f2bf637aca';
 const LOCAL_SCRIPTS = 87;
-const TEST_FILE_COUNT = 172;
+const TEST_FILE_COUNT = 173;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-audit.spec.js';
 const CONTRACT_REL = 'tests/portfolio-technical-batch-fetch-boundary-contract.test.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-technical-batch-fetch-contract.spec.js';
+// THIS CONTRACT'S SPEC IS RETIRED, by the next cycle's Phase 1 as the rhythm
+// runs, so it can no longer be `require`d. What it held is a fact about the
+// commit that last carried it and stays true forever.
+const SPEC_RETIRED_FROM = '56e8b37';
+const CONTRACT_SPEC_MUTANTS = 127;
 const UNDO_REL = 'tests/lib/portfolio-technical-batch-fetch-undo.js';
 // LIVE, and ratcheted with TEST_FILE_COUNT: the number of contracts pinning the
-// suite file count TODAY. It moves up by one whenever a cycle's audit lands,
-// because the audit pins it; Phase 2 RENAMES the file that carries the pin and
-// so adds none, which is why the rename left it where the audit had put it.
-const RATCHETED_CONTRACTS = 34;
+// suite file count TODAY, which moves up by one whenever a cycle's audit lands,
+// because the audit pins it. At the commit that shipped this layer it was one
+// fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
+const RATCHETED_CONTRACTS = 35;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-snapshot-fallback-boundary-contract.test.js';
@@ -1347,7 +1358,6 @@ section('10. The change set, the ratchet and the budget');
     'CONTRACT_REL is the path of THIS file, which is what the audit became');
   ok(all.indexOf(CONTRACT_REL) >= 0, '…and it is part of the change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), 'the audit\'s spec is gone too');
-  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by this contract\'s');
   ok(fs.existsSync(path.join(ROOT, UNDO_REL)), 'and the undo helper ships');
   eq(all.filter((rel) => !rel.startsWith('tests/') && rel !== 'index.html'
     && !rel.startsWith('js/')), [],
@@ -1357,9 +1367,13 @@ section('10. The change set, the ratchet and the budget');
   // the fact that a rename happened.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
     TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files');
-  eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
-    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
-  '…the same count the base commit carried, read out of git: one file left as one arrived');
+  {
+    const countAt = (sha) => git(['ls-tree', '-r', '--name-only', sha, 'tests/'])
+      .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length;
+    eq(countAt(BASE_SHA), countAt(SHIPPED_SHA),
+      '…and the commit that shipped this layer carries the SAME count as the base, read out of '
+      + 'git for both, because renaming the audit into this contract moves no files');
+  }
   const RATCHETED = /^const TEST_FILE_COUNT = \d+;$/m;
   const contracts = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => f.endsWith('.test.js') &&
@@ -1371,17 +1385,27 @@ section('10. The change set, the ratchet and the budget');
   ok(contracts.indexOf(path.basename(CONTRACT_REL)) >= 0,
     '…this contract being one of them, so it ratchets itself rather than exempting itself');
   // THE BUDGET.
-  const contractSpec = require(path.join(ROOT, CONTRACT_SPEC_REL));
-  eq(contractSpec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
+  // READ OUT OF THE REVISION THAT LAST CARRIED IT: `require` would throw now.
+  const contractSpecAt = git(['show', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]);
+  eq((contractSpecAt.match(/\n    \{ id: /g) || []).length, CONTRACT_SPEC_MUTANTS,
+    'this contract\'s spec carried CONTRACT_SPEC_MUTANTS mutants, one per pin');
+  ok(contractSpecAt.indexOf("target: '" + CONTRACT_REL + "'") >= 0,
+    '…and it targeted this contract');
   const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
   const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
   const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
   eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
     .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
   'the base declared BASE_DECLARED_MUTANTS mutants');
-  eq(declaredNow, BASE_DECLARED_MUTANTS + contractSpec.mutants.length - RETIRED_MUTANTS,
-    '…and the live total is the base, LESS the audit spec this phase retires, PLUS this '
-    + 'contract\'s own — the arithmetic of the change rather than the total it reaches');
+  // THE ARITHMETIC IS A FACT ABOUT THE COMMIT THAT SHIPPED THIS LAYER, read out
+  // of git. Against the LIVE total it held only until the next cycle retired
+  // this contract's spec and landed its own audit — the pattern is always the
+  // same: a phase's arithmetic belongs to that phase's commit.
+  eq(Number(git(['show', SPEC_RETIRED_FROM + ':' + COVERAGE_CONTRACT])
+    .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]),
+  BASE_DECLARED_MUTANTS + CONTRACT_SPEC_MUTANTS - RETIRED_MUTANTS,
+  '…and at the commit that shipped this layer the total was the base, LESS the audit spec '
+  + 'that phase retired, PLUS this contract\'s own');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/mutation-specs/'])
     .split('\n').filter(Boolean).length, BASE_SPECS,
   '…the base having carried BASE_SPECS specs, read out of git');
@@ -1402,8 +1426,12 @@ section('10. The change set, the ratchet and the budget');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
-  eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)],
-    '…and after Phase 2 it is THIS contract\'s');
+  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
+    '…and this contract\'s own spec is retired now too, by the next cycle\'s Phase 1');
+  ok(layerSpecs.indexOf(path.basename(CONTRACT_SPEC_REL)) < 0,
+    '…so it is not the one non-coverage spec that is committed');
+  eq(git(['cat-file', '-e', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]), '',
+    '…a path the commit that shipped this layer really carried, so its absence is a retirement');
 }
 
 console.log('\n' + pass + ' assertions passed.');
