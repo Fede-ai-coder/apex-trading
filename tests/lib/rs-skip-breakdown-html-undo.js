@@ -32,10 +32,12 @@
 // at the declaration, the one opening the screen visits, would leave the two
 // comment lines directly above the next feature's banner.
 //
-// THE SCORE-1 TIER WAS EMPTY. The audit that preceded this layer counted no
-// clean candidate at byConsumerSplit 1 once the previous layer had shipped. The
-// best score left was 2, and this function was the only candidate in the screen
-// with a raw nine below 3.
+// THE SHIPPED SCREEN'S SCORE-1 TIER WAS EMPTY. The audit that preceded this layer
+// counted no clean candidate at byConsumerSplit 1 once the previous layer had
+// shipped. That is a statement about the screen, which floors a run on its
+// declaration alone and so never enumerated functions that only clear the floor
+// with their documentation. The best score the screen found was 2, and this
+// function was the only candidate in the screen with a raw nine below 3.
 //
 // ONE CONSUMER AND ONE DEPENDENCY. The references that reach in come from a
 // single consumer, `rsbMaybeRenderBackendRs`, at one call site. The one

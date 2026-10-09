@@ -142,7 +142,7 @@ const BASE_UTF8 = 1489157;
 const BASE_LF = 25260;
 const BASE_SHA256 = '3bfa332025683970702a7a889f5f8d0ce35ec49f0ba4eca836d3c6adca3f965c';
 const LOCAL_SCRIPTS = 85;
-const TEST_FILE_COUNT = 173;
+const TEST_FILE_COUNT = 174;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-backend-full-refresh-validation-boundary-audit.test.js';
@@ -155,7 +155,7 @@ const CONTRACT_SPEC_REL = 'tests/mutation-specs/backend-full-refresh-validation-
 const SPEC_RETIRED_FROM = '08a8b04';
 const CONTRACT_SPEC_MUTANTS = 131;
 const UNDO_REL = 'tests/lib/backend-full-refresh-validation-undo.js';
-const RATCHETED_CONTRACTS = 35;
+const RATCHETED_CONTRACTS = 36;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-leg-quantity-boundary-contract.test.js';
