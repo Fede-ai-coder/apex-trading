@@ -124,7 +124,7 @@ const BASE_UTF8 = 1486290;
 const BASE_LF = 25203;
 const BASE_SHA256 = '4560fd43a857ea60feef29fda90ade7826c39d7e76ce3a8f7794c13b941be19d';
 const LOCAL_SCRIPTS = 86;
-const TEST_FILE_COUNT = 173;
+const TEST_FILE_COUNT = 174;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-snapshot-fallback-boundary-audit.test.js';
@@ -143,7 +143,7 @@ const UNDO_REL = 'tests/lib/portfolio-snapshot-fallback-undo.js';
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
 // The 40 contracts that phase re-chained are a different set — they carry the
 // peel, not the suite count.
-const RATCHETED_CONTRACTS = 35;
+const RATCHETED_CONTRACTS = 36;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/backend-full-refresh-validation-boundary-contract.test.js';
