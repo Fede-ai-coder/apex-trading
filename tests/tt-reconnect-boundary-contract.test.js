@@ -267,6 +267,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML_U = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
@@ -294,10 +295,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(LIVE_INDEX)
-  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+const PRE_PORTFOLIO_GREEKS_FRESHNESS = PORTFOLIO_GREEKS_FRESHNESS_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_GREEKS_FRESHNESS_U.undoPortfolioGreeksFreshness(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-greeks-freshness.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(PRE_PORTFOLIO_GREEKS_FRESHNESS)
+  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
+      PRE_PORTFOLIO_GREEKS_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+  : PRE_PORTFOLIO_GREEKS_FRESHNESS;
 const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(PRE_RS_SKIP_BREAKDOWN_HTML)
   ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
       PRE_RS_SKIP_BREAKDOWN_HTML, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
@@ -536,8 +541,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // APP_PARTS is read from the LIVE document, which also carries every layer cut
 // after this one, so the live tail runs past this module to the monolith. The
 // length is not restated here: the array below IS the count.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-35),
-  [MODULE_SRC, './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', './js/portfolio/portfolio-technical-batch-fetch.js', './js/ui/rs-skip-breakdown-html.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-36),
+  [MODULE_SRC, './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', './js/portfolio/portfolio-technical-batch-fetch.js', './js/ui/rs-skip-breakdown-html.js', './js/portfolio/portfolio-greeks-freshness.js', '(inline)'],
   'in execution order the module runs immediately before the Journal Close Legs owner, which precedes the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -657,7 +662,7 @@ const ownerPartIdx = APP_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const apexPartIdx = APP_PARTS.findIndex((p) => p.src === './js/services/apex-post-auth-init.js');
 ok(apexPartIdx >= 0 && ownerPartIdx === apexPartIdx + 1,
   'the module evaluates immediately after apex-post-auth-init.js, so its call-time lookup resolves');
-ok(ownerPartIdx === APP_PARTS.length - 35,
+ok(ownerPartIdx === APP_PARTS.length - 36,
   '…and before every layer cut after it, which all precede the inline monolith — the gap\n' +
   '   grows by one each cycle, so it is counted off APP_PARTS rather than listed in this sentence');
 // The documentation-only mention is still a comment, not a consumer.
@@ -822,7 +827,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', MODULE_REL].sort(),
   'production footprint is exactly index.html plus the TT reconnect owner and the later Journal Close Legs owner');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
@@ -841,7 +846,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),

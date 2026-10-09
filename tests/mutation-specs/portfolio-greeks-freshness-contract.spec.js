@@ -1,17 +1,20 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary greeks freshness audit.
+// Mutation spec — the PERMANENT portfolio greeks freshness contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// SEVEN PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
-// ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_ONE_ROWS and
-// RUNNERS_UP are multi-line declarations, so the generator's single-line pattern
-// never matches them. That is the completeness gap the coverage contract exists
-// to find, so they are written in by hand here from the start.
+// EIGHT PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
+// ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_ONE_ROWS,
+// RUNNERS_UP and CHAIN are multi-line declarations, so the generator's
+// single-line pattern never matches them. That is the completeness gap the
+// coverage contract exists to find, so they are written in by hand. CHAIN joins
+// the list in THIS phase: while this file was an audit it READ the chain off the
+// newest contract and declared nothing to mutate, and Phase 2 gives it a
+// 46-entry literal of its own.
 //
 // ZEROES MOVE UPWARD, because zero is also what a predicate measuring nothing
 // returns: CHAIN_OUTBOUND, COMMENT_LINES, BLANK_LINES, TOP_LEVEL_STATEMENT_LINES,
@@ -23,16 +26,19 @@
 // sibling that also ships, and that survivor was found in #461, #465 and #466.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-greeks-freshness-boundary-audit.test.js',
-  runs: ['tests/temporary-greeks-freshness-boundary-audit.test.js'],
+  target: 'tests/portfolio-greeks-freshness-boundary-contract.test.js',
+  runs: ['tests/portfolio-greeks-freshness-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-greeks-freshness.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/ui/rs-skip-breakdown-html.js';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/portfolio/portfolio-greeks-freshness.js';",
+      replace: "const MODULE_REL = 'js/portfolio/portfolio-greeks-freshness.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '6d48268';",
-      replace: "const BASE_SHA = '6d4826X';", },
+      find: "const BASE_SHA = 'f1739ad';",
+      replace: "const BASE_SHA = 'f1739aX';", },
+    { id: "AUDIT_BASE_SHA",
+      find: "const AUDIT_BASE_SHA = '6d48268';",
+      replace: "const AUDIT_BASE_SHA = '6d4826X';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1451155;",
       replace: "const BASE_CHARS = 1451156;", },
@@ -53,28 +59,37 @@ module.exports = {
       replace: "const TEST_FILE_COUNT = 175;", },
     { id: "AUDIT_REL",
       find: "const AUDIT_REL = 'tests/temporary-greeks-freshness-boundary-audit.test.js';",
-      replace: "const AUDIT_REL = 'tests/mutation-coverage-contract.test.js';", },
+      replace: "const AUDIT_REL = 'tests/temporary-greeks-freshness-boundary-audit.test.jX';", },
     { id: "AUDIT_SPEC_REL",
       find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/greeks-freshness-audit.spec.js';",
-      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/greeks-freshness-audit.spec.jX';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/portfolio-greeks-freshness-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/portfolio-greeks-freshness-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-greeks-freshness-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-greeks-freshness-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/portfolio-greeks-freshness-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/portfolio-greeks-freshness-undo.jX';", },
     { id: "RATCHETED_CONTRACTS",
       find: "const RATCHETED_CONTRACTS = 36;",
       replace: "const RATCHETED_CONTRACTS = 37;", },
     { id: "COVERAGE_CONTRACT",
       find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
-      replace: "const COVERAGE_CONTRACT = 'tests/rs-skip-breakdown-boundary-contract.test.js';", },
+      replace: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.jX';", },
     { id: "PREVIOUS_CONTRACT",
       find: "const PREVIOUS_CONTRACT = 'tests/rs-skip-breakdown-boundary-contract.test.js';",
-      replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-technical-batch-fetch-boundary-contract.test.js';", },
+      replace: "const PREVIOUS_CONTRACT = 'tests/rs-skip-breakdown-boundary-contract.test.jX';", },
     { id: "BASE_DECLARED_MUTANTS",
-      find: "const BASE_DECLARED_MUTANTS = 139;",
-      replace: "const BASE_DECLARED_MUTANTS = 140;", },
+      find: "const BASE_DECLARED_MUTANTS = 124;",
+      replace: "const BASE_DECLARED_MUTANTS = 125;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/rs-skip-breakdown-contract.spec.js';",
-      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/greeks-freshness-audit.spec.js';",
+      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/greeks-freshness-audit.spec.jX';", },
     { id: "RETIRED_MUTANTS",
-      find: "const RETIRED_MUTANTS = 133;",
-      replace: "const RETIRED_MUTANTS = 134;", },
+      find: "const RETIRED_MUTANTS = 118;",
+      replace: "const RETIRED_MUTANTS = 119;", },
     { id: "BASE_SPECS",
       find: "const BASE_SPECS = 2;",
       replace: "const BASE_SPECS = 3;", },
@@ -322,14 +337,14 @@ module.exports = {
       find: "const PREVIOUS_RAW_END = 338277;",
       replace: "const PREVIOUS_RAW_END = 338278;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 45;",
-      replace: "const CHAIN_LENGTH = 46;", },
+      find: "const CHAIN_LENGTH = 46;",
+      replace: "const CHAIN_LENGTH = 47;", },
     { id: "SMALLEST_LAYER_CHARS",
       find: "const SMALLEST_LAYER_CHARS = 1761;",
       replace: "const SMALLEST_LAYER_CHARS = 1762;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 4;",
-      replace: "const SIZE_RANK_IF_CUT = 5;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 4;",
+      replace: "const SIZE_RANK = 5;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 42;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 43;", },
@@ -342,9 +357,6 @@ module.exports = {
     { id: "LAYERS_OPENING_ON_BANNER",
       find: "const LAYERS_OPENING_ON_BANNER = 23;",
       replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-greeks-freshness.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-greeks-freshness.js\"></script>\\X';", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 1965;",
       replace: "const NET_REDUCTION = 1966;", },
@@ -357,6 +369,9 @@ module.exports = {
     { id: "LOCAL_SCRIPTS_AFTER",
       find: "const LOCAL_SCRIPTS_AFTER = 90;",
       replace: "const LOCAL_SCRIPTS_AFTER = 91;", },
+    { id: "TAG_LOCAL_INDEX",
+      find: "const TAG_LOCAL_INDEX = 89;",
+      replace: "const TAG_LOCAL_INDEX = 90;", },
     { id: "OPENINGS",
       find: "const OPENINGS = [];",
       replace: "const OPENINGS = ['x'];", },
@@ -384,6 +399,10 @@ module.exports = {
       covers: ["HIDDEN_SCORE_ONE_ROWS"],
       find: "  [778314, 780347, 1063, 2033, 1, 1, ['_portfolioGreeksFreshness']],",
       replace: "  [778314, 780347, 1064, 2033, 1, 1, ['_portfolioGreeksFreshness']],", },
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/ui/rs-skip-breakdown-html.js',\n  'js/portfolio/portfolio-greeks-freshness.js',\n];",
+      replace: "  'js/ui/rs-skip-breakdown-html.js',\n];", },
     { id: "RUNNERS_UP",
       covers: ["RUNNERS_UP"],
       find: "  [1147566, 1, 1, 1689],",
