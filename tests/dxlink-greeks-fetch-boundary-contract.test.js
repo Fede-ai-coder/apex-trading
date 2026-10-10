@@ -133,7 +133,7 @@ const RETIRED_CONTRACT_REL = 'tests/journal-map-audit-boundary-contract.test.js'
 // Ratchet. The suite file count as it stands TODAY. Phase 1 advanced it to 165;
 // this phase deletes that audit as this contract arrives, one for one, so the
 // count is unchanged.
-const TEST_FILE_COUNT = 175;
+const TEST_FILE_COUNT = 176;
 const LOCAL_SCRIPT_COUNT = 81;
 const MODULE_POSITION = 80;
 
