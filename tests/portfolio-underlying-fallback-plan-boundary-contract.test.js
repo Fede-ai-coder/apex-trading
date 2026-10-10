@@ -119,7 +119,7 @@ const BASE_UTF8 = 1477737;
 const BASE_LF = 25065;
 const BASE_SHA256 = 'b1fe97880b7d9adbe88ef69c2fdce72fb492c4e619dcc80d0e40924b3f7cf846';
 const LOCAL_SCRIPTS = 90;
-const TEST_FILE_COUNT = 176;
+const TEST_FILE_COUNT = 177;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-underlying-fallback-boundary-audit.test.js';
@@ -136,7 +136,7 @@ const CONTRACT_SPEC_MUTANTS = 131;
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 38;
+const RATCHETED_CONTRACTS = 39;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-greeks-freshness-boundary-contract.test.js';
