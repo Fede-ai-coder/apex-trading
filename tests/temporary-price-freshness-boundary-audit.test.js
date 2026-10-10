@@ -1,79 +1,76 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// UNDERLYING FALLBACK PLAN — PERMANENT BOUNDARY CONTRACT.
+// PRICE FRESHNESS — TEMPORARY BOUNDARY AUDIT (Phase 1).
 //
-// THE CUT IS MADE. [1145532,1147222) in monolith coordinates — 1,690 units raw
-// and 1,689 of body, ONE owner, a synchronous function — now live in
-// js/portfolio/portfolio-underlying-fallback-plan.js.
-// `_planPortfolioUnderlyingFallback` plans the underlying-price fallback for one
-// portfolio refresh cycle: which tickers reuse a last-known price, which fall
-// back to a candle fetch, and which are deferred. The first 982 units are the
-// thirteen comment lines that document it.
+// MEASUREMENT ONLY. Production stays byte-identical to the base; the next PR
+// moves the bytes and deletes this file, replaced one-for-one by the permanent
+// contract it becomes.
 //
-// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE. The undo helper runs
-// first and rebuilds the pre-extraction index.html byte for byte, so every
-// coordinate this file inherited from audit #488 is now proved by the
-// reconstruction that shipped rather than by a document that no longer exists.
-// A relocation is byte-exact or it is not done.
+// THE RECOMMENDATION. [778314,779937) in monolith coordinates — 1,623 units raw
+// and 1,622 of body, ONE owner, a synchronous function — into
+// js/portfolio/portfolio-price-freshness.js. `_portfolioPriceFreshness` builds
+// the `priceFreshness` block of the portfolio refresh diagnostics from the
+// per-refresh price-resolution results: for SPY and for every underlying, the
+// price, where it came from, whether it was live and how old it is. The first 492
+// units are the six comment lines that document it.
 //
-// THIS HEADER WAS RE-TENSED, NOT INHERITED. The audit's header described a
-// recommendation, a change that moved nothing, and a conversion still to come.
-// This file IS the conversion, so those sentences are rewritten rather than
-// carried over; the sections below were re-tensed the same way, and §8 and §9
-// INVERT the audit's "not yet" claims instead of dropping them.
+// ── THE FINDING, PART ONE: NOTHING IS LEFT AT 1, AND THE 2 IS THE BEST ──────
 //
-// ── THE FINDING, PART ONE: THE TIE WAS GONE ────────────────────────────────
+// The previous audit forecast that once the layer before this one shipped, no row
+// in the shipped screen or in the pass over its sub-floor runs would score 1 or
+// below, and that the best score left would be 2. It shipped, and §4 measures
+// both enumerations on this base: nothing scores 1 in either, and this function
+// is the ONLY row in the two of them whose raw nine is 2 or below. The claim is
+// scoped to those two enumerations.
 //
-// The audit before this layer published a tie between two distinct openings at the
-// best score there is, and took the larger. That one had shipped. Of the rows the
-// shipped screen and the pass over its sub-floor runs enumerate, this function was
-// then the ONLY opening scoring byConsumerSplit 1, and once it shipped nothing was
-// left at 1 in either: the best score that remained was 2. That is a statement
-// about those two enumerations and is scoped to them; §4 measures both on the
-// reconstructed base.
+// ── PART TWO: WHAT THE 2 IS MADE OF ────────────────────────────────────────
 //
-// ── PART TWO: ONE FUNCTION OR TWO ──────────────────────────────────────────
+// Two references reach in, from two different hosts. One is
+// `refreshPositionsLive`, which assigns the returned block into the refresh
+// diagnostics. The other is an anonymous function the screen files under TOP
+// LEVEL because it is not a declaration: the console getter
+// `window.apexDebugPortfolioPrices`, assigned inside an
+// `if (typeof window !== 'undefined')` block. Neither reference is a top-level
+// statement: both sit inside function bodies, and the getter's body runs only when
+// something calls it, which §4 counts anywhere in the application sources at zero.
+// The 2 is therefore resolved by reading the code rather than carried as a number.
 //
-// The function directly below it, `_portfolioIvrFallbackBudget`, is also free of
-// any monolith dependency and reaches the same single consumer, so taking both
-// would ALSO have been a byConsumerSplit 1 cut. The coupling score does not
-// separate them; the raw nine does, 1 against 2, because the second owner adds a
-// second reference from outside. The cut took the single function, since targets
-// are chosen on coupling, and §5 prices the pair. What it left behind is 481 units
-// counted from the second function's own documentation, under the screen's floor.
+// ── PART THREE: THE CLOCK ──────────────────────────────────────────────────
 //
-// ── PART THREE: A SEAM THAT IS NOT THERE ───────────────────────────────────
-//
-// The second owner below, `getCanonicalIvr`, ends directly against the next
-// declaration with no blank line between them. The seam rule refuses a cut that
-// ends there, so the extensions below the cut are measured at the ends the rule
-// allows and the refusal is asserted by name.
+// The function is free of globals but not of the clock: when `nowMs` is absent it
+// reads `Date.now()`. Its documentation says the age is computed against `nowMs`
+// at CALL time, so that a stale price's age keeps growing between refreshes. §7
+// measures both halves: with an explicit `nowMs` the result is a pure function of
+// its arguments, and without one it falls back to the real clock.
 //
 // ── PART FOUR: THE BOUNDARY IS A JUDGEMENT ─────────────────────────────────
 //
-// The seam accepts SIXTEEN line starts between the previous function's closing
-// brace and the declaration: that brace, a blank line, each of the thirteen
-// documentation lines, and the declaration. Fifteen parse. The screen visits only
-// the last, 707 units from the declaration and under its floor, and cutting there
-// would have left the documentation behind, fused to the next function's own with
-// no blank line between them. The cut opens on the first documentation line, and
-// §2 measures both consequences.
+// The seam accepts NINE line starts between the previous function's closing brace
+// and the declaration: that brace, a blank line, each of the six documentation
+// lines, and the declaration. Eight parse. The screen would visit only the last,
+// 1,130 units from the declaration and under its floor, and cutting there would
+// leave the documentation behind, fused to the next function's own with no blank
+// line between them. The recommendation opens on the first documentation line,
+// and §2 measures both consequences.
 //
-// ── NO DEPENDENCY, SO THE LOAD ORDER IS NOT LOAD-BEARING ───────────────────
+// ── A NEIGHBOURHOOD THAT CHANGED ───────────────────────────────────────────
 //
-// This function needs nothing from the monolith: §7 loads it in a bare VM and
-// calls it, so a missing global could not hide. §9 pins where the tag sits all
-// the same — after every other local script and immediately before the inline
-// monolith — and the call site stays in the monolith.
+// The previous cut removed the function that sat between
+// `_portfolioAggregatedMissingUnderlyings` and `_portfolioIvrFallbackBudget`, so
+// those two are now adjacent and a run over both exists that did not before. §4
+// publishes it as the best other opening.
 //
-// ── WHERE IT SITS ──────────────────────────────────────────────────────────
+// ── PRICED, AND WHERE IT WOULD SIT ─────────────────────────────────────────
 //
-// The SMALLEST of the forty-seven layers the chain now holds. §8 asserts the rank
-// by measurement. The pure-ASCII count moved, since the module holds no em dash;
-// the count of layers opening on a banner did not.
+// §5 prices the owners above it, the owners below it and the region. It would be
+// the smallest of the forty-eight layers the chain would then hold, displacing the
+// 1,689-unit layer into second place. The module holds one em dash, so it is not
+// pure ASCII and §8 forecasts that count unchanged, as it does the count of layers
+// opening on a banner.
 //
 // ═════════════════════════════════════════════════════════════════════════════
+
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -90,176 +87,147 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
-const UNDO = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 
-// The module this layer shipped. The audit called it MODULE_REL_IF_CUT while
-// the cut was still a recommendation; it is no longer hypothetical.
-const MODULE_REL = 'js/portfolio/portfolio-underlying-fallback-plan.js';
+const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-price-freshness.js';
 
 // ── The base ─────────────────────────────────────────────────────────────────
-// The commit that carried the AUDIT — the pre-extraction state this contract
-// reconstructs. index.html is byte-identical here and at the audit's own base,
-// but only this commit carries the audit that §10 asserts was replaced
-// one-for-one.
-const BASE_SHA = '15eeba8';
-// The commit the AUDIT measured, one merge earlier. Phase 1 changed no production
-// byte, so §1 asserts its index.html is this one's.
-const AUDIT_BASE_SHA = '8823e31';
-// The commit that SHIPPED this layer. "The rename moved no files" is a fact about
-// these TWO commits; comparing the base commit's count against the LIVE
-// TEST_FILE_COUNT held only until the next cycle ratcheted it — a historical
-// value pinned against a live one, the pattern the previous contract had to be
-// converted for.
-const SHIPPED_SHA = '536e5f7';
-const BASE_CHARS = 1449190;
-const BASE_UTF8 = 1477737;
-const BASE_LF = 25065;
-const BASE_SHA256 = 'b1fe97880b7d9adbe88ef69c2fdce72fb492c4e619dcc80d0e40924b3f7cf846';
-const LOCAL_SCRIPTS = 90;
+const BASE_SHA = '536e5f7';
+const BASE_CHARS = 1447577;
+const BASE_UTF8 = 1476124;
+const BASE_LF = 25036;
+const BASE_SHA256 = '8777670c86b5c860a3820af78e48278d58a40bf1ca276e86271c9abb8edbb40f';
+const LOCAL_SCRIPTS = 91;
 const TEST_FILE_COUNT = 176;
 
 // ── The files of this change ─────────────────────────────────────────────────
-const AUDIT_REL = 'tests/temporary-underlying-fallback-boundary-audit.test.js';
-const AUDIT_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.js';
-const CONTRACT_REL = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';
-const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-underlying-fallback-plan-contract.spec.js';
-const UNDO_REL = 'tests/lib/portfolio-underlying-fallback-plan-undo.js';
-// THIS CONTRACT'S SPEC IS RETIRED, by the next cycle's Phase 1 as the rhythm
-// runs, so it can no longer be `require`d. What it held is a fact about the
-// commit that last carried it and stays true forever.
-const SPEC_RETIRED_FROM = '536e5f7';
-const CONTRACT_SPEC_MUTANTS = 131;
-// LIVE, and ratcheted with TEST_FILE_COUNT: the number of contracts pinning the
-// suite file count TODAY, which moves up by one whenever a cycle's audit lands,
-// because the audit pins it. At the commit that shipped this layer it was one
-// fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
+const AUDIT_REL = 'tests/temporary-price-freshness-boundary-audit.test.js';
+const AUDIT_SPEC_REL = 'tests/mutation-specs/price-freshness-audit.spec.js';
 const RATCHETED_CONTRACTS = 38;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
-// The contract that was newest before this one shipped.
-const PREVIOUS_CONTRACT = 'tests/portfolio-greeks-freshness-boundary-contract.test.js';
-const BASE_DECLARED_MUTANTS = 131;
-// THE SPEC THIS PHASE RETIRES is the AUDIT's, and only the audit's: the
-// outgoing contract's spec went in Phase 1, which is the rhythm. §10 asserts
-// the arithmetic, not the total it happens to reach.
-const RETIRED_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.js';
-const RETIRED_MUTANTS = 125;
+// The contract that is newest at this base, and whose spec this phase retires.
+const PREVIOUS_CONTRACT = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';
+const BASE_DECLARED_MUTANTS = 137;
+// The spec this cycle retires — the outgoing CONTRACT's, which goes in Phase 1
+// as the rhythm runs — and what it carried. §10 asserts the arithmetic.
+const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-underlying-fallback-plan-contract.spec.js';
+const RETIRED_MUTANTS = 131;
 const BASE_SPECS = 2;
 const MUTANT_BUDGET = 250;
-// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this contract's spec
-// now, the next layer's audit spec after the next Phase 1. The predicate is every
+// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this audit's spec
+// now, the next layer's contract spec after Phase 2. The predicate is every
 // `.spec.js` but the coverage spec, NOT `-contract.spec.js`, which could not
 // see an audit spec at all.
 const LAYER_SPECS = 1;
 
 // ── The monolith, at this base ───────────────────────────────────────────────
-const CODE_AT = 115337;
-const CODE_CHARS = 1333827;
-const TOP_LEVEL_DECLS = 914;
+const CODE_AT = 115414;
+const CODE_CHARS = 1332137;
+const TOP_LEVEL_DECLS = 913;
 const OWNER_REGIONS = 118;
 
-// ── The region ───────────────────────────────────────────────────────────────
-// It opens on the thirteen comment lines that document the function, not on the
+// ── The recommended region ───────────────────────────────────────────────────
+// It opens on the six comment lines that document the function, not on the
 // declaration the screen enumerates.
-const RAW_AT_IN_CODE = 1145532;
-const DECL_AT_IN_CODE = 1146514;
-const RAW_END_IN_CODE = 1147222;
-const BODY_END_IN_CODE = 1147221;
-const RAW_CHARS = 1690;
-const BODY_CHARS = 1689;
-const BODY_UTF8 = 1689;
-const BODY_LF = 29;
-const BODY_SHA256 = '8ea1b93c32ee922538f2f45142ed41b66cd4b78b3aebfb7ac94a8fa7db35ca61';
+const RAW_AT_IN_CODE = 778314;
+const DECL_AT_IN_CODE = 778806;
+const RAW_END_IN_CODE = 779937;
+const BODY_END_IN_CODE = 779936;
+const RAW_CHARS = 1623;
+const BODY_CHARS = 1622;
+const BODY_UTF8 = 1624;
+const BODY_LF = 40;
+const BODY_SHA256 = 'c8c6bebe90e3ba8c435e3ce7a1c63236e07a2839f4a9cfae2c4fc2dc141fa45e';
 const BODY_ENDING = '}\n';
 const DOC_FIRST_LINE =
-  '// Plans the underlying-price fallback for one refresh cycle.';
+  '// _portfolioPriceFreshness — builds the priceFreshness debug block from the';
 const DECL_FIRST_LINE =
-  'function _planPortfolioUnderlyingFallback(missingTickers, lastKnownPrices, suppress, userInitiated, cap, coldStart) {';
-const NEXT_DECL = '_portfolioIvrFallbackBudget';
-const NEXT_DOC_PREFIX = '// Budget of per-ticker /options/ivr fallbacks';
+  'function _portfolioPriceFreshness(priceDiag, meta, nowMs) {';
+const NEXT_DECL = 'resolvePortfolioLivePrice';
+const NEXT_DOC_PREFIX = '// resolvePortfolioLivePrice — ONE price resolver';
+const EM_DASHES = 1;
 
 // ── Its owner ────────────────────────────────────────────────────────────────
 const OWNER_COUNT = 1;
-const OWNERS_EXPECTED = ['_planPortfolioUnderlyingFallback'];
-const OWNER_SIZES = [706];
+const OWNERS_EXPECTED = ['_portfolioPriceFreshness'];
+const OWNER_SIZES = [1129];
 
 // ── Its shape ────────────────────────────────────────────────────────────────
-const SPLIT_LINES = 29;
-const CODE_LINES = 16;
-const COMMENT_LINES = 13;
+const SPLIT_LINES = 40;
+const CODE_LINES = 34;
+const COMMENT_LINES = 6;
 const BLANK_LINES = 0;
 const TOP_LEVEL_STATEMENT_LINES = 0;
 
 // ── The boundary judgement: the openings the seam rule admits ────────────────
 // Between the previous function's closing brace and the declaration the seam
-// accepts SIXTEEN line starts. One is that closing brace and is not valid
-// JavaScript; one is a blank line; thirteen are the lines of the documentation,
-// and the last is the declaration. The screen visits only the last.
-const BRACE_OPENING = 1145529;
-const BLANK_OPENING = 1145531;
-const MID_LINE_OPENING = 1145530;
-const SEAM_LEGAL_OPENINGS = 16;
-const PARSING_OPENINGS = 15;
+// accepts NINE line starts. One is that closing brace and is not valid
+// JavaScript; one is a blank line; six are the lines of the documentation, and
+// the last is the declaration. The screen visits only the last.
+const BRACE_OPENING = 778311;
+const BLANK_OPENING = 778313;
+const MID_LINE_OPENING = 778312;
+const SEAM_LEGAL_OPENINGS = 9;
+const PARSING_OPENINGS = 8;
 const BRACE_OPENING_ERROR = 'SyntaxError';
 const MID_LINE_ERROR = 'EXTRACTION_SEAM_NOT_LINE_START';
-const DOC_TAKEN = 982;
-const DOC_TAKEN_LINES = 13;
-const DECL_UNITS_FROM_DECLARATION = 707;
+const DOC_TAKEN = 492;
+const DOC_TAKEN_LINES = 6;
+const DECL_UNITS_FROM_DECLARATION = 1130;
 const CANDIDATES_AT_DECLARATION = 0;
-const BLANK_AFTER_CUT = '}\n\n// Budget of per-ticker /options/ivr fallbacks';
+const BLANK_AFTER_CUT = '}\n\n// resolvePortfolioLivePrice';
 
 // ── The banner region it sits inside ─────────────────────────────────────────
-const REGION_AT = 1131458;
-const REGION_END = 1148965;
-const REGION_CHARS = 17507;
-const REGION_OWNERS = 10;
-const OWNER_POSITION = 7;
-const OWNER_BEFORE = '_portfolioAggregatedMissingUnderlyings';
-const BANNER_LINE_PREFIX = '// ── Journal snapshot prefetch';
-const WHOLE_REGION_NINE = 102;
-const WHOLE_REGION_BCS = 59;
-const WHOLE_REGION_CONSUMERS = 21;
-const WHOLE_REGION_DEPS = 4;
-const WHOLE_REGION_SIB = 17;
+const REGION_AT = 746813;
+const REGION_END = 805432;
+const REGION_CHARS = 58619;
+const REGION_OWNERS = 24;
+const OWNER_POSITION = 19;
+const OWNER_BEFORE = '_deltaThetaRatioMissingReason';
+const BANNER_LINE_PREFIX = '// ── UNREALIZED P&L';
+const WHOLE_REGION_NINE = 148;
+const WHOLE_REGION_BCS = 61;
+const WHOLE_REGION_CONSUMERS = 8;
+const WHOLE_REGION_DEPS = 20;
+const WHOLE_REGION_SIB = 4;
 
 // ── Taking more, priced: the owners above, the owners below ──────────────────
 // Above: [name of the first owner taken, opening, raw units to the cut's raw
 // end, raw nine, byConsumerSplit, monolith dependencies].
 const EXTENSIONS_UP = [
-  ['_portfolioAggregatedMissingUnderlyings', 1144425, 2797, 3, 2, 1],
-  ['PORTFOLIO_MISSING_UNDERLYINGS_FALLBACK_CAP', 1144114, 3108, 7, 2, 1],
-  ['_lastKnownUnderlyingPrice', 1143732, 3490, 16, 3, 1],
+  ['_deltaThetaRatioMissingReason', 777607, 2330, 5, 3, 0],
+  ['_aggregateBetaWtdMissingReason', 776782, 3155, 8, 3, 0],
+  ['_betaMissingReasonLabel', 775916, 4021, 9, 3, 0],
 ];
 // Below: [name of the last owner taken, raw units from the cut's opening, raw
-// nine, byConsumerSplit, monolith dependencies]. The owner between these two is
-// not here: no cut can end at it, which §5 asserts by name.
+// nine, byConsumerSplit, monolith dependencies].
 const EXTENSIONS_DOWN = [
-  ['_portfolioIvrFallbackBudget', 2171, 2, 1, 0],
-  ['_earningsCache', 3433, 27, 25, 2],
+  ['resolvePortfolioLivePrice', 12219, 12, 5, 3],
+  ['_apexLatestBetaBySymbol', 12749, 23, 9, 3],
+  ['_portfolioLatestBackendBetaEntry', 13140, 23, 9, 3],
 ];
-const SEAM_ILLEGAL_DOWN = 'getCanonicalIvr';
-const SEAM_ILLEGAL_ERROR = 'EXTRACTION_SEAM_NO_STRUCTURAL_SEPARATOR';
-const SEAM_ILLEGAL_NEXT = 'var _earningsCache';
-const PAIR_NINE = 2;
-const PAIR_INBOUND = 2;
-const PAIR_BODY_CHARS = 2170;
-const LEFT_BEHIND_CHARS = 481;
 
 // ── Coupling ─────────────────────────────────────────────────────────────────
-const FULL_NINE = 1;
-const BY_CONSUMER = 1;
-const BY_CONSUMER_SPLIT = 1;
+const FULL_NINE = 2;
+const BY_CONSUMER = 2;
+const BY_CONSUMER_SPLIT = 2;
 const CONSUMER = 'refreshPositionsLive';
-const CONSUMER_SITES = 1;
-const CONSUMER_SITE_AT = 1039215;
+const TOP_LEVEL_HOST = '(TOP LEVEL)';
+const CONSUMER_SITES = 2;
+const GETTER_SITE_AT = 805122;
+const CONSUMER_SITE_AT = 1120120;
 const CONSUMER_AT = 985472;
 const CONSUMER_END = 1123954;
 const CONSUMER_CHARS = 138483;
+const GETTER_CALLS = 0;
 const MONOLITH_DEPENDENCIES = [];
 const ZERO_DIRECTIONS = {
   inboundWrites: 0, inboundPropertyWrites: 0, outboundWrites: 0,
   siblingModules: 0, staticMarkup: 0, generatedMarkup: 0, outboundGenerated: 0,
 };
-const INBOUND_REFERENCES = 1;
+const INBOUND_REFERENCES = 2;
+// The two owners that surrounded the previous cut, adjacent now.
+const OWNER_BEFORE_PREVIOUS_CUT = '_portfolioAggregatedMissingUnderlyings';
+const NEXT_DECL_AFTER_PREVIOUS_CUT = '_portfolioIvrFallbackBudget';
 const CHAIN_OUTBOUND = 0;
 const FOUNDATION_OUTBOUND = 0;
 const NON_LOCAL_ASSIGNMENTS = 0;
@@ -271,60 +239,60 @@ const EVALUATION_TIME_READS = [];
 const UNCORRECTED_SCAN_HITS = 0;
 
 // ── The bare VM, measured ────────────────────────────────────────────────────
-const VM_GLOBALS = ['_planPortfolioUnderlyingFallback'];
+const VM_GLOBALS = ['_portfolioPriceFreshness'];
 
 // ── The screen at this base ──────────────────────────────────────────────────
 const RUN_FLOOR = 1500;
-const RAW_RUNS = 7298;
-const SEAM_REJECTED = 2048;
-const CANDIDATES = 2954;
-const CLEAN_CANDIDATES = 1808;
+const RAW_RUNS = 7288;
+const SEAM_REJECTED = 2047;
+const CANDIDATES = 2946;
+const CLEAN_CANDIDATES = 1800;
 const SCORE_ONE_TIER = 0;
-const SCORE_TWO = 13;
+const SCORE_TWO = 10;
 // THE PASS THE FLOOR HIDES. The screen floors a run at RUN_FLOOR units measured
 // from the DECLARATION. A function whose documentation lifts it over the floor
 // was therefore never enumerated. This pass keeps every run the screen skipped
 // for being short, re-measures it from the start of its documentation, and
 // keeps those that then clear the floor.
-const HIDDEN_ROWS = 40;
-const HIDDEN_CLEAN_ROWS = 39;
-const HIDDEN_SCORE_ONE = 2;
-const HIDDEN_SCORE_ONE_OPENINGS = 1;
-const HIDDEN_SCORE_TWO = 3;
+const HIDDEN_ROWS = 39;
+const HIDDEN_CLEAN_ROWS = 38;
+const HIDDEN_SCORE_ONE = 0;
+const HIDDEN_SCORE_TWO = 4;
 // [opening, closing, units from the declaration, units from the documentation,
 // raw nine, byConsumerSplit, owners].
-const HIDDEN_SCORE_ONE_ROWS = [
-  [1145532, 1147221, 707, 1689, 1, 1, ['_planPortfolioUnderlyingFallback']],
-  [1145532, 1147702, 1188, 2170, 2, 1, ['_planPortfolioUnderlyingFallback', '_portfolioIvrFallbackBudget']],
+const HIDDEN_SCORE_TWO_ROWS = [
+  [778314, 779936, 1130, 1622, 2, 2, ['_portfolioPriceFreshness']],
+  [1144425, 1146012, 1173, 1587, 3, 2, ['_portfolioAggregatedMissingUnderlyings', '_portfolioIvrFallbackBudget']],
+  [898277, 900025, 1375, 1748, 4, 2, ['fetchBackendPortfolioPositionsEnriched']],
+  [750645, 752344, 1278, 1699, 7, 2, ['_backendCacheStaleMark', '_squeezeToState']],
 ];
+const OPENINGS_AT_TWO_OR_BELOW = 14;
 // The best four OTHER openings over the screen and the hidden pass together,
 // ranked by byConsumerSplit, then raw nine, then units, ascending, and skipping
 // anything that overlaps the cut: [opening, byConsumerSplit, nine, units].
 const RUNNERS_UP = [
-  [778314, 2, 2, 1622],
+  [1144425, 2, 3, 1587],
   [61214, 2, 3, 3034],
   [286843, 2, 4, 1735],
   [898277, 2, 4, 1748],
 ];
-const PREVIOUS_RAW_CHARS = 2034;
-const PREVIOUS_RAW_END = 780348;
+const PREVIOUS_RAW_CHARS = 1690;
+const PREVIOUS_RAW_END = 1147222;
 
-// ── Where it sits ────────────────────────────────────────────────────────────
+// ── Where it would sit ───────────────────────────────────────────────────────
 const CHAIN_LENGTH = 47;
-const DISPLACED_LAYER_CHARS = 1761;
-const SIZE_RANK = 1;
-const LAYERS_LARGER_THAN_THIS_CUT = 46;
+const SMALLEST_LAYER_CHARS = 1689;
+const SIZE_RANK_IF_CUT = 1;
+const LAYERS_LARGER_THAN_THIS_CUT = 47;
 const PURE_ASCII_LAYERS = 4;
-const PRIOR_PURE_ASCII_LAYERS = 3;
 const LAYERS_OPENING_ON_BANNER = 23;
 
-// ── What the relocation cost the document ────────────────────────────────────
-const NET_REDUCTION = 1613;
-const INDEX_AFTER = 1447577;
-const RESIDUAL_MONOLITH = 1332137;
-const LOCAL_SCRIPTS_AFTER = 91;
-// The tag's position among the local scripts, zero-based: the last of 91.
-const TAG_LOCAL_INDEX = 90;
+// ── If cut ───────────────────────────────────────────────────────────────────
+const TAG_IF_CUT = '<script src="./js/portfolio/portfolio-price-freshness.js"></script>\n';
+const NET_REDUCTION = 1555;
+const INDEX_AFTER = 1446022;
+const RESIDUAL_MONOLITH = 1330514;
+const LOCAL_SCRIPTS_AFTER = 92;
 
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
@@ -368,23 +336,13 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 
 
 
-console.log('UNDERLYING FALLBACK PLAN — PERMANENT BOUNDARY CONTRACT');
-console.log('reconstructed from the shipped module · base=' + BASE_SHA);
+console.log('PRICE FRESHNESS — TEMPORARY BOUNDARY AUDIT');
+console.log('measurement only · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
-// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
-// predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
-const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
-const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
-const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
-const LIVE_MONOLITH = LIVE_TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
-
-// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
-// copy of it: the undo helper runs first, so every coordinate this file
-// inherited from the audit is now proved by the reconstruction that shipped
-// rather than by a document that no longer exists.
-const INDEX = UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, MODULE);
+// MEASUREMENT ONLY: nothing is peeled and nothing has moved, so the shipped
+// document IS the one this audit measures. Phase 2 puts a peel here and this
+// becomes the reconstruction the permanent contract runs against.
+const INDEX = APP_LOADER.loadIndexHtml();
 
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -579,67 +537,14 @@ let rawRunCount = 0, seamRejectedCount = 0;
 async function main() {
 
 
-// CHAIN, chronological, oldest first — this cycle's own literal, as the audit
-// said Phase 2 would give it. Reading it off the previous newest contract was
-// right while this layer had not shipped; now this file IS the newest, so the
-// list ends at its own layer and the next cycle reads it from here.
-const CHAIN = [
-
-
-  'js/services/journal-core.js',
-  'js/services/mcx-regime-policy.js',
-  'js/ui/journal-ui.js',
-  'js/services/journal-remote-persistence.js',
-  'js/services/journal-backend-write-through.js',
-  'js/services/journal-migration.js',
-  'js/services/journal-manual-import.js',
-  'js/ui/journal-backup-restore.js',
-  'js/ui/mcx-macro-check.js',
-  'js/ui/mcx-charts.js',
-  'js/services/apex-post-auth-init.js',
-  'js/ui/tt-reconnect.js',
-  'js/ui/journal-close-legs.js',
-  'js/ui/journal-trade-forms.js',
-  'js/ui/journal-trade-detail.js',
-  'js/portfolio/portfolio-data-fetch.js',
-  'js/portfolio/backend-portfolios.js',
-  'js/portfolio/portfolio-expiry-manual.js',
-  'js/portfolio/portfolio-traffic-light.js',
-  'js/ui/backend-candle-store-chart.js',
-  'js/services/journal-rich-snapshot.js',
-  'js/portfolio/portfolio-backend-candles.js',
-  'js/services/journal-snapshot-prefetch.js',
-  'js/portfolio/portfolio-dxlink-greeks.js',
-  'js/config/strategy-templates.js',
-  'js/portfolio/portfolio-vega-monitor.js',
-  'js/services/scanner-ivr-throttle.js',
-  'js/services/scanner-earnings-throttle.js',
-  'js/ui/chart-interactions.js',
-  'js/services/journal-snapshot-helpers.js',
-  'js/services/swing-weekly-candles.js',
-  'js/services/swing-direction.js',
-  'js/portfolio/backend-positions-aggregate.js',
-  'js/portfolio/portfolio-technical-merge.js',
-  'js/portfolio/portfolio-technical-alignment-debug.js',
-  'js/services/journal-map-audit.js',
-  'js/services/dxlink-greeks-fetch.js',
-  'js/portfolio/portfolio-technical-parity.js',
-  'js/portfolio/portfolio-spy-price.js',
-  'js/services/apex-storage-recovery.js',
-  'js/portfolio/portfolio-leg-quantity.js',
-  'js/portfolio/backend-full-refresh-validation.js',
-  'js/portfolio/portfolio-snapshot-fallback.js',
-  'js/portfolio/portfolio-technical-batch-fetch.js',
-  'js/ui/rs-skip-breakdown-html.js',
-  'js/portfolio/portfolio-greeks-freshness.js',
-  'js/portfolio/portfolio-underlying-fallback-plan.js',
-];
+// CHAIN, read off the newest contract rather than written here: that file
+// carries the list ending at its own layer, and copying it would be a second
+// place to drift. Phase 2 gives this cycle its own literal.
+const CHAIN = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8')
+  .match(/^const CHAIN = \[([\s\S]*?)^\];/m)[1]
+  .split('\n').map((l) => l.trim()).filter((l) => l.startsWith("'"))
+  .map((l) => l.replace(/^'|',?$/g, ''));
 const CHAIN_SET = new Set(CHAIN);
-// THE SELF-INCLUSION GUARD. CHAIN now ends at THIS layer and this file is its
-// contract, so any census over CHAIN that reads contracts would count this cut as
-// evidence for a claim about the layers that preceded it. Every such census runs
-// over PRIOR_LAYERS and asserts this layer's own half separately.
-const PRIOR_LAYERS = CHAIN.slice(0, CHAIN.length - 1);
 const OWNER_KIND = new Map();
 for (const s of SIBLINGS) {
   for (const n of s.owners) if (!OWNER_KIND.has(n)) OWNER_KIND.set(n, CHAIN_SET.has(s.rel) ? 'chain' : 'foundation');
@@ -764,16 +669,14 @@ eq(sha256(INDEX), BASE_SHA256, '…and this digest');
 eq(sha256(git(['show', BASE_SHA + ':index.html'])), BASE_SHA256,
   '…which is the digest of the BASE_SHA commit\'s index.html, read out of git, so the base '
   + 'is a commit and not a remembered number');
-eq(sha256(git(['show', AUDIT_BASE_SHA + ':index.html'])), BASE_SHA256,
-  '…and the same digest as the document at AUDIT_BASE_SHA, where the audit measured it: Phase 1 moved no byte');
 eq(LOCALS.length, LOCAL_SCRIPTS, 'it loads LOCAL_SCRIPTS local application scripts');
 eq(INDEX.indexOf(CODE), CODE_AT, 'the inline monolith starts at CODE_AT');
 eq(CODE.length, CODE_CHARS, '…and is CODE_CHARS units of residual code');
 eq(DECLS.length, TOP_LEVEL_DECLS, 'it holds TOP_LEVEL_DECLS top-level declarations');
 eq(REGIONS.length, OWNER_REGIONS, '…across OWNER_REGIONS owner regions');
 // THE PREVIOUS LAYER'S OWN FORECASTS, checked. The contract that shipped the
-// greeks freshness block predicted the document, the residual monolith and the
-// script count this contract measures, so the two cycles are joined by numbers.
+// underlying fallback plan predicted the document, the residual monolith and the
+// script count this audit measures, so the two cycles are joined by numbers.
 {
   const prev = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8');
   eq(CODE.length, Number(prev.match(/^const RESIDUAL_MONOLITH = (\d+);$/m)[1]),
@@ -785,7 +688,7 @@ eq(REGIONS.length, OWNER_REGIONS, '…across OWNER_REGIONS owner regions');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('2. The region, its seam, and the sixteen openings the seam admits');
+section('2. The region, its seam, and the nine openings the seam admits');
 // ─────────────────────────────────────────────────────────────────────────────
 eq(RAW_END_IN_CODE - RAW_AT_IN_CODE, RAW_CHARS, 'the raw fragment is RAW_CHARS units');
 eq(BODY_END_IN_CODE - RAW_AT_IN_CODE, BODY_CHARS, '…BODY_CHARS of which are body');
@@ -797,8 +700,9 @@ eq((BODY.match(/\n/g) || []).length, BODY_LF, '…BODY_LF line feeds');
 eq(sha256(BODY), BODY_SHA256, '…and this digest');
 ok(BODY.endsWith(BODY_ENDING), '…ending on a real line of code');
 eq(firstLineOf(BODY), DOC_FIRST_LINE, '…and opening on DOC_FIRST_LINE, the documentation');
-eq(Buffer.byteLength(BODY, 'utf8'), BODY.length,
-  '…every one of its units a single byte, so it is pure ASCII');
+eq((BODY.match(/—/g) || []).length, EM_DASHES, '…holding EM_DASHES em dash');
+eq(Buffer.byteLength(BODY, 'utf8') - BODY.length, 2 * EM_DASHES,
+  '…which is the whole of the gap between its UTF-8 and UTF-16 lengths, two bytes each');
 eq(INDEX.indexOf(BODY), CODE_AT + RAW_AT_IN_CODE,
   '…and it occurs in the document at the offset the monolith coordinate implies');
 eq(count(INDEX, BODY), 1, '…exactly once, so the fragment is not ambiguous');
@@ -815,7 +719,7 @@ eq(assertSeam(CODE, RAW_AT_IN_CODE, BODY_END_IN_CODE), RAW_END_IN_CODE,
     '…whose own documentation begins exactly where the cut ends, so nothing sits between them');
 }
 
-// THE SEAM IS NECESSARY BUT NOT SUFFICIENT. It admits sixteen openings.
+// THE SEAM IS NECESSARY BUT NOT SUFFICIENT. It admits nine openings.
 const OPENINGS = [];
 {
   const prevOwner = DECLS.filter((d) => d.end < RAW_AT_IN_CODE).pop();
@@ -837,7 +741,7 @@ const OPENINGS = [];
   eq(parses(BRACE_OPENING), BRACE_OPENING_ERROR,
     'the opening on the previous function\'s closing brace does NOT parse: BRACE_OPENING_ERROR');
   eq(OPENINGS.filter((at) => parses(at) === null).length, PARSING_OPENINGS,
-    '…so PARSING_OPENINGS of the sixteen are even candidates, counted rather than listed');
+    '…so PARSING_OPENINGS of the nine are even candidates, counted rather than listed');
   eq(OPENINGS[1], BLANK_OPENING, 'the next is a blank line…');
   ok(isBlankOrComment(firstLineOf(CODE.slice(BLANK_OPENING, BODY_END_IN_CODE))),
     '…which would make a module that begins on an empty line');
@@ -846,9 +750,8 @@ const OPENINGS = [];
     '…and the DOC_TAKEN_LINES documentation lines are each an opening of their own');
 }
 
-// WHAT THE CUT TAKES is the whole comment block documenting the
-// function, and nothing else: thirteen comment lines directly above the
-// declaration.
+// WHAT THE RECOMMENDATION TAKES is the whole comment block documenting the
+// function, and nothing else: six comment lines directly above the declaration.
 {
   const doc = CODE.slice(RAW_AT_IN_CODE, DECL_AT_IN_CODE);
   eq(doc.length, DOC_TAKEN, 'the documentation taken is DOC_TAKEN units');
@@ -859,19 +762,19 @@ const OPENINGS = [];
     '…immediately followed by the declaration, DECL_FIRST_LINE');
   eq(blockAbove(BY_NAME.get(OWNERS_EXPECTED[0])).start, RAW_AT_IN_CODE,
     '…and the programme\'s own blockAbove rule finds this comment block, starting where the cut does');
-  ok(doc.indexOf('Returns { reuse:{ticker:price}, candle:[tickers], deferred:[tickers] }.') >= 0,
-    '…and which states the shape of what it returns, a claim §7 measures rather than trusts');
+  ok(doc.indexOf('Pure + testable.') >= 0,
+    '…and which claims the function is pure, a claim §3 and §7 measure rather than trust');
 }
-// WHAT LEAVING IT WOULD HAVE STRANDED. Cutting at the declaration (the one opening
-// the screen visits) would have left the thirteen comment lines behind, fused to the
-// next function's documentation with no blank line between them.
+// WHAT LEAVING IT WOULD STRAND. Cutting at the declaration (the one opening the
+// screen visits) would leave the six comment lines behind, fused to the next
+// function's documentation with no blank line between them.
 {
   const stranded = CODE.slice(0, DECL_AT_IN_CODE) + CODE.slice(RAW_END_IN_CODE);
   ok(stranded.indexOf(CODE.slice(RAW_AT_IN_CODE, DECL_AT_IN_CODE) + NEXT_DOC_PREFIX) >= 0,
     'cutting at the declaration would leave the documentation fused to the next function\'s own');
   const clean = CODE.slice(0, RAW_AT_IN_CODE) + CODE.slice(RAW_END_IN_CODE);
   eq(clean.indexOf(BLANK_AFTER_CUT), RAW_AT_IN_CODE - 3,
-    'while the cut that shipped left the previous function\'s closing brace, exactly one blank '
+    'while the recommended cut leaves the previous function\'s closing brace, exactly one blank '
     + 'line, and the next function\'s documentation');
   ok(clean.indexOf(DOC_FIRST_LINE) < 0, '…and no line of this documentation behind');
 }
@@ -895,7 +798,7 @@ eq(REC.names.length, OWNER_COUNT, '…OWNER_COUNT of them');
   eq(own.map((d) => d.name), OWNERS_EXPECTED, '…and the declarations in range are that name');
   eq(own.map((d) => d.chars), OWNER_SIZES, '…at OWNER_SIZES units');
   eq(own.filter((d) => d.form === 'function').length, OWNER_COUNT,
-    '…a function, so this layer ships no mutable binding');
+    '…a function, so this layer would ship no mutable binding');
   ok(!/^async /.test(DECL_FIRST_LINE), '…and a synchronous one');
 }
 eq({
@@ -907,16 +810,20 @@ eq(REC.inbound, INBOUND_REFERENCES, '…the eighth being INBOUND_REFERENCES refe
 eq(REC.deps, MONOLITH_DEPENDENCIES, '…and the ninth, the dependency direction, is EMPTY too');
 eq(REC.nine, FULL_NINE, '…so the raw nine-direction total is FULL_NINE');
 eq(byConsumer(REC), BY_CONSUMER, '…and byConsumer is BY_CONSUMER');
-eq(consumersOf(REC), [CONSUMER], 'ONE consumer reaches in, and it is CONSUMER');
-eq(REC.sites.length, CONSUMER_SITES, '…at CONSUMER_SITES call site');
-eq(REC.sites, [CONSUMER_SITE_AT], '…at CONSUMER_SITE_AT');
-eq(CODE.slice(CONSUMER_SITE_AT - 'var _fallbackPlan = '.length, CONSUMER_SITE_AT),
-  'var _fallbackPlan = ',
-  '…binding the returned plan to a local, which is all the consumer does with the call');
+eq(consumersOf(REC), [TOP_LEVEL_HOST, CONSUMER],
+  'TWO consumers reach in, as the screen files them: TOP_LEVEL_HOST and CONSUMER');
+eq(REC.sites.length, CONSUMER_SITES, '…at CONSUMER_SITES call sites, one each');
+eq(REC.sites, [GETTER_SITE_AT, CONSUMER_SITE_AT], '…at GETTER_SITE_AT and CONSUMER_SITE_AT');
+eq(CODE.slice(CONSUMER_SITE_AT - '_apexPortfolioGreeksRefreshDiag.priceFreshness = '.length, CONSUMER_SITE_AT),
+  '_apexPortfolioGreeksRefreshDiag.priceFreshness = ',
+  '…the named consumer assigning the returned block into the refresh diagnostics, which is all it does with it');
+eq(CODE.slice(GETTER_SITE_AT - 'var pf = '.length, GETTER_SITE_AT), 'var pf = ',
+  '…and the other binding it to a local inside the console getter');
 {
   const keeper = BY_NAME.get(CONSUMER);
   ok(keeper.end < RAW_AT_IN_CODE || keeper.start > RAW_END_IN_CODE, '…which sits outside the cut');
-  ok(CONSUMER_SITE_AT > keeper.start && CONSUMER_SITE_AT < keeper.end, '…and the site is inside its body');
+  ok(CONSUMER_SITE_AT > keeper.start && CONSUMER_SITE_AT < keeper.end, '…and its site is inside its body');
+  ok(!hostOf(GETTER_SITE_AT), '…while the other site has NO enclosing declaration, which is why the screen files it under TOP LEVEL');
   eq(keeper.start, CONSUMER_AT, '…the consumer opening at CONSUMER_AT');
   eq(keeper.end, CONSUMER_END, '…ending at CONSUMER_END');
   eq(keeper.chars, CONSUMER_CHARS, '…CONSUMER_CHARS units long');
@@ -926,7 +833,7 @@ eq(CODE.slice(CONSUMER_SITE_AT - 'var _fallbackPlan = '.length, CONSUMER_SITE_AT
   eq(split.chain, CHAIN_OUTBOUND, 'it references NO chain module: CHAIN_OUTBOUND');
   eq(split.foundation, FOUNDATION_OUTBOUND, '…and NO foundation module either: FOUNDATION_OUTBOUND');
   eq(byConsumerSplit(REC, split), BY_CONSUMER_SPLIT,
-    '…so byConsumerSplit is BY_CONSUMER_SPLIT, the best score there is');
+    '…so byConsumerSplit is BY_CONSUMER_SPLIT, the best score left on this base');
 }
 {
   const load = loadTimeProfile(RAW_AT_IN_CODE, BODY_END_IN_CODE);
@@ -969,33 +876,29 @@ eq(CODE.slice(CONSUMER_SITE_AT - 'var _fallbackPlan = '.length, CONSUMER_SITE_AT
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. THE FINDING: the tie was gone, and nothing was left at 1 once this shipped');
+section('4. THE FINDING: nothing is left at 1, the 2 is the best there is, and what it is made of');
 // ─────────────────────────────────────────────────────────────────────────────
-// WHAT THE PREVIOUS CONTRACT PUBLISHED, read out of it and moved up by the raw
-// length of the cut it shipped.
+// WHAT THE PREVIOUS CONTRACT PUBLISHED, read out of it.
 const prevText = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8');
 const listOf = (name) => prevText.match(new RegExp('^const ' + name + ' = \\[([\\s\\S]*?)^\\];', 'm'))[1]
   .split('\n').map((l) => l.trim()).filter((l) => l.startsWith('['))
   .map((l) => JSON.parse(l.replace(/,$/, '').replace(/'/g, '"')));
 const prevNum = (name) => Number(prevText.match(new RegExp('^const ' + name + ' = (\\d+);$', 'm'))[1]);
-const moved = (lo) => (lo >= PREVIOUS_RAW_END ? lo - PREVIOUS_RAW_CHARS : lo);
+const prevStr = (name) => prevText.match(new RegExp("^const " + name + " = '([^']*)';$", 'm'))[1];
 {
   eq(prevNum('RAW_CHARS'), PREVIOUS_RAW_CHARS, 'the cut that left was PREVIOUS_RAW_CHARS units raw…');
-  eq(prevNum('RAW_END_IN_CODE'), PREVIOUS_RAW_END, '…ending at PREVIOUS_RAW_END');
-  const prevCutLo = prevNum('RAW_AT_IN_CODE');
-  const prevRows = listOf('HIDDEN_SCORE_ONE_ROWS');
-  eq(prevRows.length, 3, 'the previous contract published three clean rows at 1…');
-  eq(new Set(prevRows.map((r) => r[0])).size, 2, '…over TWO distinct openings, the tie it stated');
-  const survivors = prevRows.filter((r) => r[0] !== prevCutLo)
-    .map(([lo, hi, ...rest]) => [moved(lo), moved(hi), ...rest]);
-  eq(survivors, HIDDEN_SCORE_ONE_ROWS,
-    'less the cut it shipped, and moved up by its raw length, those rows are exactly HIDDEN_SCORE_ONE_ROWS: '
-    + 'nothing entered the tier and one opening left it');
+  eq(prevNum('RAW_END_IN_CODE'), PREVIOUS_RAW_END, '…ending at PREVIOUS_RAW_END…');
+  ok(prevNum('RAW_AT_IN_CODE') > RAW_END_IN_CODE,
+    '…and it sat entirely AFTER this cut, so no offset in this audit moved because of it');
+  ok(prevText.indexOf('the best score that remained was 2') >= 0,
+    'the previous contract forecast that the best score left would be 2…');
+  eq(listOf('RUNNERS_UP')[0], [RAW_AT_IN_CODE, 2, 2, 1622],
+    '…and published this function\'s opening as its first runner-up, at byConsumerSplit 2 and raw nine 2');
 }
 // THE TIER, MEASURED ON THIS BASE, in the two enumerations it can be counted in.
 {
   eq(cleanRuns.filter((c) => byConsumerSplit(c.p, c.split) <= 1).length, SCORE_ONE_TIER,
-    'the shipped screen counts SCORE_ONE_TIER clean candidates at 1 or below, as it did before…');
+    'the shipped screen counts SCORE_ONE_TIER clean candidates at 1 or below…');
   eq(cleanRuns.filter((c) => byConsumerSplit(c.p, c.split) === 2).length, SCORE_TWO,
     '…the best it finds being SCORE_TWO candidates at 2');
   eq(hiddenRows.length, HIDDEN_ROWS, 'the pass over runs the screen skipped for being short has HIDDEN_ROWS rows…');
@@ -1005,26 +908,28 @@ const moved = (lo) => (lo >= PREVIOUS_RAW_END ? lo - PREVIOUS_RAW_CHARS : lo);
     '…every one below RUN_FLOOR from its declaration and at or above it from its documentation');
   ok(hiddenRows.every((c) => !candidateRuns.some((s) => s.lo === c.lo && s.hi === c.hi)),
     '…and not one of them is a row the shipped screen already has');
-  const atOne = hiddenClean.filter((c) => c.bcs <= 1).sort((a, b) => a.nine - b.nine || a.lo - b.lo || a.hi - b.hi);
-  eq(atOne.length, HIDDEN_SCORE_ONE, 'HIDDEN_SCORE_ONE of them score 1 on byConsumerSplit…');
-  eq(hiddenClean.filter((c) => c.bcs === 2).length, HIDDEN_SCORE_TWO, '…and HIDDEN_SCORE_TWO score 2');
-  eq(atOne.map((c) => [c.lo, c.hi, c.unitsDecl, c.unitsDoc, c.nine, c.bcs, c.p.names]),
-    HIDDEN_SCORE_ONE_ROWS, '…and those are exactly HIDDEN_SCORE_ONE_ROWS');
-  eq(new Set(atOne.map((c) => c.lo)).size, HIDDEN_SCORE_ONE_OPENINGS,
-    'they share ONE opening: the tie the previous audit stated is gone, and there is no second '
-    + 'distinct opening at 1 for the tie-break to choose against');
-  eq(HIDDEN_SCORE_ONE_ROWS[0].slice(0, 2), [RAW_AT_IN_CODE, BODY_END_IN_CODE],
-    'the first of those rows IS the cut that shipped');
-  eq(HIDDEN_SCORE_ONE_ROWS[1][4], PAIR_NINE, '…the second being the same opening taken two owners long, at raw nine PAIR_NINE');
-  // WHAT IS LEFT ONCE IT SHIPS, over the screen and the hidden pass together,
-  // skipping anything that overlaps the cut. Scoped to those two enumerations.
+  eq(hiddenClean.filter((c) => c.bcs <= 1).length, HIDDEN_SCORE_ONE,
+    'HIDDEN_SCORE_ONE of them score 1 on byConsumerSplit: neither enumeration holds a row at 1 any more…');
+  const atTwo = hiddenClean.filter((c) => c.bcs === 2).sort((a, b) => a.nine - b.nine || a.lo - b.lo || a.hi - b.hi);
+  eq(atTwo.length, HIDDEN_SCORE_TWO, '…and HIDDEN_SCORE_TWO score 2');
+  eq(atTwo.map((c) => [c.lo, c.hi, c.unitsDecl, c.unitsDoc, c.nine, c.bcs, c.p.names]),
+    HIDDEN_SCORE_TWO_ROWS, '…those being exactly HIDDEN_SCORE_TWO_ROWS');
+  eq(HIDDEN_SCORE_TWO_ROWS[0].slice(0, 2), [RAW_AT_IN_CODE, BODY_END_IN_CODE],
+    'the first of them IS the recommended cut');
+  // THE ONLY ROW AT RAW NINE 2 OR BELOW, over the screen and the pass together.
+  const rows = cleanRuns.map((c) => ({ lo: c.lo, bcs: byConsumerSplit(c.p, c.split), nine: c.p.nine, units: c.units }))
+    .concat(hiddenClean.map((c) => ({ lo: c.lo, bcs: c.bcs, nine: c.nine, units: c.unitsDoc })));
+  eq(rows.filter((r) => r.nine <= FULL_NINE).map((r) => r.lo), [RAW_AT_IN_CODE],
+    'in the screen and the pass together, the recommended opening is the ONLY one whose raw nine is FULL_NINE or below');
+  eq(new Set(rows.filter((r) => r.bcs <= BY_CONSUMER_SPLIT).map((r) => r.lo)).size, OPENINGS_AT_TWO_OR_BELOW,
+    '…among OPENINGS_AT_TWO_OR_BELOW distinct openings that score 2 or below, so the lead is in the nine and the byConsumerSplit alone does not give it');
+  // WHAT IS PUBLISHED FOR THE NEXT CYCLE, over the screen and the hidden pass
+  // together, skipping anything that overlaps the cut.
   const overlaps = (lo, hi) => lo < RAW_END_IN_CODE && hi > RAW_AT_IN_CODE;
   const pool = cleanRuns.filter((c) => !overlaps(c.lo, c.hi))
     .map((c) => ({ lo: c.lo, bcs: byConsumerSplit(c.p, c.split), nine: c.p.nine, units: c.units }))
     .concat(hiddenClean.filter((c) => !overlaps(c.lo, c.hi))
       .map((c) => ({ lo: c.lo, bcs: c.bcs, nine: c.nine, units: c.unitsDoc })));
-  eq(pool.filter((r) => r.bcs <= 1).length, 0,
-    'with the cut shipped, NOT ONE row in the screen or the pass that avoids it scores 1 or below…');
   const bestPer = new Map();
   for (const r of pool) {
     const b = bestPer.get(r.lo);
@@ -1033,22 +938,39 @@ const moved = (lo) => (lo >= PREVIOUS_RAW_END ? lo - PREVIOUS_RAW_CHARS : lo);
   const ranked = [...bestPer.values()].sort((a, b) => a.bcs - b.bcs || a.nine - b.nine || a.units - b.units)
     .slice(0, RUNNERS_UP.length).map((r) => [r.lo, r.bcs, r.nine, r.units]);
   eq(ranked, RUNNERS_UP,
-    '…and the four best other openings, by (byConsumerSplit, nine, units), are exactly RUNNERS_UP');
-  ok(ranked[0][1] === 2, '…the best score that remains being 2');
-  // THE PREVIOUS CONTRACT'S RUNNERS-UP, moved up by the cut it shipped: one is
-  // this cut, one is a run that CONTAINS it, and the other two are the top of
-  // the list above.
-  const listed = listOf('RUNNERS_UP').map(([lo, bcs, nine, units]) => [moved(lo), bcs, nine, units]);
-  eq(listed.length, RUNNERS_UP.length, 'the previous contract published as many runners-up as this audit does…');
-  eq(listed[0].slice(0, 1), [RAW_AT_IN_CODE], '…the first of them, moved up, being this cut');
-  const keep = listed.filter(([lo, , , units]) => !overlaps(lo, lo + units) && lo !== RAW_AT_IN_CODE);
-  eq(listed.filter(([lo, , , units]) => lo !== RAW_AT_IN_CODE && overlaps(lo, lo + units)).length, 1,
-    '…exactly one more is a run that contains the cut, so it cannot be published again…');
-  eq(ranked.slice(0, keep.length), keep, '…and the remaining two are exactly the top of RUNNERS_UP now');
+    'the four best other openings, by (byConsumerSplit, nine, units), are exactly RUNNERS_UP');
+  // THE PREVIOUS CONTRACT'S OTHER RUNNERS-UP survive the cut that left: it sat
+  // after all of them, so none moved.
+  eq(listOf('RUNNERS_UP').slice(1), RUNNERS_UP.slice(1),
+    '…and the three the previous contract published after this one are still exactly RUNNERS_UP[1..3]');
+  // A RUN THAT DID NOT EXIST BEFORE: the previous cut removed the function that
+  // sat between these two owners, so they are adjacent now.
+  eq(RUNNERS_UP[0][0], HIDDEN_SCORE_TWO_ROWS[1][0], 'the new best other opening is the second row at 2…');
+  eq(HIDDEN_SCORE_TWO_ROWS[1][6], [OWNER_BEFORE_PREVIOUS_CUT, NEXT_DECL_AFTER_PREVIOUS_CUT],
+    '…a run over the two owners that surrounded the previous cut…');
+  eq(DECLS.indexOf(BY_NAME.get(NEXT_DECL_AFTER_PREVIOUS_CUT)) - DECLS.indexOf(BY_NAME.get(OWNER_BEFORE_PREVIOUS_CUT)), 1,
+    '…which are adjacent declarations now');
+  eq([prevStr('OWNER_BEFORE'), prevStr('NEXT_DECL')], [OWNER_BEFORE_PREVIOUS_CUT, NEXT_DECL_AFTER_PREVIOUS_CUT],
+    '…and are the owner above and the owner below in the previous contract, which is where the function between them used to be');
+}
+// WHAT THE 2 IS MADE OF, resolved by reading the code. One reference is a named
+// consumer; the other is inside an anonymous function the screen cannot name.
+{
+  const before = CODE.slice(GETTER_SITE_AT - 900, GETTER_SITE_AT);
+  ok(/window\.apexDebugPortfolioPrices = function\(\) \{/.test(before),
+    'the reference the screen files under TOP LEVEL is inside the function expression assigned to window.apexDebugPortfolioPrices…');
+  ok(/if \(typeof window !== 'undefined'\) \{/.test(before),
+    '…which is assigned inside an `if (typeof window !== \'undefined\')` block, a console API and not application flow');
+  const refs = (re) => [CODE].concat(SIBLINGS.map((x) => x.src)).concat([STATIC_MARKUP, OTHER_INLINE])
+    .reduce((n, text) => n + (text.match(re) || []).length, 0);
+  eq(refs(/apexDebugPortfolioPrices\s*\(/g), GETTER_CALLS,
+    'no application source, local script or markup CALLS that getter: GETTER_CALLS call sites, so its body never runs by itself');
+  ok(refs(/\bapexDebugPortfolioPrices\b/g) > 0,
+    'control — the getter is named in the application, so that zero is a count and not a name that matches nothing');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('5. What taking more would have cost: the owners above, the owners below, the region');
+section('5. What taking more would cost: the owners above, the owners below, the region');
 // ─────────────────────────────────────────────────────────────────────────────
 for (const [name, lo, units, nine, bcs, deps] of EXTENSIONS_UP) {
   const d = BY_NAME.get(name);
@@ -1071,42 +993,9 @@ for (const [name, units, nine, bcs, deps] of EXTENSIONS_DOWN) {
   eq([hr - RAW_AT_IN_CODE, p.nine, byConsumerSplit(p, outboundSplit(RAW_AT_IN_CODE, hb)), p.deps.length],
     [units, nine, bcs, deps], 'running the cut down through ' + name + ' costs the pinned units, nine, byConsumerSplit and dependencies');
   ok(runsNothingAtLoad(loadTimeProfile(RAW_AT_IN_CODE, hb)), '…a run that also runs nothing at load');
-  ok(nine > FULL_NINE && bcs >= BY_CONSUMER_SPLIT, '…and is worse on the raw nine, and no better on byConsumerSplit');
+  ok(nine > FULL_NINE && bcs > BY_CONSUMER_SPLIT, '…and is worse on the raw nine and on byConsumerSplit');
 }
 eq(EXTENSIONS_DOWN[0][0], NEXT_DECL, 'the first owner below is the very next declaration, NEXT_DECL');
-// THE PAIR: the one extension that does NOT cost a point of byConsumerSplit.
-{
-  const d = BY_NAME.get(NEXT_DECL);
-  const hb = downEnd(d);
-  const p = profileOf([RAW_AT_IN_CODE, hb]);
-  eq(hb - RAW_AT_IN_CODE, PAIR_BODY_CHARS, 'taking ' + NEXT_DECL + ' too makes the body PAIR_BODY_CHARS units…');
-  eq(p.names, [OWNERS_EXPECTED[0], NEXT_DECL], '…two owners, both pure functions…');
-  eq(consumersOf(p), [CONSUMER], '…reaching the SAME single consumer…');
-  eq(byConsumerSplit(p, outboundSplit(RAW_AT_IN_CODE, hb)), BY_CONSUMER_SPLIT,
-    '…so byConsumerSplit does not separate the two cuts: both score BY_CONSUMER_SPLIT');
-  eq(p.inbound, PAIR_INBOUND, 'what separates them is the raw nine, PAIR_NINE against FULL_NINE, because the second owner adds a second reference from outside');
-  eq(p.nine, PAIR_NINE, '…counted as PAIR_NINE');
-  eq(p.deps, [], '…and still no monolith dependency');
-  const rawEnd = assertSeam(CODE, RAW_AT_IN_CODE, hb);
-  eq(rawEnd - RAW_END_IN_CODE, LEFT_BEHIND_CHARS,
-    'the function the single cut leaves behind, with its own documentation, is LEFT_BEHIND_CHARS units…');
-  ok(LEFT_BEHIND_CHARS < RUN_FLOOR, '…under the screen\'s floor, so it cannot be enumerated on its own');
-  ok(REC.nine < p.nine, 'the single function is the cut with the LOWER raw nine, which is what the recommendation chooses on');
-}
-// A CUT THAT CANNOT END THERE. The second owner below ends directly against the
-// next declaration, with no blank line, so the seam rule refuses any cut that
-// ends on it.
-{
-  const d = BY_NAME.get(SEAM_ILLEGAL_DOWN);
-  const hb = downEnd(d);
-  throwsWith(() => assertSeam(CODE, RAW_AT_IN_CODE, hb), SEAM_ILLEGAL_ERROR,
-    SEAM_ILLEGAL_DOWN + ' is not a legal end for this cut: the seam rule refuses it by name');
-  eq(CODE.slice(hb - 2, hb + SEAM_ILLEGAL_NEXT.length), '}\n' + SEAM_ILLEGAL_NEXT,
-    '…because its closing brace is followed directly by the next declaration');
-  const pairEnd = downEnd(BY_NAME.get(NEXT_DECL));
-  eq(CODE.slice(pairEnd - 2, pairEnd + 1), '}\n\n',
-    'control — the end that IS legal, after ' + NEXT_DECL + ', is followed by a blank line');
-}
 // THE CONSUMER is larger than any layer the chain holds.
 {
   const sizes = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').length);
@@ -1120,7 +1009,7 @@ eq(EXTENSIONS_DOWN[0][0], NEXT_DECL, 'the first owner below is the very next dec
   eq(reg.start, REGION_AT, 'the region opens at REGION_AT');
   eq(reg.end, REGION_END, '…and ends at REGION_END');
   eq(reg.end - reg.start, REGION_CHARS, '…REGION_CHARS units');
-  ok(lineAt(reg.start).startsWith(BANNER_LINE_PREFIX), '…opening on the Journal snapshot prefetch banner');
+  ok(lineAt(reg.start).startsWith(BANNER_LINE_PREFIX), '…opening on the unrealized P&L banner');
   const own = DECLS.filter((d) => d.start >= reg.start && d.end < reg.end);
   eq(own.length, REGION_OWNERS, '…holding REGION_OWNERS owners');
   eq(own.findIndex((d) => d.name === OWNERS_EXPECTED[0]) + 1, OWNER_POSITION,
@@ -1128,7 +1017,6 @@ eq(EXTENSIONS_DOWN[0][0], NEXT_DECL, 'the first owner below is the very next dec
   eq(own[OWNER_POSITION - 2].name, OWNER_BEFORE, '…with OWNER_BEFORE immediately above it');
   eq(own[OWNER_POSITION].name, NEXT_DECL, '…and NEXT_DECL immediately below');
   ok(reg.end > RAW_END_IN_CODE, '…so the cut does NOT close its region');
-  eq(own[OWNER_POSITION + 1].name, SEAM_ILLEGAL_DOWN, '…and the SECOND owner below it is SEAM_ILLEGAL_DOWN, the one no cut can end on');
   const whole = profileOf([reg.start, reg.end]);
   const wsplit = outboundSplit(reg.start, reg.end);
   eq(whole.nine, WHOLE_REGION_NINE, 'taking the whole region scores WHOLE_REGION_NINE on the raw nine');
@@ -1156,7 +1044,7 @@ ok(candidateRuns.filter((c) => c.lo === DECL_AT_IN_CODE).every((c) => c.hi > BOD
   '…but every run the screen opens there is LONGER than the cut, because the cut\'s own length is under the floor');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('7. It loads bare, is pure, and returns plain data');
+section('7. It loads bare, is pure given a clock, and returns plain data');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const lines = BODY.split('\n');
@@ -1170,269 +1058,112 @@ section('7. It loads bare, is pure, and returns plain data');
 }
 {
   const ctx = vm.createContext(Object.create(null));
-  // THE SHIPPED MODULE is what loads here, not a slice of the reconstructed
-  // monolith: §9 proves the two are the same bytes.
-  vm.runInContext(MODULE, ctx);
+  vm.runInContext(BODY, ctx);
   eq(Object.getOwnPropertyNames(ctx).sort(), VM_GLOBALS.slice().sort(),
     'it LOADS in a completely bare VM and declares exactly its one owner');
   // A VM-REALM RESULT is compared through JSON, never directly: its prototypes
   // belong to the VM's own realm, so a strict deep-equal against a host object
   // fails even when every field matches.
-  const call = (...args) => JSON.parse(JSON.stringify(vm.runInContext(VM_GLOBALS[0], ctx).apply(null, args)));
-  const known = { AAPL: { price: '190.5' }, MSFT: { price: 410 }, BAD: { price: 'x' }, NONE: null };
-  eq(call(), { reuse: {}, candle: [], deferred: [] },
-    'with no arguments at all it returns the empty plan, without needing any global');
-  eq(call(['A', 'B', 'C'], known, false, false, 2, false), { reuse: {}, candle: ['A', 'B', 'C'], deferred: [] },
-    'when NOT suppressing, every unresolved ticker is a candle candidate: no reuse, nothing deferred');
-  eq(call(['AAPL', 'MSFT', 'BAD', 'NONE', 'NEW'], known, true, false, 2, false),
-    { reuse: { AAPL: 190.5, MSFT: 410 }, candle: [], deferred: ['BAD', 'NONE', 'NEW'] },
-    'when suppressing, last-known prices are reused first, and what is still unresolved is deferred');
-  eq(call(['BAD', 'NONE', 'NEW'], known, true, true, 2, false),
-    { reuse: {}, candle: ['BAD', 'NONE'], deferred: ['NEW'] },
-    'a user-initiated refresh spends the cap on candle fallbacks, in order, and defers the rest');
-  eq(call(['BAD', 'NONE', 'NEW'], known, true, false, 1, true),
-    { reuse: {}, candle: ['BAD'], deferred: ['NONE', 'NEW'] },
-    'a cold start spends the cap the same way');
-  eq(call(['BAD'], known, true, true, -3, false).candle, [], 'a negative cap is clamped to zero…');
-  eq(call(['A', 'B', 'C'], null, true, true, 2.9, false).candle, ['A', 'B'], '…a fractional cap is truncated…');
-  eq(call(['A'], null, true, true, undefined, false).candle, [], '…and an absent cap spends nothing');
-  eq(call(['A'], null, true, false, 5, false), { reuse: {}, candle: [], deferred: ['A'] },
-    'with no user click and no cold start nothing is spent however large the cap, and a null cache is tolerated');
-  eq(call(null, known, true, true, 2, false), { reuse: {}, candle: [], deferred: [] }, 'a null ticker list is an empty one');
-  eq(call(['A'], known, true, true, 2, false), call(['A'], known, true, true, 2, false),
-    'two identical calls return identical plans: it is deterministic…');
-  const tickers = ['AAPL', 'NEW'];
-  const before = JSON.stringify([tickers, known]);
-  vm.runInContext(VM_GLOBALS[0], ctx)(tickers, known, true, true, 2, false);
-  eq(JSON.stringify([tickers, known]), before, '…and it leaves its arguments untouched');
+  const fn = vm.runInContext(VM_GLOBALS[0], ctx);
+  const call = (...args) => JSON.parse(JSON.stringify(fn.apply(null, args)));
+  const NOW = Date.parse('2026-01-02T03:04:15Z');
+  const diag = { resolvedPricesBySymbol: {
+    SPY: { price: 500, source: 'dxlink', updatedAt: '2026-01-02T03:04:05Z', isLive: true },
+    AAPL: { price: 190, source: 'cache', updatedAt: '2026-01-02T03:00:00Z', isLive: false,
+      staleReason: 'CACHE_PREVIOUS_PRICE', attempts: [{ source: 'dxlink', ok: false }] },
+    MSFT: null,
+    FUT: { price: 7, updatedAt: '2026-01-02T03:05:00Z' },
+    BAD: { price: null, updatedAt: 'not a date' },
+  } };
+  eq(call(null, null, NOW), { refreshStartedAt: null, refreshCompletedAt: null, symbols: [], spy: null, underlyings: {} },
+    'with nothing to report it returns the empty block, without needing any global');
+  const full = call(diag, { refreshStartedAt: 'a', refreshCompletedAt: 'b' }, NOW);
+  eq([full.refreshStartedAt, full.refreshCompletedAt], ['a', 'b'], 'the refresh window is carried through from meta');
+  eq(full.symbols, ['AAPL', 'MSFT', 'FUT', 'BAD'], '…the symbols are every key but SPY, in insertion order');
+  eq(full.spy, { price: 500, source: 'dxlink', updatedAt: '2026-01-02T03:04:05Z', isLive: true,
+    staleReason: null, ageMs: 10000, attempts: [] },
+  '…SPY is its own entry, aged against the explicit now, with defaults for what is missing');
+  eq(full.underlyings.AAPL.ageMs, 255000, '…a stale underlying is 4m15s old');
+  eq(full.underlyings.AAPL.staleReason, 'CACHE_PREVIOUS_PRICE', '…keeps its stale reason…');
+  eq(full.underlyings.AAPL.attempts, [{ source: 'dxlink', ok: false }], '…and its attempts');
+  eq(full.underlyings.MSFT, null, '…a null entry stays null');
+  eq(full.underlyings.FUT.ageMs, 0, '…an update in the future ages to zero, not negative');
+  eq(full.underlyings.BAD.ageMs, null, '…and an unparseable date has no age');
+  eq(full.underlyings.BAD.price, null, '…nor a price');
+  // THE AGE GROWS WITH THE CALL-TIME CLOCK, as the documentation says.
+  eq(call(diag, {}, NOW + 60000).spy.ageMs, 70000,
+    'the same diagnostics called a minute later age by exactly a minute: ages are computed at CALL time');
+  eq(call(diag, {}, NOW), call(diag, {}, NOW),
+    'with an explicit clock two identical calls return identical blocks: it is deterministic…');
+  // WITHOUT a clock it reads Date.now().
+  const fiveSecondsAgo = new Date(Date.now() - 5000).toISOString();
+  const stamped = { resolvedPricesBySymbol: { SPY: { price: 1, updatedAt: fiveSecondsAgo } } };
+  const live = call(stamped, {});
+  ok(live.spy.ageMs >= 5000 && live.spy.ageMs < 60000,
+    '…and without one it falls back to the real clock: a price stamped five seconds ago is about five seconds old');
+  const nan = call(stamped, {}, NaN);
+  ok(nan.spy.ageMs >= 5000 && nan.spy.ageMs < 60000, '…and so does a clock that is not finite');
+  const input = JSON.stringify(diag);
+  fn(diag, {}, NOW);
+  eq(JSON.stringify(diag), input, '…and it leaves its argument untouched');
   eq(Object.getOwnPropertyNames(ctx).sort(), VM_GLOBALS.slice().sort(), '…and defines no global when called');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-section('8. Where this layer sits, and what it changed');
+section('8. Where this layer would sit, and what it would change');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  // THE AUDIT ASSERTED THE OPPOSITE of the first two: while the cut was still a
-  // recommendation this module was absent from the chain and from disk. It
-  // ships now, so the claims are INVERTED rather than deleted — an assertion
-  // that stops being made is the way this programme loses coverage.
-  ok(CHAIN.indexOf(MODULE_REL) >= 0, 'this module is IN the chain now');
-  eq(CHAIN[CHAIN.length - 1], MODULE_REL, '…as its newest layer, at the end of the list');
-  ok(fs.existsSync(path.join(ROOT, MODULE_REL)), '…and its path exists');
+  ok(CHAIN.indexOf(MODULE_REL_IF_CUT) < 0, 'this module is not in the chain yet');
+  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)), '…and its path does not exist yet');
   eq(CHAIN.length, CHAIN_LENGTH, 'the chain is CHAIN_LENGTH layers long');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const sizes = sources.map((s) => s.length).sort((a, b) => a - b);
-  eq(sizes[0], BODY_CHARS, 'the smallest shipped layer is now this one, BODY_CHARS units…');
-  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK,
-    '…measured against every layer rather than inferred from the first: it ranks SIZE_RANK by size, the smallest');
+  eq(sizes[0], SMALLEST_LAYER_CHARS, 'the smallest shipped layer is SMALLEST_LAYER_CHARS units');
+  ok(BODY_CHARS < SMALLEST_LAYER_CHARS, 'this cut is smaller than that — the layer it would displace into second place…');
+  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK_IF_CUT,
+    '…measured against every layer rather than inferred from the first: it would rank SIZE_RANK_IF_CUT by size, the smallest');
   eq(sizes.filter((u) => u > BODY_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
     '…with LAYERS_LARGER_THAN_THIS_CUT layers larger than it');
-  // The chain now CONTAINS this layer, so the partition is over CHAIN_LENGTH
-  // itself. While the cut was a recommendation the chain excluded it and the
-  // sum was CHAIN_LENGTH + 1 — the `+ 1` moved out when the layer moved in,
-  // rather than being left to make the total drift by one forever.
-  eq(SIZE_RANK + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH,
-    '…the rank and that count partitioning the chain, so neither drifts alone');
-  eq(sizes[1], DISPLACED_LAYER_CHARS,
-    '…the layer it displaced into SECOND place being DISPLACED_LAYER_CHARS units, the audit\'s SMALLEST_LAYER_CHARS');
-  // THE TWO CHAIN-WIDE SHAPE COUNTS, over the whole chain AND over the chain
-  // before this layer. The audit forecast that the first WOULD move and the
-  // second would not; both are asserted as comparisons between two measurements
-  // rather than carried forward as numbers.
-  const prior = PRIOR_LAYERS.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
-  eq(prior.length, CHAIN_LENGTH - 1, 'PRIOR_LAYERS is the chain without this layer');
+  eq(SIZE_RANK_IF_CUT + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH + 1,
+    '…the rank and that count partitioning the chain plus this cut, so neither drifts alone');
+  // THE TWO CHAIN-WIDE SHAPE COUNTS: neither moves. This module holds an em dash,
+  // so it is NOT pure ASCII, and it does not open on a `── ` banner.
   const ascii = (s) => !/[^\x00-\x7F]/.test(s);
   const banner = (s) => /^\s*\/\/ ── /.test(s.split('\n')[0]);
-  eq(prior.filter(ascii).length, PRIOR_PURE_ASCII_LAYERS, 'PRIOR_PURE_ASCII_LAYERS of the chain before this layer are pure ASCII…');
-  ok(ascii(MODULE), '…and this module is too, asserted of the module directly: it holds no em dash…');
-  eq(sources.filter(ascii).length, PURE_ASCII_LAYERS, '…so PURE_ASCII_LAYERS of the chain are, the count having moved up by exactly one');
-  eq(PURE_ASCII_LAYERS, PRIOR_PURE_ASCII_LAYERS + 1, '…which the two constants say as well');
+  eq(sources.filter(ascii).length, PURE_ASCII_LAYERS, 'PURE_ASCII_LAYERS of the chain are pure ASCII today');
+  ok(!ascii(BODY), '…and this body is not, so that count would NOT move');
+  eq(sources.concat([BODY]).filter(ascii).length, PURE_ASCII_LAYERS, '…measured with it included, which is the same count');
   eq(sources.filter(banner).length, LAYERS_OPENING_ON_BANNER,
-    'LAYERS_OPENING_ON_BANNER of the chain open on a `── ` banner line');
-  eq(prior.filter(banner).length, LAYERS_OPENING_ON_BANNER,
-    '…the same count before this layer, because this module does NOT open on one');
-  ok(!banner(MODULE), '…asserted of the module directly: it opens on its documentation');
+    'LAYERS_OPENING_ON_BANNER of the chain open on a `── ` banner line today');
+  ok(!banner(BODY), '…and this body does not, so that count would NOT move');
 }
-// WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
-// anything moved, and §9 holds the shipped document to them.
-eq(UNDO.TAG.length, RAW_CHARS - NET_REDUCTION,
-  'the tag it added is RAW_CHARS less NET_REDUCTION units');
-eq(UNDO.TAG, '<script src="./' + MODULE_REL + '"></script>\n',
-  '…and names the module this layer shipped');
-eq(BASE_CHARS - NET_REDUCTION, INDEX_AFTER, 'index.html lands at INDEX_AFTER');
+// WHAT THE CUT WOULD COST THE DOCUMENT, forecast here so Phase 2 can be held
+// to it the way the last cycle held this one to its own forecast.
+eq(TAG_IF_CUT.length, RAW_CHARS - NET_REDUCTION,
+  'the tag it would add is RAW_CHARS less NET_REDUCTION units');
+eq(TAG_IF_CUT, '<script src="./' + MODULE_REL_IF_CUT + '"></script>\n',
+  '…and names the module this audit recommends');
+eq(BASE_CHARS - NET_REDUCTION, INDEX_AFTER, 'index.html would land at INDEX_AFTER');
 eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH, '…leaving RESIDUAL_MONOLITH of inline code');
 eq(LOCAL_SCRIPTS + 1, LOCAL_SCRIPTS_AFTER, '…and LOCAL_SCRIPTS_AFTER local scripts');
-eq(count(INDEX, UNDO.TAG), 0,
-  '…and the RECONSTRUCTED base carries no such tag, which is what makes it the base');
+eq(count(INDEX, TAG_IF_CUT), 0, '…and no such tag exists yet');
+eq(LOCALS[LOCALS.length - 1], 'js/portfolio/portfolio-underlying-fallback-plan.js',
+  '…the tag would follow the newest local script, which is the previous layer');
 
 // ─────────────────────────────────────────────────────────────────────────────
-section('9. The relocation is the whole of the production change');
+section('9. Production is byte-identical to the base');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
   const all = Array.from(new Set(changed.concat(status)));
-  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), [],
+    'NOT ONE production file differs from the base: this PR measures, it does not move');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
-    '…and the base commit\'s index.html is the length the reconstruction reproduces');
-  eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
-    '…byte for byte: the reconstruction IS that document, not a copy of its numbers');
-  ok(!git(['show', BASE_SHA + ':index.html']).includes(UNDO.TAG),
-    '…and the base carried no tag for this module');
-  ok(fs.existsSync(path.join(ROOT, MODULE_REL)),
-    '…while the module the audit recommended is now written');
-
-  // THE SHIPPED DOCUMENT is what the audit predicted, to the byte.
-  eq(LIVE_INDEX.length, UNDO.EXTRACTED_CHARS, 'the shipped index.html is the extracted length');
-  eq(Buffer.byteLength(LIVE_INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…its byte length');
-  eq((LIVE_INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…its line-feed count');
-  eq(sha256(LIVE_INDEX), UNDO.EXTRACTED_SHA256, '…and its digest');
-  eq(LIVE_INDEX.length, INDEX_AFTER,
-    '…which is INDEX_AFTER, the figure the audit forecast before anything moved');
-  eq(LIVE_MONOLITH.length, RESIDUAL_MONOLITH,
-    '…and the residual inline monolith is RESIDUAL_MONOLITH, the other forecast');
-  eq(LIVE_LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS,
-    '…carrying one more local script than the base');
-  eq(LOCALS.length + 1, LIVE_LOCALS.length,
-    '…exactly one more, measured against the reconstruction rather than against a pin');
-  eq(count(LIVE_INDEX, UNDO.TAG), 1, 'exactly one tag for this module');
-  eq(count(LIVE_INDEX, UNDO.ANCHOR_TAG + UNDO.TAG + UNDO.INLINE_OPEN), 1,
-    '…immediately after the previous layer and immediately before the inline monolith');
-
-  // THE MODULE IS THE AUDITED BLOCK VERBATIM — asserted as bytes, not numbers.
-  eq(MODULE.length, UNDO.MODULE_CHARS, 'the shipped module is MODULE_CHARS units');
-  eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…its byte length');
-  eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…its line-feed count');
-  eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and its digest');
-  eq(MODULE, CODE.slice(RAW_AT_IN_CODE, BODY_END_IN_CODE),
-    'the module IS the audited block of the reconstructed monolith, byte for byte — not a '
-    + 'copy of its measurements');
-  eq(sha256(MODULE), BODY_SHA256,
-    '…and its digest is the BODY_SHA256 the audit pinned before the move');
-  eq(CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE), MODULE + UNDO.SEPARATOR,
-    '…with the raw fragment being the module plus the one structural separator');
-  ok(MODULE.endsWith(BODY_ENDING) && !MODULE.endsWith('\n\n'),
-    '…and the module ends on a real line of code, not on the separator it gave up');
-  eq(firstLineOf(MODULE), DOC_FIRST_LINE,
-    '…and OPENS on the documentation, DOC_FIRST_LINE, the boundary §2 defends');
-  eq(Buffer.byteLength(MODULE, 'utf8'), MODULE.length,
-    '…its UTF-8 length equal to its UTF-16 length, since it is pure ASCII');
-}
-// THE LOAD ORDER. This function needs nothing from the monolith (§7 loads and
-// calls it in a bare VM), so the tag's position is not load-bearing for it. It
-// is pinned all the same: last of the local scripts, immediately before the
-// inline monolith, whose single call site stays behind.
-{
-  const tagIndex = LIVE_LOCALS.indexOf(MODULE_REL);
-  eq(tagIndex, TAG_LOCAL_INDEX, 'the tag is local script number TAG_LOCAL_INDEX + 1, found by NAME…');
-  eq(LIVE_LOCALS[LIVE_LOCALS.length - 1], MODULE_REL,
-    '…and it is the LAST local script, so nothing loads after it that could depend on it');
-  eq(LIVE_LOCALS[tagIndex - 1], 'js/portfolio/portfolio-greeks-freshness.js',
-    '…immediately after the previous layer');
-  {
-    const at = LIVE_TAGS.findIndex((t) => t.src === './' + MODULE_REL);
-    ok(at >= 0 && !LIVE_TAGS[at + 1].src, '…with the inline monolith, which calls it, the very next script');
-  }
-  eq(count(LIVE_MONOLITH, 'function ' + OWNERS_EXPECTED[0]), 0,
-    'the declaration has left the monolith…');
-  eq((LIVE_MONOLITH.match(/\b_planPortfolioUnderlyingFallback\(/g) || []).length, CONSUMER_SITES,
-    '…leaving exactly CONSUMER_SITES call site behind');
-  eq(scanTopLevelDeclarations(MODULE).map((d) => d.name), OWNERS_EXPECTED,
-    'the module declares exactly its one owner and nothing else');
-  // CONTROL: the same predicate fails on a document with the tag moved, so the
-  // pin is a measurement and not a statement that is true of any document.
-  const moved = UNDO.TAG + LIVE_INDEX.replace(UNDO.TAG, '');
-  const movedLocals = APP_LOADER.parseScriptTags(moved)
-    .filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
-  ok(movedLocals.indexOf(MODULE_REL) !== TAG_LOCAL_INDEX && movedLocals[movedLocals.length - 1] !== MODULE_REL,
-    'control — with the tag moved to the top of the document, both of those pins would fail');
-}
-// THE UNDO'S REACHABLE GUARDS, each driven by PLANTING the exact violation it
-// claims to catch. A guard that is never made to fire is a guard nobody has
-// checked, and its EXACT message is asserted so a mutant cannot pass by raising
-// some other error. BASE_IDENTITY is deliberately absent: the helper's header
-// states it is a redundant final gate, unreachable once the module digest and
-// the whole-document digest have both passed.
-{
-  const E = 'PORTFOLIO_UNDERLYING_FALLBACK_PLAN_UNDO_';
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(null, MODULE), E + 'BAD_INPUT',
-    'a non-string document is refused');
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, null), E + 'BAD_INPUT',
-    '…and a non-string module');
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, MODULE.slice(0, -1)),
-    E + 'MODULE_IDENTITY', 'a truncated module is refused');
-  // A MODULE THAT RE-ABSORBED THE SEPARATOR IS CAUGHT BY SIZE, not by the
-  // separator gate — it is 1,690 units, not 1,689 — which is exactly what the
-  // helper's own gate-1 comment claims.
-  eq((MODULE + '\n').length, RAW_CHARS,
-    'control — a module that re-absorbed the separator is one unit too long, the raw length');
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, MODULE + '\n'),
-    E + 'MODULE_IDENTITY', '…so SIZE refuses it, before the separator gate is reached');
-  {
-    // THE SEPARATOR GATE, reached on its own terms: a module of the RIGHT length
-    // and the RIGHT line-feed count that still does not end on a line of code.
-    // The naive mutant — swap the trailing `}\n` for `\n\n` — does NOT reach it:
-    // that moves the line-feed count and gate 1 refuses it first. One LF is
-    // traded away elsewhere to keep the count, which is what makes the probe
-    // land on this gate rather than on the one above it.
-    const blankEnded = MODULE.slice(0, -2).replace('\n', ' ') + '\n\n';
-    eq(blankEnded.length, MODULE.length, 'control — the blank-ended module is the right length');
-    eq(Buffer.byteLength(blankEnded, 'utf8'), Buffer.byteLength(MODULE, 'utf8'), '…the right byte length');
-    eq((blankEnded.match(/\n/g) || []).length, (MODULE.match(/\n/g) || []).length,
-      '…and has the same line-feed count, so only the separator gate can refuse it');
-    ok(blankEnded.endsWith('\n\n'), '…and it really does end on a blank line');
-    throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, blankEnded),
-      E + 'MODULE_SEPARATOR',
-      '…and the separator gate refuses it with its OWN error, so a caller learns which '
-      + 'mistake it made');
-  }
-  {
-    // Same length, same line-feed count, different bytes: only the digest can
-    // catch this one, which is why the digest is a separate gate.
-    const swapped = MODULE.replace('cap | 0', 'cap | 1');
-    eq(swapped.length, MODULE.length, 'control — the tampered module is the same length');
-    ok(swapped !== MODULE, '…and really does differ from it');
-    throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, swapped),
-      E + 'MODULE_IDENTITY', '…and a same-length tampered module is still refused');
-  }
-  {
-    // The byte count is pinned even though this module IS pure ASCII: swapping a
-    // 1-byte letter for a 2-byte one keeps the length and the line-feed count
-    // and moves only the byte length.
-    const widened = MODULE.replace('t', 'é');
-    eq(widened.length, MODULE.length, 'control — the widened module has the same UTF-16 length');
-    eq(Buffer.byteLength(widened, 'utf8') - Buffer.byteLength(MODULE, 'utf8'), 1,
-      '…and is one UTF-8 byte longer');
-    throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX, widened),
-      E + 'MODULE_IDENTITY', '…and is refused all the same');
-  }
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX.replace(UNDO.TAG, ''), MODULE),
-    E + 'TAG_IDENTITY', 'a document with no tag is refused');
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX + UNDO.TAG, MODULE),
-    E + 'TAG_IDENTITY', '…and one with a duplicate tag');
-  {
-    // The tag moved to the top of the document: present exactly once, but no
-    // longer adjacent to the anchor and the inline open.
-    const moved = UNDO.TAG + LIVE_INDEX.replace(UNDO.TAG, '');
-    eq(count(moved, UNDO.TAG), 1, 'control — the moved tag is still present exactly once');
-    throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(moved, MODULE),
-      E + 'TAG_ADJACENCY', '…so it is ADJACENCY that refuses a reordered tag, not identity');
-  }
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(LIVE_INDEX.replace('<body', '<body '), MODULE),
-    E + 'EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
-  throwsWith(() => UNDO.undoPortfolioUnderlyingFallbackPlan(INDEX, MODULE),
-    E + 'TAG_IDENTITY',
-    'and the ALREADY-UNEXTRACTED document is refused too: undoing twice is not a no-op');
-  // isApplied is ROUTING, not safety — the helper's header says so.
-  eq(UNDO.isApplied(LIVE_INDEX), true, 'isApplied is true for the shipped document');
-  eq(UNDO.isApplied(INDEX), false, '…and false once this layer is peeled off');
+    '…and the base commit\'s index.html is the length measured above');
+  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)),
+    '…with the module this audit recommends not yet written');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1443,33 +1174,17 @@ section('10. The change set, the ratchet and the budget');
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status))).sort();
-  // THE AUDIT IS GONE, AND THIS FILE IS WHAT REPLACED IT — one for one, which
-  // is the rhythm. The audit asserted AUDIT_REL was its own path; that claim is
-  // inverted here rather than dropped.
-  ok(all.indexOf(AUDIT_REL) >= 0, 'the audit is part of the change — as a deletion');
-  ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)), '…and its path no longer exists');
-  eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '',
-    '…while the base commit DID carry it, so the deletion is of something real');
-  eq(CONTRACT_REL, path.relative(ROOT, __filename),
-    'CONTRACT_REL is the path of THIS file, which is what the audit became');
-  ok(all.indexOf(CONTRACT_REL) >= 0, '…and it is part of the change');
-  ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), 'the audit\'s spec is gone too');
-  ok(fs.existsSync(path.join(ROOT, UNDO_REL)), 'and the undo helper ships');
-  eq(all.filter((rel) => !rel.startsWith('tests/') && rel !== 'index.html'
-    && !rel.startsWith('js/')), [],
-  '…with every remaining changed path being a test artifact, the document or a module');
-  // THE RATCHET. The audit left and this contract arrived, so the suite file
-  // count is UNCHANGED — which is asserted against git rather than assumed from
-  // the fact that a rename happened.
+  ok(all.indexOf(AUDIT_REL) >= 0, 'this audit is part of the change');
+  eq(fs.readFileSync(path.join(ROOT, AUDIT_REL), 'utf8'), fs.readFileSync(__filename, 'utf8'),
+    '…and AUDIT_REL is the path of THIS file, byte for byte');
+  ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec');
+  ok(all.every((rel) => rel.startsWith('tests/')), '…and every changed path is a test artifact');
+  // THE RATCHET.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
-    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files');
-  {
-    const countAt = (sha) => git(['ls-tree', '-r', '--name-only', sha, 'tests/'])
-      .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length;
-    eq(countAt(BASE_SHA), countAt(SHIPPED_SHA),
-      '…and the commit that shipped this layer carries the SAME count as the base, read out of '
-      + 'git for both, because renaming the audit into this contract moves no files');
-  }
+    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files with this audit in it');
+  eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
+    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, TEST_FILE_COUNT - 1,
+  '…one more than the base commit carried, read out of git');
   const RATCHETED = /^const TEST_FILE_COUNT = \d+;$/m;
   const contracts = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => f.endsWith('.test.js') &&
@@ -1477,31 +1192,21 @@ section('10. The change set, the ratchet and the budget');
   eq(contracts.length, RATCHETED_CONTRACTS, 'RATCHETED_CONTRACTS files pin the suite file count');
   ok(contracts.every((f) => new RegExp('^const TEST_FILE_COUNT = ' + TEST_FILE_COUNT + ';$', 'm')
     .test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
-  '…and every one of them pins the same value, this contract included');
-  ok(contracts.indexOf(path.basename(CONTRACT_REL)) >= 0,
-    '…this contract being one of them, so it ratchets itself rather than exempting itself');
+  '…and every one of them now pins the ratcheted value, this audit included');
+  ok(contracts.indexOf(path.basename(AUDIT_REL)) >= 0,
+    '…this audit being one of them, so it ratchets itself rather than exempting itself');
   // THE BUDGET.
-  // READ OUT OF THE REVISION THAT LAST CARRIED IT: `require` would throw now.
-  const contractSpecAt = git(['show', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]);
-  eq((contractSpecAt.match(/\n    \{ id: /g) || []).length, CONTRACT_SPEC_MUTANTS,
-    'this contract\'s spec carried CONTRACT_SPEC_MUTANTS mutants, one per pin');
-  ok(contractSpecAt.indexOf("target: '" + CONTRACT_REL + "'") >= 0,
-    '…and it targeted this contract');
+  const auditSpec = require(path.join(ROOT, AUDIT_SPEC_REL));
+  eq(auditSpec.target, AUDIT_REL, 'the audit spec targets this audit');
   const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
   const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
   const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
   eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
     .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
   'the base declared BASE_DECLARED_MUTANTS mutants');
-  // THE ARITHMETIC IS A FACT ABOUT THE COMMIT THAT SHIPPED THIS LAYER, read out
-  // of git. Against the LIVE total it held only until the next cycle retired
-  // this contract's spec and landed its own audit — the pattern is always the
-  // same: a phase's arithmetic belongs to that phase's commit.
-  eq(Number(git(['show', SPEC_RETIRED_FROM + ':' + COVERAGE_CONTRACT])
-    .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]),
-  BASE_DECLARED_MUTANTS + CONTRACT_SPEC_MUTANTS - RETIRED_MUTANTS,
-  '…and at the commit that shipped this layer the total was the base, LESS the audit spec '
-  + 'that phase retired, PLUS this contract\'s own');
+  eq(declaredNow, BASE_DECLARED_MUTANTS + auditSpec.mutants.length - RETIRED_MUTANTS,
+    '…and the live total is the base, LESS the spec this cycle retires, PLUS this audit\'s own '
+    + '— the arithmetic of the change rather than the total it happens to reach');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/mutation-specs/'])
     .split('\n').filter(Boolean).length, BASE_SPECS,
   '…the base having carried BASE_SPECS specs, read out of git');
@@ -1511,27 +1216,21 @@ section('10. The change set, the ratchet and the budget');
   ok(declaredNow < budgetNow, '…and the declared total is under it');
   // ABSENCE ALONE IS NOT A PIN.
   ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC_REL)),
-    'the AUDIT\'s spec is retired, in Phase 2 as the rhythm runs');
+    'the outgoing CONTRACT\'s spec is retired, in Phase 1 as the rhythm runs');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + RETIRED_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely one that never existed');
-  eq(RETIRED_SPEC_REL, AUDIT_SPEC_REL,
-    'the retired path IS the audit\'s spec: the retirement is in phase order, and it is the '
-    + 'outgoing CONTRACT\'s spec that went in Phase 1 instead');
-  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + AUDIT_REL + "'") >= 0,
-    '…and it is the audit that retired spec TARGETED, not merely a file that existed');
+  ok(fs.existsSync(path.join(ROOT, PREVIOUS_CONTRACT)),
+    '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
+  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + PREVIOUS_CONTRACT + "'") >= 0,
+    '…and it is the contract that retired spec TARGETED, not merely a contract that exists');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
-  ok(!fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)),
-    '…and this contract\'s own spec is retired now too, by the next cycle\'s Phase 1');
-  ok(layerSpecs.indexOf(path.basename(CONTRACT_SPEC_REL)) < 0,
-    '…so it is not the one non-coverage spec that is committed');
-  eq(git(['cat-file', '-e', SPEC_RETIRED_FROM + ':' + CONTRACT_SPEC_REL]), '',
-    '…a path the commit that shipped this layer really carried, so its absence is a retirement');
+  eq(layerSpecs, [path.basename(AUDIT_SPEC_REL)], '…and during Phase 1 it is THIS audit\'s');
 }
 
 console.log('\n' + pass + ' assertions passed.');
-console.log('UNDERLYING_FALLBACK_PLAN_CONTRACT_OK');
+console.log('PRICE_FRESHNESS_AUDIT_OK');
 }
 
 main();
