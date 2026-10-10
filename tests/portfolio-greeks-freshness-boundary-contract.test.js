@@ -95,6 +95,7 @@ const {
 } = require('./lib/extraction-boundary.js');
 // The layer cut AFTER this one, peeled off before this layer's own document is
 // reconstructed. Newest-first, which is the rule the whole chain follows.
+const PORTFOLIO_PRICE_FRESHNESS_U = require('./lib/portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const UNDO = require('./lib/portfolio-greeks-freshness-undo.js');
 
@@ -378,10 +379,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
+const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(PRE_PORTFOLIO_PRICE_FRESHNESS)
+  ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
+      PRE_PORTFOLIO_PRICE_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
+  : PRE_PORTFOLIO_PRICE_FRESHNESS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1253,7 +1258,8 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-underlying-fallback-plan.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-underlying-fallback-plan.js',
+      'js/portfolio/portfolio-price-freshness.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
