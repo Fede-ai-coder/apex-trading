@@ -127,7 +127,7 @@ const BASE_UTF8 = 1483244;
 const BASE_LF = 25152;
 const BASE_SHA256 = '0757e6576b328511c3014d6746ac2c6ff9513b0d16999f8b5ef321f2bf637aca';
 const LOCAL_SCRIPTS = 87;
-const TEST_FILE_COUNT = 176;
+const TEST_FILE_COUNT = 177;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-portfolio-technical-batch-fetch-boundary-audit.test.js';
@@ -144,7 +144,7 @@ const UNDO_REL = 'tests/lib/portfolio-technical-batch-fetch-undo.js';
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 38;
+const RATCHETED_CONTRACTS = 39;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-snapshot-fallback-boundary-contract.test.js';
