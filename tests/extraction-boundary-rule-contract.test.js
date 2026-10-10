@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_UNDERLYING_FALLBACK_PLAN = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS = require('./lib/portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH = require('./lib/portfolio-technical-batch-fetch-undo.js');
@@ -202,6 +203,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = PORTFOLIO_UNDERLYING_FALLBACK_PLAN.undoPortfolioUnderlyingFallbackPlan(
+    doc, read('js/portfolio/portfolio-underlying-fallback-plan.js'));
   doc = PORTFOLIO_GREEKS_FRESHNESS.undoPortfolioGreeksFreshness(
     doc, read('js/portfolio/portfolio-greeks-freshness.js'));
   doc = RS_SKIP_BREAKDOWN_HTML.undoRsSkipBreakdownHtml(
