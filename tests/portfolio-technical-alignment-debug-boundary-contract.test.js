@@ -84,6 +84,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-technical-alignment-debug-undo.js');
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
 const PORTFOLIO_PRICE_FRESHNESS_U = require('./lib/portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
@@ -162,7 +163,7 @@ const BY_CONSUMER = 1;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 2;
-const LAYERS_WITH_A_DEPENDENCY = 15;
+const LAYERS_WITH_A_DEPENDENCY = 16;
 const HELPER_CALL_SITES = 1;
 const PROMISE_ALL_SITES = 22;
 
@@ -296,10 +297,14 @@ console.log('relocation only · audited by #460 · base=' + BASE_SHA);
 // FIRST, and LIVE_* below means this layer's own shipped document — the one it
 // was written against — not whatever the head of the chain looks like today.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+const PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE = PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.undoPortfolioMissingUnderlyingsGate(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-missing-underlyings-gate.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE)
+  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
+      PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+  : PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE;
 const PRE_PORTFOLIO_UNDERLYING_FALLBACK_PLAN = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(PRE_PORTFOLIO_PRICE_FRESHNESS)
   ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
       PRE_PORTFOLIO_PRICE_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
@@ -1038,7 +1043,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so.
@@ -1074,7 +1079,7 @@ section('8. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');

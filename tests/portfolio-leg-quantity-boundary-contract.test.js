@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
 const PORTFOLIO_PRICE_FRESHNESS_U = require('./lib/portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
@@ -477,10 +478,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(SHIPPED_INDEX)
-  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+const PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE = PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.isApplied(SHIPPED_INDEX)
+  ? PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.undoPortfolioMissingUnderlyingsGate(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-missing-underlyings-gate.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE)
+  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
+      PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+  : PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE;
 const PRE_PORTFOLIO_UNDERLYING_FALLBACK_PLAN = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(PRE_PORTFOLIO_PRICE_FRESHNESS)
   ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
       PRE_PORTFOLIO_PRICE_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
