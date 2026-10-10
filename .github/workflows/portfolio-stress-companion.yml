@@ -31,7 +31,11 @@ on:
 # bump it deliberately, in the same commit that updates the recorded hashes.
 env:
   BACKEND_REPO: Fede-ai-coder/apex-backend
+  # Historical source-facts audit remains pinned to the v1.2.5 implementation.
   BACKEND_COMMIT: 12f3ba1821d809d5d9dbf86b86e8199e84e14119
+  # The byte-identical parity copy follows the v1.3 backend candidate. Scope
+  # semantics/identity did not move; only the manifest's modelVersion metadata did.
+  BACKEND_PARITY_COMMIT: 3e2f100fa192a22ef9490ea768adae9ca114afa1
   BACKEND_DEPLOYED_COMMIT: 25dd84245d8176bd6c3daa05be98e52afe0a934a
 
 jobs:
@@ -164,6 +168,16 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.BACKEND_READ_TOKEN }}
 
+      # A separate exact checkout for the CURRENT parity artefact. Do not move
+      # the historical source-facts pin merely because manifest metadata changed.
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BACKEND_REPO }}
+          ref: ${{ env.BACKEND_PARITY_COMMIT }}
+          path: apex-backend-parity
+          fetch-depth: 1
+          token: ${{ secrets.BACKEND_READ_TOKEN }}
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -186,10 +200,20 @@ jobs:
           APEX_BACKEND_PATH: ${{ github.workspace }}/apex-backend
         run: node tests/portfolio-stress-source-facts.test.js
 
-      - name: the parity manifest copy is byte-identical to the backend's
+      - name: the v1.3 parity checkout really is the pinned commit
+        working-directory: apex-backend-parity
+        run: |
+          actual="$(git rev-parse HEAD)"
+          echo "parity checkout: $actual"
+          if [ "$actual" != "${{ env.BACKEND_PARITY_COMMIT }}" ]; then
+            echo "::error::expected parity commit ${{ env.BACKEND_PARITY_COMMIT }}, got $actual"
+            exit 1
+          fi
+
+      - name: the parity manifest copy is byte-identical to the v1.3 backend's
         run: |
           cmp apex-trading/contracts/portfolio-scope-parity-manifest.json \
-              apex-backend/contracts/portfolio-scope-parity-manifest.json
+              apex-backend-parity/contracts/portfolio-scope-parity-manifest.json
 
       # NEGATIVE CONTROL. The strict suite carries its own controls against the
       # deployed commit, but they only run when that commit is fetchable, so it

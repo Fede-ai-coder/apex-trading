@@ -1012,6 +1012,185 @@ section('16. REAL BACKEND RESPONSES — the %NLV metric status, end to end');
   }
 }
 
+
+section('17. v1.3 state-dependent SPY-equivalent exposure is normalized without becoming spot BWDelta');
+{
+  function exposureCell() {
+    const c = completeCell();
+    c.rawBetaWeightedShareDelta = 40;
+    c.rawBetaWeightedShareDeltaStatus = 'VALID';
+    c.rawBetaWeightedShareDeltaReason = null;
+    c.scenarioExposure = {
+      actual: {
+        status: 'VALID', complete: true, reason: null,
+        deltaMethod: 'CRR_CENTRAL_DIFFERENCE_REL_1E-4_V1',
+        modelBwDeltaSpyEqBase: -8.5,
+        modelBwDeltaSpyEqStressed: 31.25,
+        modelBwDeltaSpyEqChange: 39.75,
+        // A backend regression must NOT create a new frontend surface merely
+        // because an unmodelled field happens to be present.
+        modelDeltaBase: 999999,
+        partial: null,
+      },
+      overlay: {
+        status: 'VALID', complete: true, reason: null,
+        deltaMethod: 'CRR_CENTRAL_DIFFERENCE_REL_1E-4_V1',
+        modelBwDeltaSpyEqBase: -2,
+        modelBwDeltaSpyEqStressed: 11,
+        modelBwDeltaSpyEqChange: 13,
+        partial: null,
+      },
+      proposed: {
+        status: 'VALID', complete: true, reason: null,
+        deltaMethod: 'CRR_CENTRAL_DIFFERENCE_REL_1E-4_V1',
+        modelBwDeltaSpyEqBase: -10.5,
+        modelBwDeltaSpyEqStressed: 42.25,
+        modelBwDeltaSpyEqChange: 52.75,
+        partial: null,
+      },
+      difference: {
+        status: 'VALID', complete: true, reason: null,
+        deltaMethod: 'CRR_CENTRAL_DIFFERENCE_REL_1E-4_V1',
+        modelBwDeltaSpyEqBase: -2,
+        modelBwDeltaSpyEqStressed: 11,
+        modelBwDeltaSpyEqChange: 13,
+        partial: null,
+      },
+    };
+    return c;
+  }
+
+  {
+    const c = exposureCell();
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.actual.values.modelBwDeltaSpyEqBase === -8.5
+       && n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === 31.25,
+      '17.1: a negative model-base and positive model-stressed SPY-equivalent BWDelta both survive');
+    ok(n.scenarioExposure.actual.authoritative.modelBwDeltaSpyEqChange === 39.75,
+      '17.2: a complete VALID exposure is authoritative');
+    ok(n.scenarioExposure.actual.deltaMethod === 'CRR_CENTRAL_DIFFERENCE_REL_1E-4_V1',
+      '17.3: the model-Delta method survives as provenance');
+    ok(n.values.rawBetaWeightedShareDelta === 40,
+      '17.4: the existing spot/share BWDelta stays a separate field and is not re-signed');
+    ok(!Object.prototype.hasOwnProperty.call(n.scenarioExposure.actual.values, 'modelDeltaBase'),
+      '17.5: a cross-underlying raw modelDeltaBase is NOT exposed by accidental passthrough');
+    ok(n.scenarioExposure.difference.values.modelBwDeltaSpyEqStressed === 11,
+      '17.6: Difference has its own normalized exposure; it is not substituted from Overlay');
+  }
+
+  {
+    const c = exposureCell();
+    c.scenarioExposure.actual.status = 'DEGRADED';
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === 31.25,
+      '17.7: DEGRADED exposure keeps its number');
+    ok(n.scenarioExposure.actual.authoritative.modelBwDeltaSpyEqStressed === null,
+      '17.8: …but DEGRADED exposure is never authoritative');
+    ok(n.scenarioExposure.actual.status === 'DEGRADED',
+      '17.9: the exposure status is republished as DEGRADED');
+  }
+
+  {
+    const c = exposureCell();
+    c.scenarioExposure.actual.status = 'UNAVAILABLE';
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.actual.values.modelBwDeltaSpyEqBase === null
+       && n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === null,
+      '17.10: numbers under UNAVAILABLE scenario exposure are withdrawn');
+    ok(n.contractViolations.some((v) => v.field === 'scenarioExposure.actual'),
+      '17.11: …and the contradiction is reported against scenarioExposure.actual');
+  }
+
+  {
+    const c = exposureCell();
+    delete c.scenarioExposure.actual.status;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.actual.status === 'UNAVAILABLE'
+       && n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === null,
+      '17.12: a missing exposure status authorizes nothing');
+  }
+
+  {
+    const c = exposureCell();
+    c.scenarioExposure.actual.complete = false;
+    c.scenarioExposure.actual.status = 'VALID';
+    c.scenarioExposure.actual.partial = {
+      modelBwDeltaSpyEqBase: -7,
+      modelBwDeltaSpyEqStressed: 18,
+      modelBwDeltaSpyEqChange: 25,
+      reasons: ['ONE_LEG_UNAVAILABLE', 42],
+    };
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === null,
+      '17.13: an incomplete exposure cannot publish a total');
+    ok(n.scenarioExposure.actual.partialValues.modelBwDeltaSpyEqStressed === 18,
+      '17.14: the computable remainder stays under partialValues');
+    ok(n.scenarioExposure.actual.partialReasons.length === 1
+       && n.scenarioExposure.actual.partialReasons[0] === 'ONE_LEG_UNAVAILABLE',
+      '17.15: partial reasons are copied through a string-only allowlist');
+  }
+
+  {
+    const c = exposureCell();
+    delete c.scenarioExposure.proposed;
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    ok(n.scenarioExposure.proposed.status === 'UNAVAILABLE'
+       && n.scenarioExposure.proposed.values.modelBwDeltaSpyEqStressed === null,
+      '17.16: a missing Proposed exposure stays missing — Overlay is never a fallback');
+  }
+
+  {
+    const c = exposureCell();
+    const cross = {
+      resultSet: 'actual',
+      horizonDays: 1,
+      vixTarget: 22,
+      lowerScenarioId: 'up-5',
+      upperScenarioId: 'up-10',
+      lowerSpyReturn: 0.05,
+      upperSpyReturn: 0.10,
+      lowerExposure: -4,
+      upperExposure: 6,
+      approximateSpyReturn: 0.07,
+      approximateSpyPrice: 824.18,
+      method: 'APPROXIMATE_LINEAR_IN_SCENARIO_SPACE',
+      status: 'VALID',
+      smuggledPortfolio: { positions: ['must-not-escape'] },
+    };
+    const response = {
+      status: 'VALID',
+      matrix: [c],
+      upsideDeltaCrossover: cross,
+      upsideDeltaCrossovers: [
+        cross,
+        Object.assign({}, cross, { resultSet: 'overlay', method: 'NOT_A_METHOD' }),
+      ],
+    };
+    const n = call('normalizePortfolioStressResponse(__r)', { __r: response });
+    ok(n.upsideDeltaCrossover && n.upsideDeltaCrossover.approximateSpyReturn === 0.07,
+      '17.17: the primary upside crossover is normalized');
+    ok(n.upsideDeltaCrossovers.length === 1
+       && n.upsideDeltaCrossovers[0].resultSet === 'actual',
+      '17.18: crossover arrays are allowlisted and an unknown method is rejected');
+    ok(!Object.prototype.hasOwnProperty.call(n.upsideDeltaCrossovers[0], 'smuggledPortfolio'),
+      '17.19: unmodelled crossover payload cannot escape the normalizer');
+    cross.approximateSpyReturn = 0.99;
+    cross.smuggledPortfolio.positions.push('later mutation');
+    ok(n.upsideDeltaCrossover.approximateSpyReturn === 0.07
+       && n.upsideDeltaCrossovers[0].approximateSpyReturn === 0.07,
+      '17.20: normalized crossover data is detached from the backend object');
+  }
+
+  {
+    const c = exposureCell();
+    const n = call('normalizePortfolioStressCell(__c)', { __c: c });
+    c.scenarioExposure.actual.modelBwDeltaSpyEqStressed = 9999;
+    c.scenarioExposure.actual.partial = { modelBwDeltaSpyEqStressed: 8888 };
+    ok(n.scenarioExposure.actual.values.modelBwDeltaSpyEqStressed === 31.25,
+      '17.21: normalized scenario exposure is detached from later backend-payload mutation');
+  }
+}
+
 // ── summary ─────────────────────────────────────────────────────────────────
 console.log(fail === 0
   ? '\nAll ' + pass + ' assertions passed.'

@@ -1,7 +1,7 @@
-# Portfolio Stress Test — Model Specification v1.2.5
+# Portfolio Stress Test — Model Specification v1.3.0
 
 **Status:** `specification`
-**Version:** `1.2.5`
+**Version:** `1.3.0`
 **Runtime implemented:** `false`
 **Architecture decision:** `reuse_first_backend_batch_frontend_render`
 
@@ -21,6 +21,115 @@ builder, no Overlay editor, no Overlay persistence and no order path**, so
 `runtimeImplemented` stays `false` — it answers "can a user reach this from the
 application?", and the answer is still no. Per-tier status lives in
 `implementationStatus`; see [§33](#33-implementation-status-per-tier).
+
+## Revision 1.3.0 — state-dependent exposure belongs inside the Stress Engine
+
+> **1.3.0 — the Stress Engine gains a separate scenario-exposure contract. Spot
+> Beta-Weighted Delta stays mathematically pure; nonlinear option exposure is measured
+> by repricing Delta at the base and stressed states. The minimum SPY matrix becomes
+> bilateral so an upside-convex hedge can actually be observed.**
+
+This revision closes a gap between the model we specified and the engine we later
+implemented.
+
+The merged backend already does the hard part for **value**: it freezes one snapshot,
+maps each underlying to a stressed spot, shocks IV/time and fully reprices every option.
+But its Greek path is still a snapshot path. `evaluateLeg()` attaches the frozen vendor
+Greeks to every scenario, and `aggregateGreeks()` aggregates those same values. It does
+**not** calculate a new Delta at the stressed spot/IV/time.
+
+That distinction matters for a convex structure. A call backspread can have negative
+instantaneous Delta/Beta-Weighted Delta at the current spot and become positive during an
+upside move. The negative current number is not wrong; it is simply a local derivative.
+Re-signing it because the trade was *intended* as a rally hedge would corrupt the metric.
+The missing object is a **state-dependent exposure profile**.
+
+There is a second, independent gap. The backend correctly refuses to manufacture a
+combined option `betaWeightedDelta` from raw dxFeed Greeks because their economic
+per-share/per-contract scale is not proven. That refusal remains correct. Revision 1.3.0
+does **not** reinterpret the vendor units. Instead, scenario exposure is derived from the
+APEX pricing model itself, whose option value is per share and whose contract multiplier is
+already explicit in the Stress Engine.
+
+For option leg `i`:
+
+```
+modelDeltaPerShareBase_i     = dV_model/dS at (S_base, IV_base, T_base)
+modelDeltaPerShareStressed_i = dV_model/dS at (S_stress, IV_stress, T_stress)
+
+economicDeltaBase_i =
+  modelDeltaPerShareBase_i × signedContracts_i × contractMultiplier_i
+
+economicDeltaStressed_i =
+  modelDeltaPerShareStressed_i × signedContracts_i × contractMultiplier_i
+```
+
+For shares, economic Delta is simply the signed share quantity.
+
+**Economic Delta remains a leg/underlying-local quantity.** AAPL-share Delta and
+MSFT-share Delta do not share a unit and MUST NOT be added into an unweighted
+portfolio "Delta" total. Cross-underlying aggregation starts only after beta and
+the underlying/SPY spot ratio convert each leg into SPY-equivalent units.
+
+The SPY-equivalent model exposure for one scenario is then:
+
+```
+modelBwDeltaSpyEqBase =
+  Σ economicDeltaBase_i × beta_i × currentSpot_i / currentSpy
+
+modelBwDeltaSpyEqStressed =
+  Σ economicDeltaStressed_i × beta_i × stressedSpot_i / stressedSpy
+
+modelBwDeltaSpyEqChange =
+  modelBwDeltaSpyEqStressed - modelBwDeltaSpyEqBase
+```
+
+Beta remains frozen from the run snapshot. SPY is its own benchmark. A missing beta for a
+non-SPY symbol still never becomes `1`.
+
+### Observed exposure and model exposure are deliberately different families
+
+`CURRENT PORTFOLIO BWΔ` remains the current observed/local risk metric already used by the
+Portfolio. The Stress Engine publishes a separate `MODEL BASE → MODEL STRESSED` series.
+APEX MUST NOT compare a vendor/current Delta directly with a model/stressed Delta and call
+that difference the scenario change. Base and stressed values must be calculated by the
+same model and convention.
+
+This also changes the interpretation rule:
+
+- a negative spot BWΔ is **not** automatically a bearish-position verdict;
+- a positive stressed BWΔ is **not** automatically proof of a hedge;
+- a sign crossover is a conditional model state transition, not a trade label;
+- hedge effectiveness is supported by Stress P&L / Proposed-minus-Actual marginal benefit
+  (or a separately specified attribution that reconciles to Portfolio Stress P&L);
+- when material nonlinear option exposure exists, spot BWΔ alone is insufficient for
+  directional-risk or rebalancing conclusions.
+
+### Why the matrix changes
+
+The v1.2.5 minimum SPY grid was `0, -5%, -10%, -15%, -20%`. It can test crash protection,
+but it literally cannot observe a rally hedge that becomes positive Delta above spot.
+
+The minimum becomes the least-disruptive bilateral extension of that grid:
+
+```
+SPY: -20%, -15%, -10%, -5%, 0%, +5%, +10%, +15%, +20%
+VIX: current, +50%, +100%, +200%
+```
+
+That is 36 cells. The values remain diagnostic hypotheses, never forecasts. Additional
+custom scenarios — including VIX-down rally scenarios — remain allowed. The existing
+20-scenario backend benchmark is historical evidence and must be rerun at 36 scenarios
+before this new exposure layer is promoted.
+
+### Implementation truth corrected
+
+Backend PR #220 and frontend companion PR #360 are both merged into their development
+branches. The previous `implementationStatus` still described them as draft/unmerged.
+This revision corrects that metadata, but does **not** claim that the merged backend commit
+is deployed: production deployment must be re-verified independently.
+
+---
 
 ## Revision 1.2.5 — what changed and why
 
@@ -1402,6 +1511,44 @@ conversion must be explicit — [`PST-OPEN-003`](#21-open-and-resolved-decisions
 Two distinct metrics, never mixed. `βΔ SPY-EQ` requires all four inputs; when any is missing
 the row renders an em dash, **never `0`**. The stress model inherits this discipline.
 
+### 8.3 Observed spot exposure vs scenario-model exposure
+
+Revision 1.3.0 keeps the formulas above unchanged for the current Portfolio. The Stress
+Engine adds a **separate** model-derived exposure family because a nonlinear option's Delta
+changes as spot, IV and time change.
+
+The current observed Portfolio BWΔ answers: *what is the local SPY-equivalent directional
+exposure now?* The scenario-model BWΔ answers: *what would the modelled SPY-equivalent
+directional exposure be in this frozen stress state?* Neither replaces the other.
+
+The engine MUST therefore publish model Delta in an APEX-controlled economic unit:
+
+```
+OPTION:
+economicDelta = modelDeltaPerShare × signedContracts × contractMultiplier
+
+EQUITY / ETF:
+economicDelta = signedShares
+```
+
+These values stay at **leg / same-underlying scope**. APEX MUST NOT sum raw
+economic Delta across different underlyings; that would add unlike share units.
+The first valid portfolio-wide directional sum is the SPY-equivalent normalization below.
+
+and calculate the SPY-equivalent exposure separately at the base and stressed states:
+
+```
+modelBwDeltaSpyEqBase =
+  Σ economicDeltaBase × beta × currentUnderlyingSpot / currentSpy
+
+modelBwDeltaSpyEqStressed =
+  Σ economicDeltaStressed × beta × stressedUnderlyingSpot / stressedSpy
+```
+
+Raw vendor Greeks stay raw snapshot diagnostics. They MUST NOT be overwritten by model
+Greeks, and a current vendor/Portfolio BWΔ MUST NOT be used as the base leg of a
+`modelBase → modelStressed` change.
+
 ---
 
 ## 9. Reference architecture
@@ -1659,9 +1806,24 @@ so `BRK.B` survives, producing `.BRK.B260619C500`.
 | `PST-RESULT-004` | Shared inputs | MUST | Actual and Proposed MUST use the same SPY, VIX, scenario, horizon, model, snapshot, **stressed spots** and sources. |
 | `PST-MATRIX-001` | Backend batch matrix | MUST | Computed by the backend in a single batch request containing every scenario. |
 | `PST-MATRIX-002` | Frontend renders only | MUST | The visual grid stays frontend-owned and computes no stress values. |
-| `PST-MATRIX-003` | Minimum grid | MUST | SPY `0%, -5%, -10%, -15%, -20%` × VIX `current, +50%, +100%, +200%`. |
-| `PST-MATRIX-004` | Cell fields | MUST | See [§16](#16-results-matrix-and-outputs). |
+| `PST-MATRIX-003` | Minimum bilateral SPY grid | MUST | Preserve the existing downside points and add symmetric upside coverage: SPY `-20%, -15%, -10%, -5%, 0%, +5%, +10%, +15%, +20%` × VIX `current, +50%, +100%, +200%` (36 cells). These are diagnostic hypotheses, not forecasts. Positive SPY shocks MUST NOT be removed because nonlinear rally hedges can change Delta sign only on the upside. |
+| `PST-MATRIX-004` | Cell fields include state-dependent exposure | MUST | See [§16](#16-results-matrix-and-outputs). Every cell includes `scenarioExposure`, preserving Actual/Overlay/Proposed/Difference separation; stressed model exposure MUST NOT substitute for the current observed Portfolio BWΔ. |
 | `PST-MATRIX-005` | No per-cell work | MUST NOT | No request per cell, no full pricing loop in the renderer, no fetch per leg per scenario, no option-chain fetch per cell. |
+
+### State-dependent exposure — `PST-EXPOSURE-*`
+
+| ID | Title | Level | Requirement |
+| --- | --- | --- | --- |
+| `PST-EXPOSURE-001` | Spot Beta-Weighted Delta remains instantaneous | MUST NOT | The current Portfolio BWΔ MUST NOT be re-signed, inverted, zeroed or adjusted to encode hedge intent. State-dependent protection belongs to the Stress Engine scenario profile. |
+| `PST-EXPOSURE-002` | Scenario Greeks are model-derived | MUST | Nonlinear option legs MUST receive model-derived Delta at the base and each stressed state. Reusing frozen vendor Delta as stressed Delta is forbidden. |
+| `PST-EXPOSURE-003` | Base and stressed Delta are apples-to-apples | MUST | Base/stressed Delta use the same pricing model, exercise style, rate/yield policy, maturity convention and deterministic derivative method. The method/version is reported. |
+| `PST-EXPOSURE-004` | Economic option Delta uses explicit scale | MUST | Option economic Delta = model Delta per share × signed contracts × contract multiplier, exactly once. Equity/ETF economic Delta = signed shares. These quantities remain per leg / per underlying: APEX MUST NOT sum raw economic Delta across different underlyings. Cross-symbol portfolio aggregation begins only after conversion into SPY-equivalent units. |
+| `PST-EXPOSURE-005` | Scenario SPY-equivalent BWΔ is state-dependent | MUST | Compute base and stressed SPY-equivalent BWΔ from the corresponding economic Delta and base/stressed spot ratios; report the change. Beta remains frozen from the run snapshot; SPY is the self-benchmark. |
+| `PST-EXPOSURE-006` | Vendor and model exposure never masquerade as one series | MUST NOT | A current vendor/raw or Portfolio BWΔ MUST NOT be compared directly with a stressed model Delta and labelled a model change. Stress changes are model-base vs model-stressed. |
+| `PST-EXPOSURE-007` | Nonlinear portfolios require a profile | MUST NOT | With material nonlinear option exposure, directional posture, hedge adequacy and rebalancing MUST NOT be inferred from spot BWΔ alone. |
+| `PST-EXPOSURE-008` | Delta crossover is conditional | MUST | Emit a crossover only when adjacent ordered scenarios under the same VIX/horizon bracket zero. It is a model state transition, not proof of bullish/bearish/hedged. Any interpolation is APPROXIMATE and exposes the bracket. |
+| `PST-EXPOSURE-009` | Hedge adequacy is a P&L question | MUST NOT | A favorable stressed Delta/sign crossover alone MUST NOT label a hedge adequate. Support the claim with scenario P&L / Proposed-minus-Actual marginal benefit or a separately specified attribution that reconciles to Portfolio Stress P&L. |
+| `PST-EXPOSURE-010` | Independent exposure status and null safety | MUST | Scenario exposure has its own VALID/DEGRADED/UNAVAILABLE status/reason; authority is the worst of result-set and exposure status. Missing required inputs yield null/UNAVAILABLE, never zero. |
 
 ### Performance, data quality, monolith — `PST-PERF-*`, `PST-DATA-*`, `PST-MONOLITH-*`
 
@@ -1758,12 +1920,14 @@ It must let the user understand:
 2. how it changes when adding puts, calls or multi-leg structures;
 3. the estimated cost or credit of those structures;
 4. their contribution to Stress P&L;
-5. the change in Delta;
-6. the change in Beta-Weighted Delta;
-7. the change in Gamma;
-8. the change in Vega;
-9. the change in Theta;
-10. the difference across a SPY × VIX matrix.
+5. the change in model-derived Delta between the base and stressed states;
+6. the change in model-derived SPY-equivalent Beta-Weighted Delta between the base and stressed states;
+7. the current observed Portfolio Beta-Weighted Delta **without altering its sign or semantics**;
+8. the change in Gamma;
+9. the change in Vega;
+10. the change in Theta;
+11. the difference across a **bilateral** SPY × VIX matrix;
+12. whether nonlinear exposure changes sign or accelerates across the scenario path, without treating that crossover as proof of hedge adequacy.
 
 The overlay is always **additive**:
 
@@ -1899,6 +2063,34 @@ clamps.
 Declared limitations, unsupported in v1: volatility skew by strike; term-structure shape
 changes across expiries; correlation changes between underlyings; interest-rate shocks.
 
+### Bilateral directional coverage and state-dependent exposure
+
+The scenario set MUST include positive as well as negative SPY shocks. This is a risk-model
+requirement, not a market forecast: a nonlinear hedge can be benign or adverse locally and
+change character only after spot moves.
+
+For each scenario the backend computes, from the same frozen snapshot and the same repricer:
+
+```
+PER OPTION LEG:
+modelDeltaPerShareBase
+modelDeltaPerShareStressed
+economicDeltaBase
+economicDeltaStressed
+economicDeltaChange
+
+PER RESULT SET / PORTFOLIO:
+modelBwDeltaSpyEqBase
+modelBwDeltaSpyEqStressed
+modelBwDeltaSpyEqChange
+```
+
+Base and stressed option Delta MUST be same-model values. Raw economic Delta stays
+leg/underlying-local; only the SPY-equivalent values are summed across different symbols.
+Reusing the current vendor Delta as the stressed Delta is forbidden. A crossover may be identified only inside an ordered slice
+with the same VIX and horizon when adjacent scenarios bracket zero. Any interpolation is
+labelled **APPROXIMATE** and reports its bracket.
+
 ---
 
 ## 15. Pricing
@@ -1925,6 +2117,12 @@ Anchored repricing:
 ```
 stressedMark = currentMarketMark + stressedTheoreticalValue - baseTheoreticalValue
 ```
+
+The same repricer MUST also expose a deterministic model Delta at the base and stressed
+states. The derivative method is part of the model contract: it must be versioned and
+reported, and it must use the same exercise style, rate/yield policy, maturity convention
+and volatility inputs as the valuation. This creates an economic per-share Delta under
+APEX control without making any claim about the unresolved unit of the vendor's raw Greek.
 
 **Ownership.** The pricing engine is classified `NEW` **only** because
 [ABSENCE-PRICING](#61-absence-pricing--pricing-engine) proved no owner exists. Had one been
@@ -1955,7 +2153,7 @@ the same SPY, VIX, scenario, horizon, model, snapshot and sources.
 The visual grid stays frontend-owned; the numerical computation is backend-owned and batch.
 
 ```
-SPY: 0%, -5%, -10%, -15%, -20%
+SPY: -20%, -15%, -10%, -5%, 0%, +5%, +10%, +15%, +20%
 VIX: current, +50%, +100%, +200%
 ```
 
@@ -1968,17 +2166,33 @@ Each cell receives:
 scenarioId          spyReturn              stressedSpyPrice
 vixTarget           actualStressPnl        proposedStressPnl
 difference          actualStressPnlPctNlv  proposedStressPnlPctNlv
-status
+scenarioExposure       status
 ```
 
 ### Required outputs
 
 Actual Stress P&L; Proposed Stress P&L; Difference; P&L % NLV; current value; stressed value;
-Long Put Contribution; Short Put P&L; Long Call P&L; Short Call P&L; equity/ETF P&L; Delta;
-Beta-Weighted Delta; Gamma; Vega; Theta; overlay debit/credit; overlay contribution; worst
+Long Put Contribution; Short Put P&L; Long Call P&L; Short Call P&L; equity/ETF P&L; current observed Delta/Beta-Weighted Delta; per-leg
+modelDeltaPerShareBase/modelDeltaPerShareStressed and economic Delta diagnostics;
+modelBwDeltaSpyEqBase; modelBwDeltaSpyEqStressed; modelBwDeltaSpyEqChange;
+scenario-exposure status/diagnostics; nullable upside Delta crossover;
+Gamma; Vega; Theta; overlay debit/credit; overlay contribution; worst
 positions; best protections; data coverage; missing data; stale data; fallbacks; model
 version; elapsed time; cache status; reuse diagnostics; **hydration-path breakdown**
 (`PST-HYDRATION-007`); **per-symbol shock diagnostics** ([§22](#22-nonspy-underlying-shock)).
+
+### Directional-risk interpretation safeguard
+
+The matrix may show a position whose current observed BWΔ is negative while
+`modelBwDeltaSpyEqStressed` becomes positive in an upside scenario. APEX reports both
+facts. It does **not** rewrite the current value, and it does not convert the sign transition
+into a hedge verdict.
+
+For a hypothetical Overlay, hedge benefit is already measurable as
+`Proposed Stress P&L - Actual Stress P&L`. For a hedge that already exists inside Actual,
+position-attribution requires a separately specified subtract-one-position or equivalent
+reconciling attribution before the UI may claim how many dollars of protection that
+specific position contributes.
 
 ---
 
@@ -2873,23 +3087,25 @@ overloading it is how a half-built feature starts reading as done.
 
 | Tier | Status | Where |
 | --- | --- | --- |
-| Backend engine | `IMPLEMENTED_IN_DRAFT_PR_220` | `apex-backend` PR #220 (**draft**), commit `7027f0c` |
-| Frontend parity / client contract | `IMPLEMENTED_IN_THIS_DRAFT_PR` | `apex-trading` `claude/portfolio-stress-backend-parity-v1` |
-| Frontend renderer / UI | `NOT_IMPLEMENTED` | a later PR |
-| Production deployment | `NOT_YET_UPDATED` | deployed backend is still `25dd8424` |
+| Backend engine | `MERGED_TO_DEV_4H_BACKEND` | `apex-backend` PR #220 merged; source head `12f3ba1`, merge commit `470316ba` |
+| Frontend parity / client contract | `MERGED_TO_DEV_CLEAN` | `apex-trading` PR #360 merged; source head `ec9383f`, merge commit `8555ded1` |
+| Frontend renderer / UI | `NOT_IMPLEMENTED` | no tab/page/renderer/scenario builder/Overlay editor |
+| Production deployment | `UNVERIFIED_AFTER_BACKEND_MERGE` | `25dd8424` is the last pre-merge observation only; re-check `GET /version` / Railway before claiming `470316ba` is live |
 
-Backend PR #220 must stay **draft**, must not be marked ready, and must not be merged from
-this PR. This PR does not modify the backend.
+PR #220 and PR #360 are historical implementation steps and are already merged. Revision
+1.3.0 does not reopen either merge. The next backend change is a **new** additive Stress
+Engine PR implementing the `PST-EXPOSURE-*` contract, followed by the corresponding
+frontend response-contract update. The Stress UI remains a later PR.
 
-### Proposed merge order — to be proposed, not executed
+### Next implementation order
 
-1. companion `apex-trading` green and audited;
-2. backend #220 marked ready and merged into `dev-4h-backend`;
-3. backend dev deploy;
-4. verify `GET /version` returns the new merge commit;
-5. small evidence update in the companion if needed;
-6. merge the companion;
-7. the future UI / Stress Test tab PR.
+1. merge this specification/model-contract revision into `dev-clean` after CI/audit;
+2. open a new `apex-backend` PR from current `dev-4h-backend` implementing model base/stressed Delta and scenario SPY-equivalent BWΔ;
+3. add deterministic tests, including an upside-convex multi-leg case whose model Delta crosses zero;
+4. rerun the benchmark at 10/30/60/100 legs × 36 scenarios;
+5. update the frontend response normalizer/client contract to preserve the new status-bound exposure object;
+6. verify the backend dev deployment independently;
+7. build the future Stress Test UI / matrix renderer.
 
 ---
 

@@ -52,6 +52,11 @@
 //   is therefore forbidden here, unconditionally. `proposed` is read from
 //   `proposed` or it is null.
 //
+// THE v1.3 SCENARIO-EXPOSURE FAMILY
+//   Model-derived SPY-equivalent BWDelta is normalized as a separate family.
+//   It never overwrites the current/vendor Portfolio BWDelta, and raw economic
+//   Delta from different underlyings is never invented here as a portfolio sum.
+//
 // THE RAW RESPONSE IS NOT EXPOSED
 //   This module used to return the backend object under `response`, "so a future
 //   renderer can reach fields this contract does not model". That is an escape
@@ -73,6 +78,22 @@ var PORTFOLIO_STRESS_STATUS = Object.freeze({
 
 var PORTFOLIO_STRESS_RESULT_SETS = Object.freeze(['actual', 'overlay', 'proposed']);
 var PORTFOLIO_STRESS_GREEK_COMPONENTS = Object.freeze(['delta', 'gamma', 'vega', 'theta']);
+
+// State-dependent exposure is a MODEL family, separate from the raw/vendor
+// Greek snapshot above. Raw economic Delta remains leg/underlying-local in the
+// backend; the cross-symbol portfolio fields below are already normalized into
+// SPY-equivalent units before they reach this tier.
+var PORTFOLIO_STRESS_EXPOSURE_RESULT_SETS = Object.freeze(['actual', 'overlay', 'proposed', 'difference']);
+var PORTFOLIO_STRESS_EXPOSURE_FIELDS = Object.freeze([
+  'modelBwDeltaSpyEqBase',
+  'modelBwDeltaSpyEqStressed',
+  'modelBwDeltaSpyEqChange',
+]);
+var PORTFOLIO_STRESS_CROSSOVER_METHODS = Object.freeze([
+  'EXACT_SCENARIO_ZERO',
+  'EXACT_UPPER_SCENARIO_ZERO',
+  'APPROXIMATE_LINEAR_IN_SCENARIO_SPACE',
+]);
 
 // ── THE field → result-set map ───────────────────────────────────────────────
 // Every authoritative scalar names the set whose status and completeness govern
@@ -381,6 +402,140 @@ function readPortfolioStressProposedGreeks(cell) {
   return readPortfolioStressGreekSet(cell, 'proposed');
 }
 
+// ── state-dependent model exposure ──────────────────────────────────────────
+
+/**
+ * Normalize one Actual/Overlay/Proposed/Difference scenario-exposure object.
+ *
+ * TWO authorities bind the numbers:
+ *   1. the ordinary result-set status/completeness, and
+ *   2. scenarioExposure[set].status/complete.
+ *
+ * Worst wins. Missing exposure status is UNAVAILABLE, never permission to reuse
+ * a nearby set or the current Portfolio BWDelta. A finite number under an
+ * UNAVAILABLE exposure is a contract violation and is withdrawn.
+ */
+function readPortfolioStressScenarioExposureSet(cell, set) {
+  var c = (cell && typeof cell === 'object' && !Array.isArray(cell)) ? cell : {};
+  var all = readPortfolioStressOwn(c, 'scenarioExposure');
+  all = (all && typeof all === 'object' && !Array.isArray(all)) ? all : {};
+  var src = readPortfolioStressOwn(all, set);
+  src = (src && typeof src === 'object' && !Array.isArray(src)) ? src : {};
+
+  var setAuthority = readPortfolioStressSetAuthority(c, set);
+  var exposureStatus = readPortfolioStressStatus(readPortfolioStressOwn(src, 'status'));
+  var effectiveStatus = portfolioStressWorstStatus(setAuthority.status, exposureStatus);
+  var exposureComplete = readPortfolioStressBoolean(readPortfolioStressOwn(src, 'complete')) === true;
+  var complete = setAuthority.complete === true && exposureComplete;
+
+  var rawValues = {};
+  var values = {};
+  var authoritative = {};
+  var finitePublished = false;
+  for (var i = 0; i < PORTFOLIO_STRESS_EXPOSURE_FIELDS.length; i++) {
+    var field = PORTFOLIO_STRESS_EXPOSURE_FIELDS[i];
+    var n = readPortfolioStressNumber(readPortfolioStressOwn(src, field));
+    rawValues[field] = n;
+    if (n !== null) finitePublished = true;
+  }
+
+  // An exposure that either authority withdrew has no displayable total. The
+  // partial object remains separately available below when the backend supplied
+  // one; it is never promoted into these slots.
+  var usableTotal = effectiveStatus !== PORTFOLIO_STRESS_STATUS.UNAVAILABLE && complete;
+  for (i = 0; i < PORTFOLIO_STRESS_EXPOSURE_FIELDS.length; i++) {
+    field = PORTFOLIO_STRESS_EXPOSURE_FIELDS[i];
+    values[field] = usableTotal ? rawValues[field] : null;
+    authoritative[field] = usableTotal
+      && portfolioStressStatusIsAuthoritative(effectiveStatus)
+      && rawValues[field] !== null
+      ? rawValues[field] : null;
+  }
+
+  var partialSrc = readPortfolioStressOwn(src, 'partial');
+  partialSrc = (partialSrc && typeof partialSrc === 'object' && !Array.isArray(partialSrc)) ? partialSrc : {};
+  var partialValues = {};
+  for (i = 0; i < PORTFOLIO_STRESS_EXPOSURE_FIELDS.length; i++) {
+    field = PORTFOLIO_STRESS_EXPOSURE_FIELDS[i];
+    partialValues[field] = readPortfolioStressNumber(readPortfolioStressOwn(partialSrc, field));
+  }
+  var partialReasonsRaw = readPortfolioStressOwn(partialSrc, 'reasons');
+  var partialReasons = Array.isArray(partialReasonsRaw)
+    ? partialReasonsRaw.filter(function (x) { return typeof x === 'string'; }).slice()
+    : [];
+
+  var method = readPortfolioStressOwn(src, 'deltaMethod');
+  method = typeof method === 'string' && method.trim() !== '' ? method : null;
+  var reason = readPortfolioStressOwn(src, 'reason');
+  reason = typeof reason === 'string' ? reason : null;
+
+  var violation = null;
+  if (!usableTotal && finitePublished) {
+    violation = {
+      code: PORTFOLIO_STRESS_CONTRACT_VIOLATION,
+      field: 'scenarioExposure.' + set,
+      set: set,
+      metricStatusField: 'scenarioExposure.' + set + '.status',
+      detail: effectiveStatus === PORTFOLIO_STRESS_STATUS.UNAVAILABLE
+        ? 'finite scenario exposure was published under an UNAVAILABLE authority and has been withdrawn'
+        : 'finite scenario exposure was published for an incomplete result set and has been withdrawn',
+    };
+  }
+
+  return {
+    set: set,
+    status: effectiveStatus,
+    exposureStatus: exposureStatus,
+    complete: complete,
+    reason: reason,
+    deltaMethod: method,
+    values: values,
+    authoritative: authoritative,
+    partialValues: partialValues,
+    partialReasons: partialReasons,
+    violation: violation,
+  };
+}
+
+/** Strict, allowlisted normalization of one upside Delta crossover. */
+function normalizePortfolioStressDeltaCrossover(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  var set = readPortfolioStressOwn(value, 'resultSet');
+  if (PORTFOLIO_STRESS_EXPOSURE_RESULT_SETS.indexOf(set) === -1) return null;
+  var method = readPortfolioStressOwn(value, 'method');
+  if (PORTFOLIO_STRESS_CROSSOVER_METHODS.indexOf(method) === -1) return null;
+  var status = readPortfolioStressStatus(readPortfolioStressOwn(value, 'status'));
+  if (status === PORTFOLIO_STRESS_STATUS.UNAVAILABLE) return null;
+
+  return {
+    resultSet: set,
+    horizonDays: readPortfolioStressNumber(readPortfolioStressOwn(value, 'horizonDays')),
+    vixTarget: readPortfolioStressNumber(readPortfolioStressOwn(value, 'vixTarget')),
+    lowerScenarioId: typeof readPortfolioStressOwn(value, 'lowerScenarioId') === 'string'
+      ? value.lowerScenarioId : null,
+    upperScenarioId: typeof readPortfolioStressOwn(value, 'upperScenarioId') === 'string'
+      ? value.upperScenarioId : null,
+    lowerSpyReturn: readPortfolioStressNumber(readPortfolioStressOwn(value, 'lowerSpyReturn')),
+    upperSpyReturn: readPortfolioStressNumber(readPortfolioStressOwn(value, 'upperSpyReturn')),
+    lowerExposure: readPortfolioStressNumber(readPortfolioStressOwn(value, 'lowerExposure')),
+    upperExposure: readPortfolioStressNumber(readPortfolioStressOwn(value, 'upperExposure')),
+    approximateSpyReturn: readPortfolioStressNumber(readPortfolioStressOwn(value, 'approximateSpyReturn')),
+    approximateSpyPrice: readPortfolioStressNumber(readPortfolioStressOwn(value, 'approximateSpyPrice')),
+    method: method,
+    status: status,
+  };
+}
+
+function normalizePortfolioStressDeltaCrossovers(value) {
+  if (!Array.isArray(value)) return [];
+  var out = [];
+  for (var i = 0; i < value.length; i++) {
+    var x = normalizePortfolioStressDeltaCrossover(value[i]);
+    if (x !== null) out.push(x);
+  }
+  return out;
+}
+
 // ── cells and responses ──────────────────────────────────────────────────────
 
 /**
@@ -407,6 +562,7 @@ function normalizePortfolioStressCell(cell) {
     values: {},
     partial: {},
     rawGreeks: {},
+    scenarioExposure: {},
     rawGreekUnits: typeof readPortfolioStressOwn(c, 'rawGreekUnits') === 'string' ? c.rawGreekUnits : null,
     contractViolations: violations,
   };
@@ -450,6 +606,13 @@ function normalizePortfolioStressCell(cell) {
     if (greeks.violation) violations.push(greeks.violation);
     out.rawGreeks[set] = greeks;
   }
+
+  for (i = 0; i < PORTFOLIO_STRESS_EXPOSURE_RESULT_SETS.length; i++) {
+    var exposureSet = PORTFOLIO_STRESS_EXPOSURE_RESULT_SETS[i];
+    var exposure = readPortfolioStressScenarioExposureSet(c, exposureSet);
+    if (exposure.violation) violations.push(exposure.violation);
+    out.scenarioExposure[exposureSet] = exposure;
+  }
   return out;
 }
 
@@ -482,12 +645,17 @@ function normalizePortfolioStressResponse(response) {
   for (i = 0; i < normalizedCells.length; i++) {
     violations = violations.concat(normalizedCells[i].contractViolations);
   }
+  var crossovers = normalizePortfolioStressDeltaCrossovers(readPortfolioStressOwn(response, 'upsideDeltaCrossovers'));
+  var primaryCrossover = normalizePortfolioStressDeltaCrossover(readPortfolioStressOwn(response, 'upsideDeltaCrossover'));
+
   return {
     status: readPortfolioStressStatus(readPortfolioStressOwn(response, 'status')),
     reason: typeof readPortfolioStressOwn(response, 'reason') === 'string' ? response.reason : null,
     metadata: metadata,
     cells: normalizedCells,
     cellCount: normalizedCells.length,
+    upsideDeltaCrossover: primaryCrossover,
+    upsideDeltaCrossovers: crossovers,
     contractViolations: violations,
   };
 }
