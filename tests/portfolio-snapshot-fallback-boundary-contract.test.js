@@ -101,6 +101,7 @@ const {
 const UNDO = require('./lib/portfolio-snapshot-fallback-undo.js');
 // The layer cut AFTER this one, peeled off before this layer's own document is
 // reconstructed. Newest-first, which is the rule the whole chain follows.
+const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML_U = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 
@@ -330,10 +331,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(HEAD_INDEX)
-  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+const PRE_PORTFOLIO_GREEKS_FRESHNESS = PORTFOLIO_GREEKS_FRESHNESS_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_GREEKS_FRESHNESS_U.undoPortfolioGreeksFreshness(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-greeks-freshness.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(PRE_PORTFOLIO_GREEKS_FRESHNESS)
+  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
+      PRE_PORTFOLIO_GREEKS_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+  : PRE_PORTFOLIO_GREEKS_FRESHNESS;
 const LIVE_INDEX = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(PRE_RS_SKIP_BREAKDOWN_HTML)
   ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
       PRE_RS_SKIP_BREAKDOWN_HTML, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
@@ -1048,7 +1053,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,

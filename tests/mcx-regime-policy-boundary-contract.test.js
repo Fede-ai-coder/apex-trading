@@ -101,6 +101,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML_U = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
@@ -128,10 +129,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(INDEX)
-  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+const PRE_PORTFOLIO_GREEKS_FRESHNESS = PORTFOLIO_GREEKS_FRESHNESS_U.isApplied(INDEX)
+  ? PORTFOLIO_GREEKS_FRESHNESS_U.undoPortfolioGreeksFreshness(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-greeks-freshness.js'), 'utf8'))
   : INDEX;
+const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(PRE_PORTFOLIO_GREEKS_FRESHNESS)
+  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
+      PRE_PORTFOLIO_GREEKS_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+  : PRE_PORTFOLIO_GREEKS_FRESHNESS;
 const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(PRE_RS_SKIP_BREAKDOWN_HTML)
   ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
       PRE_RS_SKIP_BREAKDOWN_HTML, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
@@ -343,6 +348,7 @@ const BACKEND_FULL_REFRESH_VALIDATION_TAG = '<script src="./js/portfolio/backend
 const PORTFOLIO_SNAPSHOT_FALLBACK_TAG = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
 const RS_SKIP_BREAKDOWN_HTML_TAG = '<script src="./js/ui/rs-skip-breakdown-html.js"></script>';
+const PORTFOLIO_GREEKS_FRESHNESS_TAG = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -409,7 +415,7 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n',
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n' + PORTFOLIO_GREEKS_FRESHNESS_TAG + '\n',
   'the full service tail, in load order, ends at the inline monolith — the\n   concatenation above IS the enumeration, so the message does not repeat it');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&

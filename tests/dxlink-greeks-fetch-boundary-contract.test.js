@@ -91,6 +91,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/dxlink-greeks-fetch-undo.js');
+const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML_U = require('./lib/rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-batch-fetch-undo.js');
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
@@ -360,10 +361,14 @@ console.log('relocation only · audited by #464 · base=' + BASE_SHA);
 // FIRST, and LIVE_* below means this layer's own shipped document — the one it
 // was written against — not whatever the head of the chain looks like today.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(HEAD_INDEX)
-  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+const PRE_PORTFOLIO_GREEKS_FRESHNESS = PORTFOLIO_GREEKS_FRESHNESS_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_GREEKS_FRESHNESS_U.undoPortfolioGreeksFreshness(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-greeks-freshness.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_RS_SKIP_BREAKDOWN_HTML = RS_SKIP_BREAKDOWN_HTML_U.isApplied(PRE_PORTFOLIO_GREEKS_FRESHNESS)
+  ? RS_SKIP_BREAKDOWN_HTML_U.undoRsSkipBreakdownHtml(
+      PRE_PORTFOLIO_GREEKS_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/ui/rs-skip-breakdown-html.js'), 'utf8'))
+  : PRE_PORTFOLIO_GREEKS_FRESHNESS;
 const PRE_PORTFOLIO_TECHNICAL_BATCH_FETCH = PORTFOLIO_TECHNICAL_BATCH_FETCH_U.isApplied(PRE_RS_SKIP_BREAKDOWN_HTML)
   ? PORTFOLIO_TECHNICAL_BATCH_FETCH_U.undoPortfolioTechnicalBatchFetch(
       PRE_RS_SKIP_BREAKDOWN_HTML, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-technical-batch-fetch.js'), 'utf8'))
@@ -1205,7 +1210,7 @@ section('9. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-technical-parity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-technical-parity.js'].sort(),
     'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
@@ -1250,7 +1255,7 @@ section('9. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' ||
+    rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
