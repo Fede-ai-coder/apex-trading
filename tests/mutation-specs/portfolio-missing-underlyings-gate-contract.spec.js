@@ -1,17 +1,20 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary missing underlyings gate audit.
+// Mutation spec — the PERMANENT missing underlyings gate contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// EIGHT PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
+// NINE PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
 // ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_TWO_ROWS,
-// NINE_AT_BEST_ROWS and RUNNERS_UP are multi-line declarations, so the generator's single-line pattern
-// never matches them. That is the completeness gap the coverage contract exists
-// to find, so they are written in by hand here from the start.
+// NINE_AT_BEST_ROWS, RUNNERS_UP and CHAIN are multi-line declarations, so the
+// generator's single-line pattern never matches them. That is the completeness
+// gap the coverage contract exists to find, so they are written in by hand.
+// CHAIN joins the list in THIS phase: while this file was an audit it READ the
+// chain off the newest contract and declared nothing to mutate, and Phase 2
+// gives it a 49-entry literal of its own.
 //
 // ZEROES MOVE UPWARD, because zero is also what a predicate measuring nothing
 // returns: CHAIN_OUTBOUND, COMMENT_LINES, BLANK_LINES, TOP_LEVEL_STATEMENT_LINES,
@@ -23,16 +26,19 @@
 // sibling that also ships, and that survivor was found in #461, #465 and #466.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-missing-underlyings-gate-boundary-audit.test.js',
-  runs: ['tests/temporary-missing-underlyings-gate-boundary-audit.test.js'],
+  target: 'tests/portfolio-missing-underlyings-gate-boundary-contract.test.js',
+  runs: ['tests/portfolio-missing-underlyings-gate-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-missing-underlyings-gate.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-price-freshness.js';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/portfolio/portfolio-missing-underlyings-gate.js';",
+      replace: "const MODULE_REL = 'js/portfolio/portfolio-missing-underlyings-gate.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '2e00d3d';",
-      replace: "const BASE_SHA = '2e00d3X';", },
+      find: "const BASE_SHA = 'e5f41c3';",
+      replace: "const BASE_SHA = 'e5f41cX';", },
+    { id: "AUDIT_BASE_SHA",
+      find: "const AUDIT_BASE_SHA = '2e00d3d';",
+      replace: "const AUDIT_BASE_SHA = '2e00d3X';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1446022;",
       replace: "const BASE_CHARS = 1446023;", },
@@ -53,25 +59,34 @@ module.exports = {
       replace: "const TEST_FILE_COUNT = 178;", },
     { id: "AUDIT_REL",
       find: "const AUDIT_REL = 'tests/temporary-missing-underlyings-gate-boundary-audit.test.js';",
-      replace: "const AUDIT_REL = 'tests/mutation-coverage-contract.test.js';", },
+      replace: "const AUDIT_REL = 'tests/temporary-missing-underlyings-gate-boundary-audit.test.jX';", },
     { id: "AUDIT_SPEC_REL",
       find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/missing-underlyings-gate-audit.spec.js';",
-      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/missing-underlyings-gate-audit.spec.jX';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/portfolio-missing-underlyings-gate-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/portfolio-missing-underlyings-gate-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-missing-underlyings-gate-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-missing-underlyings-gate-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/portfolio-missing-underlyings-gate-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/portfolio-missing-underlyings-gate-undo.jX';", },
     { id: "RATCHETED_CONTRACTS",
       find: "const RATCHETED_CONTRACTS = 39;",
       replace: "const RATCHETED_CONTRACTS = 40;", },
     { id: "COVERAGE_CONTRACT",
       find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
-      replace: "const COVERAGE_CONTRACT = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';", },
+      replace: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.jX';", },
     { id: "PREVIOUS_CONTRACT",
       find: "const PREVIOUS_CONTRACT = 'tests/portfolio-price-freshness-boundary-contract.test.js';",
-      replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';", },
+      replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-price-freshness-boundary-contract.test.jX';", },
     { id: "BASE_DECLARED_MUTANTS",
       find: "const BASE_DECLARED_MUTANTS = 135;",
       replace: "const BASE_DECLARED_MUTANTS = 136;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-price-freshness-contract.spec.js';",
-      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/missing-underlyings-gate-audit.spec.js';",
+      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/missing-underlyings-gate-audit.spec.jX';", },
     { id: "RETIRED_MUTANTS",
       find: "const RETIRED_MUTANTS = 129;",
       replace: "const RETIRED_MUTANTS = 130;", },
@@ -352,14 +367,14 @@ module.exports = {
       find: "const PREVIOUS_RAW_END = 779937;",
       replace: "const PREVIOUS_RAW_END = 779938;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 48;",
-      replace: "const CHAIN_LENGTH = 49;", },
-    { id: "SMALLEST_LAYER_CHARS",
-      find: "const SMALLEST_LAYER_CHARS = 1622;",
-      replace: "const SMALLEST_LAYER_CHARS = 1623;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 1;",
-      replace: "const SIZE_RANK_IF_CUT = 2;", },
+      find: "const CHAIN_LENGTH = 49;",
+      replace: "const CHAIN_LENGTH = 50;", },
+    { id: "DISPLACED_LAYER_CHARS",
+      find: "const DISPLACED_LAYER_CHARS = 1622;",
+      replace: "const DISPLACED_LAYER_CHARS = 1623;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 1;",
+      replace: "const SIZE_RANK = 2;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 48;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 49;", },
@@ -370,11 +385,11 @@ module.exports = {
       find: "const LAYERS_OPENING_ON_BANNER = 23;",
       replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
     { id: "LAYERS_WITH_A_DEPENDENCY",
-      find: "const LAYERS_WITH_A_DEPENDENCY = 15;",
-      replace: "const LAYERS_WITH_A_DEPENDENCY = 16;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-missing-underlyings-gate.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-missing-underlyings-gate.js\"></script>\\X';", },
+      find: "const LAYERS_WITH_A_DEPENDENCY = 16;",
+      replace: "const LAYERS_WITH_A_DEPENDENCY = 17;", },
+    { id: "PRIOR_LAYERS_WITH_A_DEPENDENCY",
+      find: "const PRIOR_LAYERS_WITH_A_DEPENDENCY = 15;",
+      replace: "const PRIOR_LAYERS_WITH_A_DEPENDENCY = 16;", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 1511;",
       replace: "const NET_REDUCTION = 1512;", },
@@ -387,6 +402,9 @@ module.exports = {
     { id: "LOCAL_SCRIPTS_AFTER",
       find: "const LOCAL_SCRIPTS_AFTER = 93;",
       replace: "const LOCAL_SCRIPTS_AFTER = 94;", },
+    { id: "TAG_LOCAL_INDEX",
+      find: "const TAG_LOCAL_INDEX = 92;",
+      replace: "const TAG_LOCAL_INDEX = 93;", },
     { id: "OPENINGS",
       find: "const OPENINGS = [];",
       replace: "const OPENINGS = ['x'];", },
@@ -418,6 +436,10 @@ module.exports = {
       covers: ["NINE_AT_BEST_ROWS"],
       find: "  [71940, 73970, 3, 3],",
       replace: "  [71940, 73970, 3, 2],", },
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/portfolio/portfolio-price-freshness.js',\n  'js/portfolio/portfolio-missing-underlyings-gate.js',\n];",
+      replace: "  'js/portfolio/portfolio-price-freshness.js',\n];", },
     { id: "RUNNERS_UP",
       covers: ["RUNNERS_UP"],
       find: "  [61214, 2, 3, 3034],",

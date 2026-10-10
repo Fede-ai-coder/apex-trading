@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE = require('./portfolio-missing-underlyings-gate-undo.js');
 const PORTFOLIO_PRICE_FRESHNESS = require('./portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN = require('./portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS = require('./portfolio-greeks-freshness-undo.js');
@@ -228,6 +229,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-missing-underlyings-gate.js'),
+  'utf8'
+);
 const PORTFOLIO_PRICE_FRESHNESS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-price-freshness.js'),
   'utf8'
@@ -425,10 +430,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioPriceFreshness = PORTFOLIO_PRICE_FRESHNESS.isApplied(html)
-    ? PORTFOLIO_PRICE_FRESHNESS.undoPortfolioPriceFreshness(
-      html, PORTFOLIO_PRICE_FRESHNESS_SOURCE)
+  const prePortfolioMissingUnderlyingsGate = PORTFOLIO_MISSING_UNDERLYINGS_GATE.isApplied(html)
+    ? PORTFOLIO_MISSING_UNDERLYINGS_GATE.undoPortfolioMissingUnderlyingsGate(
+      html, PORTFOLIO_MISSING_UNDERLYINGS_GATE_SOURCE)
     : html;
+  const prePortfolioPriceFreshness = PORTFOLIO_PRICE_FRESHNESS.isApplied(prePortfolioMissingUnderlyingsGate)
+    ? PORTFOLIO_PRICE_FRESHNESS.undoPortfolioPriceFreshness(
+      prePortfolioMissingUnderlyingsGate, PORTFOLIO_PRICE_FRESHNESS_SOURCE)
+    : prePortfolioMissingUnderlyingsGate;
   const prePortfolioUnderlyingFallbackPlan = PORTFOLIO_UNDERLYING_FALLBACK_PLAN.isApplied(prePortfolioPriceFreshness)
     ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN.undoPortfolioUnderlyingFallbackPlan(
       prePortfolioPriceFreshness, PORTFOLIO_UNDERLYING_FALLBACK_PLAN_SOURCE)

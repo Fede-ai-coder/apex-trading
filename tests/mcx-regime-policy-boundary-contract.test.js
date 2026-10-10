@@ -101,6 +101,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
 const PORTFOLIO_PRICE_FRESHNESS_U = require('./lib/portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
@@ -131,10 +132,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(INDEX)
-  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+const PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE = PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.isApplied(INDEX)
+  ? PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.undoPortfolioMissingUnderlyingsGate(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-missing-underlyings-gate.js'), 'utf8'))
   : INDEX;
+const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE)
+  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
+      PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+  : PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE;
 const PRE_PORTFOLIO_UNDERLYING_FALLBACK_PLAN = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(PRE_PORTFOLIO_PRICE_FRESHNESS)
   ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
       PRE_PORTFOLIO_PRICE_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
@@ -361,6 +366,7 @@ const RS_SKIP_BREAKDOWN_HTML_TAG = '<script src="./js/ui/rs-skip-breakdown-html.
 const PORTFOLIO_GREEKS_FRESHNESS_TAG = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_TAG = '<script src="./js/portfolio/portfolio-underlying-fallback-plan.js"></script>';
 const PORTFOLIO_PRICE_FRESHNESS_TAG = '<script src="./js/portfolio/portfolio-price-freshness.js"></script>';
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_TAG = '<script src="./js/portfolio/portfolio-missing-underlyings-gate.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -427,7 +433,7 @@ const migrationAt = INDEX.indexOf(MIGRATION_TAG);
 const inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, REGIME_TAG), 1, 'exactly one MCX Regime Policy script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n' + PORTFOLIO_GREEKS_FRESHNESS_TAG + '\n' + PORTFOLIO_UNDERLYING_FALLBACK_PLAN_TAG + '\n' + PORTFOLIO_PRICE_FRESHNESS_TAG + '\n',
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n' + PORTFOLIO_GREEKS_FRESHNESS_TAG + '\n' + PORTFOLIO_UNDERLYING_FALLBACK_PLAN_TAG + '\n' + PORTFOLIO_PRICE_FRESHNESS_TAG + '\n' + PORTFOLIO_MISSING_UNDERLYINGS_GATE_TAG + '\n',
   'the full service tail, in load order, ends at the inline monolith — the\n   concatenation above IS the enumeration, so the message does not repeat it');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && regimeAt > journalAt &&
   journalUiAt > regimeAt && remoteAt > journalUiAt && writeAt > remoteAt &&

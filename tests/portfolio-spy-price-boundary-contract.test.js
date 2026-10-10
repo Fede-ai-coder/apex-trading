@@ -146,6 +146,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
 const PORTFOLIO_PRICE_FRESHNESS_U = require('./lib/portfolio-price-freshness-undo.js');
 const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U = require('./lib/portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS_U = require('./lib/portfolio-greeks-freshness-undo.js');
@@ -274,9 +275,12 @@ const INJECTION_POINTS = [
 // TWO of them guard every reference on their own list, this one and the one
 // that shipped before it. That is an `eq` over the set with the precedent
 // named, not an adjective about this one.
-const MODULES_PINNING_DEPENDENCIES = 15;
-const MODULES_GUARDING_EVERY_REFERENCE = 2;
+const MODULES_PINNING_DEPENDENCIES = 16;
+const MODULES_GUARDING_EVERY_REFERENCE = 3;
 const MODULE_ALREADY_GUARDING = 'js/services/swing-weekly-candles.js';
+// A module that shipped AFTER this one and also guards every reference it makes: it reads S
+// behind `typeof S !== 'undefined'`, so the set grew without this module changing.
+const MODULE_GUARDING_LATER = 'js/portfolio/portfolio-missing-underlyings-gate.js';
 // outboundModule is NOT among the zeroes here, and it is the only direction of
 // the nine that is not: six references reach out, all of them to foundation.
 const ZERO_DIRECTIONS = {
@@ -470,10 +474,14 @@ console.log('relocation only · audited by #468 · base=' + BASE_SHA);
 // again this layer's shipped document rather than the head of the tree. Every
 // older contract in this chain already carries the same idiom.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+const PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE = PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_MISSING_UNDERLYINGS_GATE_U.undoPortfolioMissingUnderlyingsGate(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-missing-underlyings-gate.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_PORTFOLIO_PRICE_FRESHNESS = PORTFOLIO_PRICE_FRESHNESS_U.isApplied(PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE)
+  ? PORTFOLIO_PRICE_FRESHNESS_U.undoPortfolioPriceFreshness(
+      PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-price-freshness.js'), 'utf8'))
+  : PRE_PORTFOLIO_MISSING_UNDERLYINGS_GATE;
 const PRE_PORTFOLIO_UNDERLYING_FALLBACK_PLAN = PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.isApplied(PRE_PORTFOLIO_PRICE_FRESHNESS)
   ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U.undoPortfolioUnderlyingFallbackPlan(
       PRE_PORTFOLIO_PRICE_FRESHNESS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-underlying-fallback-plan.js'), 'utf8'))
@@ -1024,13 +1032,14 @@ eq(byConsumerSplit(REC, outboundSplit(RAW_AT_IN_CODE, RAW_END_IN_CODE)), BY_CONS
     'MODULES_PINNING_DEPENDENCIES shipped modules pin a non-empty MONOLITH_DEPENDENCIES');
   eq(fullyGuarded.length, MODULES_GUARDING_EVERY_REFERENCE,
     '…and MODULES_GUARDING_EVERY_REFERENCE of them guard every one of their own references, '
-    + 'this module being the SECOND and not the first');
-  eq(fullyGuarded.slice().sort(), [MODULE_ALREADY_GUARDING, MODULE_REL].sort(),
-    '…the other being MODULE_ALREADY_GUARDING, named rather than counted, because a bare '
-    + 'count is what let the first draft of this claim say "first"');
+    + 'this module being the second of them to ship and not the first');
+  eq(fullyGuarded.slice().sort(), [MODULE_ALREADY_GUARDING, MODULE_REL, MODULE_GUARDING_LATER].sort(),
+    '…the others being MODULE_ALREADY_GUARDING, which shipped before it, and MODULE_GUARDING_LATER, '
+    + 'which shipped after: named rather than counted, because a bare count is what let the first '
+    + 'draft of this claim say "first"');
   // THE CONTROL IS TWO-SIDED, which a bare count would not be: the same
-  // predicate says YES to two shipped modules and NO to the other eleven, so it
-  // is neither constant-true nor constant-false.
+  // predicate says YES to the shipped modules named above and NO to the others
+  // that pin a dependency, so it is neither constant-true nor constant-false.
   ok(fullyGuarded.length > 0 && fullyGuarded.length < pinning,
     '…and it answers both ways over the same set, which is what makes it a measurement');
 }
@@ -1494,7 +1503,7 @@ section('9. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
@@ -1540,7 +1549,7 @@ section('9. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' ||
+    rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
   // THE RATCHET, which this phase does not move: the audit leaves as this
