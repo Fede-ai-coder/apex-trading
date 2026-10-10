@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_UNDERLYING_FALLBACK_PLAN = require('./portfolio-underlying-fallback-plan-undo.js');
 const PORTFOLIO_GREEKS_FRESHNESS = require('./portfolio-greeks-freshness-undo.js');
 const RS_SKIP_BREAKDOWN_HTML = require('./rs-skip-breakdown-html-undo.js');
 const PORTFOLIO_TECHNICAL_BATCH_FETCH = require('./portfolio-technical-batch-fetch-undo.js');
@@ -226,6 +227,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_UNDERLYING_FALLBACK_PLAN_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-underlying-fallback-plan.js'),
+  'utf8'
+);
 const PORTFOLIO_GREEKS_FRESHNESS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-greeks-freshness.js'),
   'utf8'
@@ -415,10 +420,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioGreeksFreshness = PORTFOLIO_GREEKS_FRESHNESS.isApplied(html)
-    ? PORTFOLIO_GREEKS_FRESHNESS.undoPortfolioGreeksFreshness(
-      html, PORTFOLIO_GREEKS_FRESHNESS_SOURCE)
+  const prePortfolioUnderlyingFallbackPlan = PORTFOLIO_UNDERLYING_FALLBACK_PLAN.isApplied(html)
+    ? PORTFOLIO_UNDERLYING_FALLBACK_PLAN.undoPortfolioUnderlyingFallbackPlan(
+      html, PORTFOLIO_UNDERLYING_FALLBACK_PLAN_SOURCE)
     : html;
+  const prePortfolioGreeksFreshness = PORTFOLIO_GREEKS_FRESHNESS.isApplied(prePortfolioUnderlyingFallbackPlan)
+    ? PORTFOLIO_GREEKS_FRESHNESS.undoPortfolioGreeksFreshness(
+      prePortfolioUnderlyingFallbackPlan, PORTFOLIO_GREEKS_FRESHNESS_SOURCE)
+    : prePortfolioUnderlyingFallbackPlan;
   const preRsSkipBreakdownHtml = RS_SKIP_BREAKDOWN_HTML.isApplied(prePortfolioGreeksFreshness)
     ? RS_SKIP_BREAKDOWN_HTML.undoRsSkipBreakdownHtml(
       prePortfolioGreeksFreshness, RS_SKIP_BREAKDOWN_HTML_SOURCE)

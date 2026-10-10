@@ -1,17 +1,20 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary underlying fallback plan audit.
+// Mutation spec — the PERMANENT underlying fallback plan contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// SEVEN PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
-// ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_ONE_ROWS and
-// RUNNERS_UP are multi-line declarations, so the generator's single-line pattern
-// never matches them. That is the completeness gap the coverage contract exists
-// to find, so they are written in by hand here from the start.
+// EIGHT PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
+// ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_ONE_ROWS,
+// RUNNERS_UP and CHAIN are multi-line declarations, so the generator's
+// single-line pattern never matches them. That is the completeness gap the
+// coverage contract exists to find, so they are written in by hand. CHAIN joins
+// the list in THIS phase: while this file was an audit it READ the chain off the
+// newest contract and declared nothing to mutate, and Phase 2 gives it a
+// 47-entry literal of its own.
 //
 // ZEROES MOVE UPWARD, because zero is also what a predicate measuring nothing
 // returns: CHAIN_OUTBOUND, COMMENT_LINES, BLANK_LINES, TOP_LEVEL_STATEMENT_LINES,
@@ -23,16 +26,19 @@
 // sibling that also ships, and that survivor was found in #461, #465 and #466.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-underlying-fallback-boundary-audit.test.js',
-  runs: ['tests/temporary-underlying-fallback-boundary-audit.test.js'],
+  target: 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js',
+  runs: ['tests/portfolio-underlying-fallback-plan-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-underlying-fallback-plan.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/portfolio/portfolio-greeks-freshness.js';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/portfolio/portfolio-underlying-fallback-plan.js';",
+      replace: "const MODULE_REL = 'js/portfolio/portfolio-underlying-fallback-plan.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '8823e31';",
-      replace: "const BASE_SHA = '8823e3X';", },
+      find: "const BASE_SHA = '15eeba8';",
+      replace: "const BASE_SHA = '15eebaX';", },
+    { id: "AUDIT_BASE_SHA",
+      find: "const AUDIT_BASE_SHA = '8823e31';",
+      replace: "const AUDIT_BASE_SHA = '8823e3X';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1449190;",
       replace: "const BASE_CHARS = 1449191;", },
@@ -53,28 +59,37 @@ module.exports = {
       replace: "const TEST_FILE_COUNT = 176;", },
     { id: "AUDIT_REL",
       find: "const AUDIT_REL = 'tests/temporary-underlying-fallback-boundary-audit.test.js';",
-      replace: "const AUDIT_REL = 'tests/mutation-coverage-contract.test.js';", },
+      replace: "const AUDIT_REL = 'tests/temporary-underlying-fallback-boundary-audit.test.jX';", },
     { id: "AUDIT_SPEC_REL",
       find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.js';",
-      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.jX';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-underlying-fallback-plan-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/portfolio-underlying-fallback-plan-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/portfolio-underlying-fallback-plan-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/portfolio-underlying-fallback-plan-undo.jX';", },
     { id: "RATCHETED_CONTRACTS",
       find: "const RATCHETED_CONTRACTS = 37;",
       replace: "const RATCHETED_CONTRACTS = 38;", },
     { id: "COVERAGE_CONTRACT",
       find: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';",
-      replace: "const COVERAGE_CONTRACT = 'tests/portfolio-greeks-freshness-boundary-contract.test.js';", },
+      replace: "const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.jX';", },
     { id: "PREVIOUS_CONTRACT",
       find: "const PREVIOUS_CONTRACT = 'tests/portfolio-greeks-freshness-boundary-contract.test.js';",
-      replace: "const PREVIOUS_CONTRACT = 'tests/rs-skip-breakdown-boundary-contract.test.js';", },
+      replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-greeks-freshness-boundary-contract.test.jX';", },
     { id: "BASE_DECLARED_MUTANTS",
-      find: "const BASE_DECLARED_MUTANTS = 129;",
-      replace: "const BASE_DECLARED_MUTANTS = 130;", },
+      find: "const BASE_DECLARED_MUTANTS = 131;",
+      replace: "const BASE_DECLARED_MUTANTS = 132;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/portfolio-greeks-freshness-contract.spec.js';",
-      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.js';",
+      replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/underlying-fallback-audit.spec.jX';", },
     { id: "RETIRED_MUTANTS",
-      find: "const RETIRED_MUTANTS = 123;",
-      replace: "const RETIRED_MUTANTS = 124;", },
+      find: "const RETIRED_MUTANTS = 125;",
+      replace: "const RETIRED_MUTANTS = 126;", },
     { id: "BASE_SPECS",
       find: "const BASE_SPECS = 2;",
       replace: "const BASE_SPECS = 3;", },
@@ -346,26 +361,26 @@ module.exports = {
       find: "const PREVIOUS_RAW_END = 780348;",
       replace: "const PREVIOUS_RAW_END = 780349;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 46;",
-      replace: "const CHAIN_LENGTH = 47;", },
-    { id: "SMALLEST_LAYER_CHARS",
-      find: "const SMALLEST_LAYER_CHARS = 1761;",
-      replace: "const SMALLEST_LAYER_CHARS = 1762;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 1;",
-      replace: "const SIZE_RANK_IF_CUT = 2;", },
+      find: "const CHAIN_LENGTH = 47;",
+      replace: "const CHAIN_LENGTH = 48;", },
+    { id: "DISPLACED_LAYER_CHARS",
+      find: "const DISPLACED_LAYER_CHARS = 1761;",
+      replace: "const DISPLACED_LAYER_CHARS = 1762;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 1;",
+      replace: "const SIZE_RANK = 2;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 46;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 47;", },
     { id: "PURE_ASCII_LAYERS",
-      find: "const PURE_ASCII_LAYERS = 3;",
-      replace: "const PURE_ASCII_LAYERS = 4;", },
+      find: "const PURE_ASCII_LAYERS = 4;",
+      replace: "const PURE_ASCII_LAYERS = 5;", },
+    { id: "PRIOR_PURE_ASCII_LAYERS",
+      find: "const PRIOR_PURE_ASCII_LAYERS = 3;",
+      replace: "const PRIOR_PURE_ASCII_LAYERS = 4;", },
     { id: "LAYERS_OPENING_ON_BANNER",
       find: "const LAYERS_OPENING_ON_BANNER = 23;",
       replace: "const LAYERS_OPENING_ON_BANNER = 24;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-underlying-fallback-plan.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/portfolio/portfolio-underlying-fallback-plan.js\"></script>\\X';", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 1613;",
       replace: "const NET_REDUCTION = 1614;", },
@@ -378,6 +393,9 @@ module.exports = {
     { id: "LOCAL_SCRIPTS_AFTER",
       find: "const LOCAL_SCRIPTS_AFTER = 91;",
       replace: "const LOCAL_SCRIPTS_AFTER = 92;", },
+    { id: "TAG_LOCAL_INDEX",
+      find: "const TAG_LOCAL_INDEX = 90;",
+      replace: "const TAG_LOCAL_INDEX = 91;", },
     { id: "OPENINGS",
       find: "const OPENINGS = [];",
       replace: "const OPENINGS = ['x'];", },
@@ -405,6 +423,10 @@ module.exports = {
       covers: ["HIDDEN_SCORE_ONE_ROWS"],
       find: "  [1145532, 1147221, 707, 1689, 1, 1, ['_planPortfolioUnderlyingFallback']],",
       replace: "  [1145532, 1147221, 708, 1689, 1, 1, ['_planPortfolioUnderlyingFallback']],", },
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/portfolio/portfolio-greeks-freshness.js',\n  'js/portfolio/portfolio-underlying-fallback-plan.js',\n];",
+      replace: "  'js/portfolio/portfolio-greeks-freshness.js',\n];", },
     { id: "RUNNERS_UP",
       covers: ["RUNNERS_UP"],
       find: "  [778314, 2, 2, 1622],",
