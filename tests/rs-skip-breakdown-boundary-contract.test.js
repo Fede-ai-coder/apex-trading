@@ -120,7 +120,7 @@ const BASE_UTF8 = 1481465;
 const BASE_LF = 25121;
 const BASE_SHA256 = '4ae28fcadc38ec40b2d494ef2818d3231113975fed734610393801046f5b9e99';
 const LOCAL_SCRIPTS = 88;
-const TEST_FILE_COUNT = 174;
+const TEST_FILE_COUNT = 175;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-rs-skip-breakdown-boundary-audit.test.js';
@@ -137,7 +137,7 @@ const UNDO_REL = 'tests/lib/rs-skip-breakdown-html-undo.js';
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 36;
+const RATCHETED_CONTRACTS = 37;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-technical-batch-fetch-boundary-contract.test.js';
