@@ -413,19 +413,20 @@ const journalMapAuditTag = '<script src="./js/services/journal-map-audit.js"></s
 const dxlinkGreeksFetchTag = '<script src="./js/services/dxlink-greeks-fetch.js"></script>';
 const portfolioTechnicalParityTag = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
 const portfolioSpyPriceTag = '<script src="./js/portfolio/portfolio-spy-price.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/portfolio-underlying-fallback-plan.js"></script>';
+const newestLayerTag = '<script src="./js/portfolio/portfolio-price-freshness.js"></script>';
 // The role names shift down one each cycle; NO layer drops out of the chain
 // below, because a dropped link still passes on transitivity and would stop
 // checking the layer it named.
-const secondNewestLayerTag = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
-const previousLayerTag = '<script src="./js/ui/rs-skip-breakdown-html.js"></script>';
+const secondNewestLayerTag = '<script src="./js/portfolio/portfolio-underlying-fallback-plan.js"></script>';
+const previousLayerTag = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
 // The layer the one above displaced. Both names are ROLES, so each cycle
 // repoints them and adds a link here rather than leaving the displaced layer
 // out of the ordering entirely.
-const displacedLayerTag = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
+const displacedLayerTag = '<script src="./js/ui/rs-skip-breakdown-html.js"></script>';
 // And the layers THAT one displaced, kept in the ordering for the same reason.
-const earlierDisplacedLayerTag = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
-const earlierYetDisplacedLayerTag = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
+const earlierDisplacedLayerTag = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
+const earlierYetDisplacedLayerTag = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
+const furtherDisplacedLayerTag = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
 const earlierStillDisplacedLayerTag = '<script src="./js/portfolio/portfolio-leg-quantity.js"></script>';
 const earliestDisplacedLayerTag = '<script src="./js/services/apex-storage-recovery.js"></script>';
 const afterCiAt = INDEX.indexOf('<', INDEX.indexOf(newestLayerTag) + newestLayerTag.length);
@@ -436,7 +437,8 @@ ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(secondNewestLayerTag)
   && INDEX.indexOf(previousLayerTag) > INDEX.indexOf(displacedLayerTag)
   && INDEX.indexOf(displacedLayerTag) > INDEX.indexOf(earlierDisplacedLayerTag)
   && INDEX.indexOf(earlierDisplacedLayerTag) > INDEX.indexOf(earlierYetDisplacedLayerTag)
-  && INDEX.indexOf(earlierYetDisplacedLayerTag) > INDEX.indexOf(earlierStillDisplacedLayerTag)
+  && INDEX.indexOf(earlierYetDisplacedLayerTag) > INDEX.indexOf(furtherDisplacedLayerTag)
+  && INDEX.indexOf(furtherDisplacedLayerTag) > INDEX.indexOf(earlierStillDisplacedLayerTag)
   && INDEX.indexOf(earlierStillDisplacedLayerTag) > INDEX.indexOf(earliestDisplacedLayerTag)
   && INDEX.indexOf(earliestDisplacedLayerTag) > INDEX.indexOf(portfolioSpyPriceTag)
   && INDEX.indexOf(portfolioSpyPriceTag) > INDEX.indexOf(portfolioTechnicalParityTag)
