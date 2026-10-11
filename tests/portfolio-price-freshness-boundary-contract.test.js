@@ -131,7 +131,7 @@ const BASE_UTF8 = 1476124;
 const BASE_LF = 25036;
 const BASE_SHA256 = '8777670c86b5c860a3820af78e48278d58a40bf1ca276e86271c9abb8edbb40f';
 const LOCAL_SCRIPTS = 91;
-const TEST_FILE_COUNT = 177;
+const TEST_FILE_COUNT = 178;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-price-freshness-boundary-audit.test.js';
@@ -148,7 +148,7 @@ const CONTRACT_SPEC_MUTANTS = 129;
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 39;
+const RATCHETED_CONTRACTS = 40;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/portfolio-underlying-fallback-plan-boundary-contract.test.js';
