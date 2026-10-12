@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const BACKEND_POSITIONS_ENRICHED = require('./backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK = require('./rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES = require('./scanner-dxlink-prices-undo.js');
 const PORTFOLIO_MISSING_UNDERLYINGS_GATE = require('./portfolio-missing-underlyings-gate-undo.js');
@@ -231,6 +232,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const BACKEND_POSITIONS_ENRICHED_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'backend-positions-enriched.js'),
+  'utf8'
+);
 const RS_QUALITY_CHECK_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'rs-quality-check.js'),
   'utf8'
@@ -440,10 +445,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preRsQualityCheck = RS_QUALITY_CHECK.isApplied(html)
-    ? RS_QUALITY_CHECK.undoRsQualityCheck(
-      html, RS_QUALITY_CHECK_SOURCE)
+  const preBackendPositionsEnriched = BACKEND_POSITIONS_ENRICHED.isApplied(html)
+    ? BACKEND_POSITIONS_ENRICHED.undoBackendPositionsEnriched(
+      html, BACKEND_POSITIONS_ENRICHED_SOURCE)
     : html;
+  const preRsQualityCheck = RS_QUALITY_CHECK.isApplied(preBackendPositionsEnriched)
+    ? RS_QUALITY_CHECK.undoRsQualityCheck(
+      preBackendPositionsEnriched, RS_QUALITY_CHECK_SOURCE)
+    : preBackendPositionsEnriched;
   const preScannerDxlinkPrices = SCANNER_DXLINK_PRICES.isApplied(preRsQualityCheck)
     ? SCANNER_DXLINK_PRICES.undoScannerDxlinkPrices(
       preRsQualityCheck, SCANNER_DXLINK_PRICES_SOURCE)

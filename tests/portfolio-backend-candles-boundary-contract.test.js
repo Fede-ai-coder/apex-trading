@@ -186,6 +186,7 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
 const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
@@ -219,10 +220,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(LIVE_INDEX)
-  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
+  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
+      PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_ENRICHED;
 const PRE_SCANNER_DXLINK_PRICES = SCANNER_DXLINK_PRICES_U.isApplied(PRE_RS_QUALITY_CHECK)
   ? SCANNER_DXLINK_PRICES_U.undoScannerDxlinkPrices(
       PRE_RS_QUALITY_CHECK, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dxlink-prices.js'), 'utf8'))
