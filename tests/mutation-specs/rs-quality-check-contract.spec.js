@@ -1,15 +1,15 @@
 'use strict';
 // ─────────────────────────────────────────────────────────────────────────────
-// Mutation spec — the temporary RS quality check audit.
+// Mutation spec — the PERMANENT RS quality check contract.
 //
 // ONE MUTANT PER PIN. Numbers move by one, quoted strings lose their last
 // character, and lists DROP an entry rather than gaining a fake one: the claims
 // here are that a measured set is exactly what it is, and a shortened list is
 // what a weakened version of that claim looks like.
 //
-// EIGHT PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
+// NINE PINS NEED EXPLICIT `covers`: DOC_FIRST_LINE, DECL_FIRST_LINE,
 // ZERO_DIRECTIONS, EXTENSIONS_UP, EXTENSIONS_DOWN, HIDDEN_SCORE_TWO_ROWS,
-// BEST_TIER_ROWS and RUNNERS_UP are multi-line declarations, so the generator's
+// BEST_TIER_ROWS, RUNNERS_UP and CHAIN are multi-line declarations, so the generator's
 // single-line pattern never matches them. That is the completeness gap the coverage contract exists
 // to find, so they are written in by hand here from the start.
 //
@@ -23,16 +23,19 @@
 // sibling that also ships, and that survivor was found in #461, #465 and #466.
 // ─────────────────────────────────────────────────────────────────────────────
 module.exports = {
-  target: 'tests/temporary-rs-quality-check-boundary-audit.test.js',
-  runs: ['tests/temporary-rs-quality-check-boundary-audit.test.js'],
+  target: 'tests/rs-quality-check-boundary-contract.test.js',
+  runs: ['tests/rs-quality-check-boundary-contract.test.js'],
   exempt: {},
   mutants: [
-    { id: "MODULE_REL_IF_CUT",
-      find: "const MODULE_REL_IF_CUT = 'js/services/rs-quality-check.js';",
-      replace: "const MODULE_REL_IF_CUT = 'js/services/scanner-ivr-throttle.js';", },
+    { id: "MODULE_REL",
+      find: "const MODULE_REL = 'js/services/rs-quality-check.js';",
+      replace: "const MODULE_REL = 'js/services/rs-quality-check.jX';", },
     { id: "BASE_SHA",
-      find: "const BASE_SHA = '0a9dc6d';",
-      replace: "const BASE_SHA = '0a9dc6X';", },
+      find: "const BASE_SHA = '3526809';",
+      replace: "const BASE_SHA = '352680X';", },
+    { id: "AUDIT_BASE_SHA",
+      find: "const AUDIT_BASE_SHA = '0a9dc6d';",
+      replace: "const AUDIT_BASE_SHA = '0a9dc6X';", },
     { id: "BASE_CHARS",
       find: "const BASE_CHARS = 1441539;",
       replace: "const BASE_CHARS = 1441540;", },
@@ -57,6 +60,15 @@ module.exports = {
     { id: "AUDIT_SPEC_REL",
       find: "const AUDIT_SPEC_REL = 'tests/mutation-specs/rs-quality-check-audit.spec.js';",
       replace: "const AUDIT_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
+    { id: "CONTRACT_REL",
+      find: "const CONTRACT_REL = 'tests/rs-quality-check-boundary-contract.test.js';",
+      replace: "const CONTRACT_REL = 'tests/rs-quality-check-boundary-contract.test.jX';", },
+    { id: "CONTRACT_SPEC_REL",
+      find: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/rs-quality-check-contract.spec.js';",
+      replace: "const CONTRACT_SPEC_REL = 'tests/mutation-specs/rs-quality-check-contract.spec.jX';", },
+    { id: "UNDO_REL",
+      find: "const UNDO_REL = 'tests/lib/rs-quality-check-undo.js';",
+      replace: "const UNDO_REL = 'tests/lib/rs-quality-check-undo.jX';", },
     { id: "RATCHETED_CONTRACTS",
       find: "const RATCHETED_CONTRACTS = 41;",
       replace: "const RATCHETED_CONTRACTS = 42;", },
@@ -67,14 +79,14 @@ module.exports = {
       find: "const PREVIOUS_CONTRACT = 'tests/scanner-dxlink-prices-boundary-contract.test.js';",
       replace: "const PREVIOUS_CONTRACT = 'tests/portfolio-price-freshness-boundary-contract.test.js';", },
     { id: "BASE_DECLARED_MUTANTS",
-      find: "const BASE_DECLARED_MUTANTS = 140;",
-      replace: "const BASE_DECLARED_MUTANTS = 141;", },
+      find: "const BASE_DECLARED_MUTANTS = 141;",
+      replace: "const BASE_DECLARED_MUTANTS = 142;", },
     { id: "RETIRED_SPEC_REL",
-      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/scanner-dxlink-prices-contract.spec.js';",
+      find: "const RETIRED_SPEC_REL = 'tests/mutation-specs/rs-quality-check-audit.spec.js';",
       replace: "const RETIRED_SPEC_REL = 'tests/mutation-specs/mutation-coverage-contract.spec.js';", },
     { id: "RETIRED_MUTANTS",
-      find: "const RETIRED_MUTANTS = 134;",
-      replace: "const RETIRED_MUTANTS = 135;", },
+      find: "const RETIRED_MUTANTS = 135;",
+      replace: "const RETIRED_MUTANTS = 136;", },
     { id: "BASE_SPECS",
       find: "const BASE_SPECS = 2;",
       replace: "const BASE_SPECS = 3;", },
@@ -370,14 +382,17 @@ module.exports = {
       find: "const PREVIOUS_RAW_AT = 61214;",
       replace: "const PREVIOUS_RAW_AT = 61215;", },
     { id: "CHAIN_LENGTH",
-      find: "const CHAIN_LENGTH = 50;",
-      replace: "const CHAIN_LENGTH = 51;", },
+      find: "const CHAIN_LENGTH = 51;",
+      replace: "const CHAIN_LENGTH = 52;", },
     { id: "SMALLEST_LAYER_CHARS",
       find: "const SMALLEST_LAYER_CHARS = 1587;",
       replace: "const SMALLEST_LAYER_CHARS = 1588;", },
-    { id: "SIZE_RANK_IF_CUT",
-      find: "const SIZE_RANK_IF_CUT = 7;",
-      replace: "const SIZE_RANK_IF_CUT = 8;", },
+    { id: "SIZE_RANK",
+      find: "const SIZE_RANK = 7;",
+      replace: "const SIZE_RANK = 8;", },
+    { id: "LAYERS_SMALLER_THAN_THIS_CUT",
+      find: "const LAYERS_SMALLER_THAN_THIS_CUT = 6;",
+      replace: "const LAYERS_SMALLER_THAN_THIS_CUT = 7;", },
     { id: "LAYERS_LARGER_THAN_THIS_CUT",
       find: "const LAYERS_LARGER_THAN_THIS_CUT = 44;",
       replace: "const LAYERS_LARGER_THAN_THIS_CUT = 45;", },
@@ -388,11 +403,11 @@ module.exports = {
       find: "const LAYERS_OPENING_ON_BANNER = 24;",
       replace: "const LAYERS_OPENING_ON_BANNER = 25;", },
     { id: "LAYERS_WITH_A_DEPENDENCY",
-      find: "const LAYERS_WITH_A_DEPENDENCY = 17;",
-      replace: "const LAYERS_WITH_A_DEPENDENCY = 18;", },
-    { id: "TAG_IF_CUT",
-      find: "const TAG_IF_CUT = '<script src=\"./js/services/rs-quality-check.js\"></script>\\n';",
-      replace: "const TAG_IF_CUT = '<script src=\"./js/services/rs-quality-check.js\"></script>\\X';", },
+      find: "const LAYERS_WITH_A_DEPENDENCY = 18;",
+      replace: "const LAYERS_WITH_A_DEPENDENCY = 19;", },
+    { id: "PRIOR_LAYERS_WITH_A_DEPENDENCY",
+      find: "const PRIOR_LAYERS_WITH_A_DEPENDENCY = 17;",
+      replace: "const PRIOR_LAYERS_WITH_A_DEPENDENCY = 18;", },
     { id: "NET_REDUCTION",
       find: "const NET_REDUCTION = 1930;",
       replace: "const NET_REDUCTION = 1931;", },
@@ -405,6 +420,9 @@ module.exports = {
     { id: "LOCAL_SCRIPTS_AFTER",
       find: "const LOCAL_SCRIPTS_AFTER = 95;",
       replace: "const LOCAL_SCRIPTS_AFTER = 96;", },
+    { id: "TAG_LOCAL_INDEX",
+      find: "const TAG_LOCAL_INDEX = 94;",
+      replace: "const TAG_LOCAL_INDEX = 95;", },
     { id: "OPENINGS",
       find: "const OPENINGS = [];",
       replace: "const OPENINGS = ['x'];", },
@@ -440,5 +458,9 @@ module.exports = {
       covers: ["RUNNERS_UP"],
       find: "  [893619, 2, 4, 1748],",
       replace: "  [893619, 2, 4, 1749],", },
+    { id: "CHAIN",
+      covers: ["CHAIN"],
+      find: "  'js/services/scanner-dxlink-prices.js',\n  'js/services/rs-quality-check.js',\n];",
+      replace: "  'js/services/scanner-dxlink-prices.js',\n];", },
   ],
 };
