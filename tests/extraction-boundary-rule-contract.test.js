@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const BACKEND_POSITIONS_ENRICHED = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES = require('./lib/scanner-dxlink-prices-undo.js');
 const PORTFOLIO_MISSING_UNDERLYINGS_GATE = require('./lib/portfolio-missing-underlyings-gate-undo.js');
@@ -207,6 +208,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = BACKEND_POSITIONS_ENRICHED.undoBackendPositionsEnriched(
+    doc, read('js/portfolio/backend-positions-enriched.js'));
   doc = RS_QUALITY_CHECK.undoRsQualityCheck(
     doc, read('js/services/rs-quality-check.js'));
   doc = SCANNER_DXLINK_PRICES.undoScannerDxlinkPrices(

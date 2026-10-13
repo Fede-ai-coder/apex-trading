@@ -143,6 +143,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
 const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
@@ -176,10 +177,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(LIVE_INDEX)
-  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(LIVE_INDEX)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
+  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
+      PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_ENRICHED;
 const PRE_SCANNER_DXLINK_PRICES = SCANNER_DXLINK_PRICES_U.isApplied(PRE_RS_QUALITY_CHECK)
   ? SCANNER_DXLINK_PRICES_U.undoScannerDxlinkPrices(
       PRE_RS_QUALITY_CHECK, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dxlink-prices.js'), 'utf8'))
@@ -604,7 +609,7 @@ section('11. Production footprint');
   const tracked = git(['ls-files', 'js/portfolio/']).trim().split('\n').filter(Boolean);
   eq(tracked.sort(), ['js/portfolio/backend-full-refresh-validation.js',
     'js/portfolio/backend-portfolios.js',
-    'js/portfolio/backend-positions-aggregate.js',
+    'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/backend-positions-enriched.js',
     'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js',
     'js/portfolio/portfolio-dxlink-greeks.js',
     'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-spy-price.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-vega-monitor.js'],

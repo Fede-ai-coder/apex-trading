@@ -113,6 +113,7 @@ const {
 } = require('./lib/extraction-boundary.js');
 // The layer cut AFTER this one, peeled off before this layer's own document is
 // reconstructed. Newest-first, which is the rule the whole chain follows.
+const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
 const UNDO = require('./lib/portfolio-missing-underlyings-gate-undo.js');
@@ -363,6 +364,7 @@ const PRIOR_LAYERS_WITH_A_DEPENDENCY = 15;
 const LATER_CONTRACTS_WITH_A_DEPENDENCY = [
   'scanner-dxlink-prices-boundary-contract.test.js',
   'rs-quality-check-boundary-contract.test.js',
+  'backend-positions-enriched-boundary-contract.test.js',
 ];
 
 // ── What the relocation cost the document ────────────────────────────────────
@@ -425,10 +427,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(HEAD_INDEX)
-  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(HEAD_INDEX)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
+  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
+      PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_ENRICHED;
 const LIVE_INDEX = SCANNER_DXLINK_PRICES_U.isApplied(PRE_RS_QUALITY_CHECK)
   ? SCANNER_DXLINK_PRICES_U.undoScannerDxlinkPrices(
       PRE_RS_QUALITY_CHECK, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dxlink-prices.js'), 'utf8'))
@@ -1380,7 +1386,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js'].sort(),
+    ['index.html', MODULE_REL, 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,

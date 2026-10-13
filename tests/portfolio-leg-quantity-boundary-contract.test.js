@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
 const PORTFOLIO_MISSING_UNDERLYINGS_GATE_U = require('./lib/portfolio-missing-underlyings-gate-undo.js');
@@ -480,10 +481,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(SHIPPED_INDEX)
-  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(SHIPPED_INDEX)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
+  ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
+      PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
+  : PRE_BACKEND_POSITIONS_ENRICHED;
 const PRE_SCANNER_DXLINK_PRICES = SCANNER_DXLINK_PRICES_U.isApplied(PRE_RS_QUALITY_CHECK)
   ? SCANNER_DXLINK_PRICES_U.undoScannerDxlinkPrices(
       PRE_RS_QUALITY_CHECK, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dxlink-prices.js'), 'utf8'))
