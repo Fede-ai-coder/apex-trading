@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const OPTION_STREAMER_DIAGNOSTICS = require('./option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED = require('./backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK = require('./rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES = require('./scanner-dxlink-prices-undo.js');
@@ -232,6 +233,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const OPTION_STREAMER_DIAGNOSTICS_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-option-streamer-diagnostics.js'),
+  'utf8'
+);
 const BACKEND_POSITIONS_ENRICHED_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'backend-positions-enriched.js'),
   'utf8'
@@ -445,10 +450,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preBackendPositionsEnriched = BACKEND_POSITIONS_ENRICHED.isApplied(html)
-    ? BACKEND_POSITIONS_ENRICHED.undoBackendPositionsEnriched(
-      html, BACKEND_POSITIONS_ENRICHED_SOURCE)
+  const preOptionStreamerDiagnostics = OPTION_STREAMER_DIAGNOSTICS.isApplied(html)
+    ? OPTION_STREAMER_DIAGNOSTICS.undoOptionStreamerDiagnostics(
+      html, OPTION_STREAMER_DIAGNOSTICS_SOURCE)
     : html;
+  const preBackendPositionsEnriched = BACKEND_POSITIONS_ENRICHED.isApplied(preOptionStreamerDiagnostics)
+    ? BACKEND_POSITIONS_ENRICHED.undoBackendPositionsEnriched(
+      preOptionStreamerDiagnostics, BACKEND_POSITIONS_ENRICHED_SOURCE)
+    : preOptionStreamerDiagnostics;
   const preRsQualityCheck = RS_QUALITY_CHECK.isApplied(preBackendPositionsEnriched)
     ? RS_QUALITY_CHECK.undoRsQualityCheck(
       preBackendPositionsEnriched, RS_QUALITY_CHECK_SOURCE)
