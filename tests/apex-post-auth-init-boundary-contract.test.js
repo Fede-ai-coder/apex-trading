@@ -330,6 +330,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const SCANNER_DSS_CHART_LOAD_GUARD_U = require('./lib/scanner-dss-chart-load-guard-undo.js');
 const OPTION_STREAMER_DIAGNOSTICS_U = require('./lib/option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
@@ -365,10 +366,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_OPTION_STREAMER_DIAGNOSTICS = OPTION_STREAMER_DIAGNOSTICS_U.isApplied(LIVE_INDEX)
-  ? OPTION_STREAMER_DIAGNOSTICS_U.undoOptionStreamerDiagnostics(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-option-streamer-diagnostics.js'), 'utf8'))
+const PRE_SCANNER_DSS_CHART_LOAD_GUARD = SCANNER_DSS_CHART_LOAD_GUARD_U.isApplied(LIVE_INDEX)
+  ? SCANNER_DSS_CHART_LOAD_GUARD_U.undoScannerDssChartLoadGuard(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dss-chart-load-guard.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_OPTION_STREAMER_DIAGNOSTICS = OPTION_STREAMER_DIAGNOSTICS_U.isApplied(PRE_SCANNER_DSS_CHART_LOAD_GUARD)
+  ? OPTION_STREAMER_DIAGNOSTICS_U.undoOptionStreamerDiagnostics(
+      PRE_SCANNER_DSS_CHART_LOAD_GUARD, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-option-streamer-diagnostics.js'), 'utf8'))
+  : PRE_SCANNER_DSS_CHART_LOAD_GUARD;
 const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(PRE_OPTION_STREAMER_DIAGNOSTICS)
   ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
       PRE_OPTION_STREAMER_DIAGNOSTICS, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
@@ -596,14 +601,20 @@ eq(localScripts(INDEX).length, LOCAL_SCRIPT_COUNT, 'the shipped index carries ex
 // reconnect undo is proved to return the document to this contract's EXACT #410
 // state — the guarantee this file has always owned, now reached through a peel.
 eq(TT_RECONNECT_U.isApplied(LIVE_INDEX), true, 'the shipped index carries the later TT reconnect layer');
-eq(LIVE_INDEX.length, OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+eq(LIVE_INDEX.length, SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_SHA256, 'the live shipped index SHA-256 is the newest layer’s extracted value');
+// Re-terminated with the chain: the pins above moved up to the newest layer, so the
+// layer they used to name is asserted here on the peeled state rather than dropped.
+eq(PRE_SCANNER_DSS_CHART_LOAD_GUARD.length, OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_CHARS,
+  'peeling the newest layer reaches the option streamer diagnostics layer’s extracted length');
+eq(sha256(PRE_SCANNER_DSS_CHART_LOAD_GUARD), OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_SHA256,
+  'peeling the newest layer reaches the option streamer diagnostics layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_OPTION_STREAMER_DIAGNOSTICS.length, BACKEND_POSITIONS_ENRICHED_U.EXTRACTED_CHARS,
-  'peeling the newest layer reaches the backend positions enriched layer’s extracted length');
+  'peeling the option streamer diagnostics layer reaches the backend positions enriched layer’s extracted length');
 eq(sha256(PRE_OPTION_STREAMER_DIAGNOSTICS), BACKEND_POSITIONS_ENRICHED_U.EXTRACTED_SHA256,
-  'peeling the newest layer reaches the backend positions enriched layer’s extracted digest');
+  'peeling the option streamer diagnostics layer reaches the backend positions enriched layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_BACKEND_POSITIONS_ENRICHED.length, RS_QUALITY_CHECK_U.EXTRACTED_CHARS,
@@ -645,7 +656,7 @@ eq(PRE_RICH_SNAPSHOT.length, CANDLE_CHART_U.EXTRACTED_CHARS,
   'peeling the rich snapshot reaches the candle-store-chart extracted length');
 eq(sha256(PRE_RICH_SNAPSHOT), CANDLE_CHART_U.EXTRACTED_SHA256,
   '…and its hash');
-eq(localScripts(LIVE_INDEX).length, OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_LOCAL_SCRIPTS,
+eq(localScripts(LIVE_INDEX).length, SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_LOCAL_SCRIPTS,
   'the live shipped index carries the newest layer’s local-script count');
 eq(INDEX.length, TT_RECONNECT_U.BASE_CHARS, 'peeling TT reconnect returns the exact #410 index length');
 eq(sha256(INDEX), TT_RECONNECT_U.BASE_SHA256, 'peeling TT reconnect returns the exact #410 index hash');
@@ -741,8 +752,8 @@ eq(localScripts(INDEX).map((t) => t.src).slice(-1), [MODULE_SRC],
 // module is second-to-last rather than last. The invariant this line protects —
 // the module evaluates before the inline monolith that calls it — is unchanged
 // and asserted in its stronger, current form.
-eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-44),
-  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', './js/portfolio/portfolio-technical-batch-fetch.js', './js/ui/rs-skip-breakdown-html.js', './js/portfolio/portfolio-greeks-freshness.js', './js/portfolio/portfolio-underlying-fallback-plan.js', './js/portfolio/portfolio-price-freshness.js', './js/portfolio/portfolio-missing-underlyings-gate.js', './js/services/scanner-dxlink-prices.js', './js/services/rs-quality-check.js', './js/portfolio/backend-positions-enriched.js', './js/portfolio/portfolio-option-streamer-diagnostics.js', '(inline)'],
+eq(APP_PARTS.map((p) => p.src || '(inline)').slice(-45),
+  [MODULE_SRC, './js/ui/tt-reconnect.js', './js/ui/journal-close-legs.js', './js/ui/journal-trade-forms.js', './js/ui/journal-trade-detail.js', './js/portfolio/portfolio-data-fetch.js', './js/portfolio/backend-portfolios.js', './js/portfolio/portfolio-expiry-manual.js', './js/portfolio/portfolio-traffic-light.js', './js/ui/backend-candle-store-chart.js', './js/services/journal-rich-snapshot.js', './js/portfolio/portfolio-backend-candles.js', './js/services/journal-snapshot-prefetch.js', './js/portfolio/portfolio-dxlink-greeks.js', './js/config/strategy-templates.js', './js/portfolio/portfolio-vega-monitor.js', './js/services/scanner-ivr-throttle.js', './js/services/scanner-earnings-throttle.js', './js/ui/chart-interactions.js', './js/services/journal-snapshot-helpers.js', './js/services/swing-weekly-candles.js', './js/services/swing-direction.js', './js/portfolio/backend-positions-aggregate.js', './js/portfolio/portfolio-technical-merge.js', './js/portfolio/portfolio-technical-alignment-debug.js', './js/services/journal-map-audit.js', './js/services/dxlink-greeks-fetch.js', './js/portfolio/portfolio-technical-parity.js', './js/portfolio/portfolio-spy-price.js', './js/services/apex-storage-recovery.js', './js/portfolio/portfolio-leg-quantity.js', './js/portfolio/backend-full-refresh-validation.js', './js/portfolio/portfolio-snapshot-fallback.js', './js/portfolio/portfolio-technical-batch-fetch.js', './js/ui/rs-skip-breakdown-html.js', './js/portfolio/portfolio-greeks-freshness.js', './js/portfolio/portfolio-underlying-fallback-plan.js', './js/portfolio/portfolio-price-freshness.js', './js/portfolio/portfolio-missing-underlyings-gate.js', './js/services/scanner-dxlink-prices.js', './js/services/rs-quality-check.js', './js/portfolio/backend-positions-enriched.js', './js/portfolio/portfolio-option-streamer-diagnostics.js', './js/services/scanner-dss-chart-load-guard.js', '(inline)'],
   'in execution order the module runs immediately before the TT reconnect owner, which precedes the Journal Close Legs owner and then the inline monolith');
 eq(APP_PARTS.filter((p) => p.kind === 'inline').length, 1,
   'the relocation added no second inline script block');
@@ -962,7 +973,7 @@ const apexIdx = LIVE_PARTS.findIndex((p) => p.src === MODULE_SRC);
 const ttIdx = LIVE_PARTS.findIndex((p) => p.src === TT_RECONNECT_SRC);
 ok(apexIdx >= 0 && ttIdx === apexIdx + 1,
   'the TT reconnect module loads immediately AFTER this one, so its call to _apexPostAuthInit still resolves');
-ok(ttIdx === LIVE_PARTS.length - 43,
+ok(ttIdx === LIVE_PARTS.length - 44,
   '…and before every layer cut after it — the gap grows by one each cycle, so it is\n' +
   '   counted off LIVE_PARTS rather than listed in this sentence');
 ok(RETAINED.indexOf('onclick="doReconnectTT()"') > 0,
@@ -1159,7 +1170,7 @@ const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
 const changed = Array.from(new Set(committed.concat(status))).sort();
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', MODULE_REL, 'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/tt-reconnect.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
   'production footprint is exactly index.html plus the Apex shared post-auth owner and the later TT reconnect and Journal Close Legs owners');
 ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
 ok(changed.indexOf(UNDO_REL) >= 0, 'the byte-exact undo helper is part of the change');
@@ -1180,7 +1191,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' || rel === 'CLAUDE.md' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/ui/tt-reconnect.js' || rel === 'js/ui/journal-close-legs.js' || rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-data-fetch.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' || rel === 'js/ui/journal-trade-detail.js' || rel === 'js/ui/journal-trade-forms.js' || rel.startsWith('tests/')),
