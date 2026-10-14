@@ -407,6 +407,7 @@ console.log('measurement only · base=' + BASE_SHA);
 // document. That peel goes here, exactly as the sentence above anticipated, and
 // LIVE_INDEX below is this layer's OWN extracted document rather than the head.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const OPTION_STREAMER_DIAGNOSTICS_U = require('./lib/option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
@@ -419,10 +420,14 @@ const PORTFOLIO_TECHNICAL_BATCH_FETCH_U = require('./lib/portfolio-technical-bat
 const PORTFOLIO_SNAPSHOT_FALLBACK_U = require('./lib/portfolio-snapshot-fallback-undo.js');
 const BACKEND_FULL_REFRESH_VALIDATION_U = require('./lib/backend-full-refresh-validation-undo.js');
 const PORTFOLIO_LEG_QUANTITY_U = require('./lib/portfolio-leg-quantity-undo.js');
-const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(HEAD_INDEX)
-  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
+const PRE_OPTION_STREAMER_DIAGNOSTICS = OPTION_STREAMER_DIAGNOSTICS_U.isApplied(HEAD_INDEX)
+  ? OPTION_STREAMER_DIAGNOSTICS_U.undoOptionStreamerDiagnostics(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-option-streamer-diagnostics.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(PRE_OPTION_STREAMER_DIAGNOSTICS)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      PRE_OPTION_STREAMER_DIAGNOSTICS, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
+  : PRE_OPTION_STREAMER_DIAGNOSTICS;
 const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
   ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
       PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
@@ -1424,7 +1429,7 @@ section('9. The relocation is the whole of the production change');
   // the module of every layer cut after it. The list is enumerated rather than
   // counted so the next cycle adds a name instead of editing a number.
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'the production footprint is the document, this layer\'s module, and the module of '
     + 'every layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
@@ -1457,7 +1462,7 @@ section('10. The change set, the ratchet and the budget');
   ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec is retired in the same change');
   ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), '…and that spec is gone too');
   ok(all.every((rel) => rel.startsWith('tests/') || rel === 'index.html' || rel === MODULE_REL
-    || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'CLAUDE.md'),
+    || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'CLAUDE.md'),
   '…and every other changed path is a test artifact, this layer\'s module, or the module of '
   + 'a layer cut after it');
   // THE RATCHET. One file arrives, and every contract that pins the suite size

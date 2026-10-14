@@ -124,6 +124,7 @@ const PORTFOLIO_MISSING_UNDERLYINGS_GATE_TAG = '<script src="./js/portfolio/port
 const SCANNER_DXLINK_PRICES_TAG = '<script src="./js/services/scanner-dxlink-prices.js"></script>';
 const RS_QUALITY_CHECK_TAG = '<script src="./js/services/rs-quality-check.js"></script>';
 const BACKEND_POSITIONS_ENRICHED_TAG = '<script src="./js/portfolio/backend-positions-enriched.js"></script>';
+const OPTION_STREAMER_DIAGNOSTICS_TAG = '<script src="./js/portfolio/portfolio-option-streamer-diagnostics.js"></script>';
 const INLINE_OPEN = '<script>\n// ═══════════════════════════════════════════════════════════════\n// CONFIGURATION';
 
 let pass = 0, fail = 0;
@@ -184,7 +185,7 @@ const mcx1At = INDEX.indexOf(MCX1_TAG), mcx2At = INDEX.indexOf(MCX2_TAG), mcx3At
 const journalAt = INDEX.indexOf(JOURNAL_TAG), inlineAt = INDEX.indexOf(INLINE_OPEN);
 eq(count(INDEX, JOURNAL_TAG), 1, 'exactly one Journal Core script tag');
 eq(INDEX.slice(mcx1At, inlineAt),
-  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n' + PORTFOLIO_GREEKS_FRESHNESS_TAG + '\n' + PORTFOLIO_UNDERLYING_FALLBACK_PLAN_TAG + '\n' + PORTFOLIO_PRICE_FRESHNESS_TAG + '\n' + PORTFOLIO_MISSING_UNDERLYINGS_GATE_TAG + '\n' + SCANNER_DXLINK_PRICES_TAG + '\n' + RS_QUALITY_CHECK_TAG + '\n' + BACKEND_POSITIONS_ENRICHED_TAG + '\n',
+  MCX1_TAG + '\n' + MCX2_TAG + '\n' + MCX3_TAG + '\n' + JOURNAL_TAG + '\n' + REGIME_TAG + '\n' + JOURNAL_UI_TAG + '\n' + REMOTE_TAG + '\n' + WRITE_TAG + '\n' + MIGRATION_TAG + '\n' + MANUAL_TAG + '\n' + BACKUP_RESTORE_TAG + '\n' + MCX_MACRO_CHECK_TAG + '\n' + MCX_CHARTS_TAG + '\n' + APEX_POST_AUTH_TAG + '\n' + TT_RECONNECT_TAG + '\n' + CLOSE_LEGS_TAG + '\n' + TRADE_FORMS_TAG + '\n' + TRADE_DETAIL_TAG + '\n' + PORTFOLIO_TAG + '\n' + BACKEND_PORTFOLIOS_TAG + '\n' + EXPIRY_MANUAL_TAG + '\n' + TRAFFIC_LIGHT_TAG + '\n' + CANDLE_CHART_TAG + '\n' + RICH_SNAPSHOT_TAG + '\n' + BACKEND_CANDLES_TAG + '\n' + SNAPSHOT_PREFETCH_TAG + '\n' + DXLINK_GREEKS_TAG + '\n' + STRATEGY_TEMPLATES_TAG + '\n' + VEGA_MONITOR_TAG + '\n' + SCANNER_IVR_TAG + '\n' + SCANNER_EARNINGS_TAG + '\n' + CHART_INTERACTIONS_TAG + '\n' + SNAPSHOT_HELPERS_TAG + '\n' + SWING_WEEKLY_CANDLES_TAG + '\n' + SWING_DIRECTION_TAG + '\n' + BACKEND_POSITIONS_AGGREGATE_TAG + '\n' + PORTFOLIO_TECHNICAL_MERGE_TAG + '\n' + PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_TAG + '\n' + JOURNAL_MAP_AUDIT_TAG + '\n' + DXLINK_GREEKS_FETCH_TAG + '\n' + PORTFOLIO_TECHNICAL_PARITY_TAG + '\n' + PORTFOLIO_SPY_PRICE_TAG + '\n' + APEX_STORAGE_RECOVERY_TAG + '\n' + PORTFOLIO_LEG_QUANTITY_TAG + '\n' + BACKEND_FULL_REFRESH_VALIDATION_TAG + '\n' + PORTFOLIO_SNAPSHOT_FALLBACK_TAG + '\n' + PORTFOLIO_TECHNICAL_BATCH_FETCH_TAG + '\n' + RS_SKIP_BREAKDOWN_HTML_TAG + '\n' + PORTFOLIO_GREEKS_FRESHNESS_TAG + '\n' + PORTFOLIO_UNDERLYING_FALLBACK_PLAN_TAG + '\n' + PORTFOLIO_PRICE_FRESHNESS_TAG + '\n' + PORTFOLIO_MISSING_UNDERLYINGS_GATE_TAG + '\n' + SCANNER_DXLINK_PRICES_TAG + '\n' + RS_QUALITY_CHECK_TAG + '\n' + BACKEND_POSITIONS_ENRICHED_TAG + '\n' + OPTION_STREAMER_DIAGNOSTICS_TAG + '\n',
   'the full service tail, in load order, ends at the inline monolith — the\n   concatenation above IS the enumeration, so the message does not repeat it');
 ok(mcx1At >= 0 && mcx2At > mcx1At && mcx3At > mcx2At && journalAt > mcx3At && inlineAt > journalAt,
   'Journal Core loads synchronously after existing services and before residual inline code');
@@ -352,6 +353,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const OPTION_STREAMER_DIAGNOSTICS_U = require('./lib/option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
 const RS_QUALITY_CHECK_U = require('./lib/rs-quality-check-undo.js');
 const SCANNER_DXLINK_PRICES_U = require('./lib/scanner-dxlink-prices-undo.js');
@@ -386,10 +388,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(INDEX)
-  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
+const PRE_OPTION_STREAMER_DIAGNOSTICS = OPTION_STREAMER_DIAGNOSTICS_U.isApplied(INDEX)
+  ? OPTION_STREAMER_DIAGNOSTICS_U.undoOptionStreamerDiagnostics(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-option-streamer-diagnostics.js'), 'utf8'))
   : INDEX;
+const PRE_BACKEND_POSITIONS_ENRICHED = BACKEND_POSITIONS_ENRICHED_U.isApplied(PRE_OPTION_STREAMER_DIAGNOSTICS)
+  ? BACKEND_POSITIONS_ENRICHED_U.undoBackendPositionsEnriched(
+      PRE_OPTION_STREAMER_DIAGNOSTICS, fs.readFileSync(path.join(ROOT, 'js/portfolio/backend-positions-enriched.js'), 'utf8'))
+  : PRE_OPTION_STREAMER_DIAGNOSTICS;
 const PRE_RS_QUALITY_CHECK = RS_QUALITY_CHECK_U.isApplied(PRE_BACKEND_POSITIONS_ENRICHED)
   ? RS_QUALITY_CHECK_U.undoRsQualityCheck(
       PRE_BACKEND_POSITIONS_ENRICHED, fs.readFileSync(path.join(ROOT, 'js/services/rs-quality-check.js'), 'utf8'))
