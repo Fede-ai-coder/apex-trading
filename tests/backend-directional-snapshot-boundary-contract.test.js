@@ -298,6 +298,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/services/rs-quality-check.js',
   './js/portfolio/backend-positions-enriched.js',
   './js/portfolio/portfolio-option-streamer-diagnostics.js',
+  './js/services/scanner-dss-chart-load-guard.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2852,7 +2853,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 97,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 98,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
@@ -3065,13 +3066,20 @@ function topLevelDeclarations(code) {
       // by construction, and inert — its own contract loads it in an empty VM
       // and proves it touches no fetch, timer, socket, storage or DOM at load.
       './js/portfolio/portfolio-technical-parity.js',
+      // The DSS chart load guard joins as the last of them: two top-level `var`s,
+      // the 45-second TTL (a numeral) and the guard object, whose seven fields
+      // are initialised from `null`, `0` and `false`. The object literal names
+      // its fields, so it is not masked to nothing and counts as visible
+      // top-level residue by construction — and inert: its own contract loads
+      // the module in an empty VM and proves nothing runs at load.
+      './js/services/scanner-dss-chart-load-guard.js',
       // The chart-interactions layer of #449 is deliberately ABSENT here: its
       // five top-level vars are all inert literal initialisers (40, null,
       // false), so it contributes no visible load-time residue at all. Adding
       // it to this list on the assumption that every new layer joins it is
       // what this assertion refused.
     ]),
-    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners, the backend-portfolios re-exports, the strategy-template data and the scanner-IVR and scanner-Earnings throttle state');
+    'the visible top-level residue is exactly backend-config.js, Stress constants, Regime Policy literals, Journal UI state, the audited Journal Write-through patches, the MCX charts state owners, the backend-portfolios re-exports, the strategy-template data, the scanner-IVR and scanner-Earnings throttle state, the technical-parity alias table and the DSS chart load guard state');
 
   // The backend-portfolios module is the newest entry on that list and the only
   // one whose residue is assignments to `window`. It is NOT waved through on the

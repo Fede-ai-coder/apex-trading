@@ -413,24 +413,25 @@ const journalMapAuditTag = '<script src="./js/services/journal-map-audit.js"></s
 const dxlinkGreeksFetchTag = '<script src="./js/services/dxlink-greeks-fetch.js"></script>';
 const portfolioTechnicalParityTag = '<script src="./js/portfolio/portfolio-technical-parity.js"></script>';
 const portfolioSpyPriceTag = '<script src="./js/portfolio/portfolio-spy-price.js"></script>';
-const newestLayerTag = '<script src="./js/portfolio/portfolio-option-streamer-diagnostics.js"></script>';
+const newestLayerTag = '<script src="./js/services/scanner-dss-chart-load-guard.js"></script>';
 // The role names shift down one each cycle; NO layer drops out of the chain
 // below, because a dropped link still passes on transitivity and would stop
 // checking the layer it named.
-const secondNewestLayerTag = '<script src="./js/portfolio/backend-positions-enriched.js"></script>';
-const previousLayerTag = '<script src="./js/services/rs-quality-check.js"></script>';
+const secondNewestLayerTag = '<script src="./js/portfolio/portfolio-option-streamer-diagnostics.js"></script>';
+const previousLayerTag = '<script src="./js/portfolio/backend-positions-enriched.js"></script>';
 // The layer the one above displaced. Both names are ROLES, so each cycle
 // repoints them and adds a link here rather than leaving the displaced layer
 // out of the ordering entirely.
-const displacedLayerTag = '<script src="./js/services/scanner-dxlink-prices.js"></script>';
+const displacedLayerTag = '<script src="./js/services/rs-quality-check.js"></script>';
 // And the layers THAT one displaced, kept in the ordering for the same reason.
-const earlierDisplacedLayerTag = '<script src="./js/portfolio/portfolio-missing-underlyings-gate.js"></script>';
-const earlierYetDisplacedLayerTag = '<script src="./js/portfolio/portfolio-price-freshness.js"></script>';
-const yetFurtherDisplacedLayerTag = '<script src="./js/portfolio/portfolio-underlying-fallback-plan.js"></script>';
-const stillFurtherDisplacedLayerTag = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
-const furthestDisplacedLayerTag = '<script src="./js/ui/rs-skip-breakdown-html.js"></script>';
-const farthestDisplacedLayerTag = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
-const outermostDisplacedLayerTag = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
+const earlierDisplacedLayerTag = '<script src="./js/services/scanner-dxlink-prices.js"></script>';
+const earlierYetDisplacedLayerTag = '<script src="./js/portfolio/portfolio-missing-underlyings-gate.js"></script>';
+const yetFurtherDisplacedLayerTag = '<script src="./js/portfolio/portfolio-price-freshness.js"></script>';
+const stillFurtherDisplacedLayerTag = '<script src="./js/portfolio/portfolio-underlying-fallback-plan.js"></script>';
+const furthestDisplacedLayerTag = '<script src="./js/portfolio/portfolio-greeks-freshness.js"></script>';
+const farthestDisplacedLayerTag = '<script src="./js/ui/rs-skip-breakdown-html.js"></script>';
+const outermostDisplacedLayerTag = '<script src="./js/portfolio/portfolio-technical-batch-fetch.js"></script>';
+const utmostDisplacedLayerTag = '<script src="./js/portfolio/portfolio-snapshot-fallback.js"></script>';
 const furtherDisplacedLayerTag = '<script src="./js/portfolio/backend-full-refresh-validation.js"></script>';
 const earlierStillDisplacedLayerTag = '<script src="./js/portfolio/portfolio-leg-quantity.js"></script>';
 const earliestDisplacedLayerTag = '<script src="./js/services/apex-storage-recovery.js"></script>';
@@ -447,7 +448,8 @@ ok(INDEX.indexOf(newestLayerTag) > INDEX.indexOf(secondNewestLayerTag)
   && INDEX.indexOf(stillFurtherDisplacedLayerTag) > INDEX.indexOf(furthestDisplacedLayerTag)
   && INDEX.indexOf(furthestDisplacedLayerTag) > INDEX.indexOf(farthestDisplacedLayerTag)
   && INDEX.indexOf(farthestDisplacedLayerTag) > INDEX.indexOf(outermostDisplacedLayerTag)
-  && INDEX.indexOf(outermostDisplacedLayerTag) > INDEX.indexOf(furtherDisplacedLayerTag)
+  && INDEX.indexOf(outermostDisplacedLayerTag) > INDEX.indexOf(utmostDisplacedLayerTag)
+  && INDEX.indexOf(utmostDisplacedLayerTag) > INDEX.indexOf(furtherDisplacedLayerTag)
   && INDEX.indexOf(furtherDisplacedLayerTag) > INDEX.indexOf(earlierStillDisplacedLayerTag)
   && INDEX.indexOf(earlierStillDisplacedLayerTag) > INDEX.indexOf(earliestDisplacedLayerTag)
   && INDEX.indexOf(earliestDisplacedLayerTag) > INDEX.indexOf(portfolioSpyPriceTag)
