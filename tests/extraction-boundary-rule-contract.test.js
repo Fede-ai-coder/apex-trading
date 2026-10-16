@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const SWING_CHART_CACHE_HELPERS = require('./lib/swing-chart-cache-helpers-undo.js');
 const SCANNER_DSS_CHART_LOAD_GUARD = require('./lib/scanner-dss-chart-load-guard-undo.js');
 const OPTION_STREAMER_DIAGNOSTICS = require('./lib/option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED = require('./lib/backend-positions-enriched-undo.js');
@@ -210,6 +211,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = SWING_CHART_CACHE_HELPERS.undoSwingChartCacheHelpers(
+    doc, read('js/services/swing-chart-cache-helpers.js'));
   doc = SCANNER_DSS_CHART_LOAD_GUARD.undoScannerDssChartLoadGuard(
     doc, read('js/services/scanner-dss-chart-load-guard.js'));
   doc = OPTION_STREAMER_DIAGNOSTICS.undoOptionStreamerDiagnostics(

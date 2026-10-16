@@ -243,6 +243,7 @@ console.log('relocation only · audited #440 · base=' + BASE_SHA.slice(0, 7));
 // The vega monitor ratios were cut AFTER this layer, so the live document is no
 // longer the one this contract shipped. Peel them first; the helper re-verifies
 // its own output by length and SHA-256, so the hop is proved, not assumed.
+const SWING_CHART_CACHE_HELPERS_U = require('./lib/swing-chart-cache-helpers-undo.js');
 const SCANNER_DSS_CHART_LOAD_GUARD_U = require('./lib/scanner-dss-chart-load-guard-undo.js');
 const OPTION_STREAMER_DIAGNOSTICS_U = require('./lib/option-streamer-diagnostics-undo.js');
 const BACKEND_POSITIONS_ENRICHED_U = require('./lib/backend-positions-enriched-undo.js');
@@ -278,10 +279,14 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_SCANNER_DSS_CHART_LOAD_GUARD = SCANNER_DSS_CHART_LOAD_GUARD_U.isApplied(LIVE_INDEX)
-  ? SCANNER_DSS_CHART_LOAD_GUARD_U.undoScannerDssChartLoadGuard(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dss-chart-load-guard.js'), 'utf8'))
+const PRE_SWING_CHART_CACHE_HELPERS = SWING_CHART_CACHE_HELPERS_U.isApplied(LIVE_INDEX)
+  ? SWING_CHART_CACHE_HELPERS_U.undoSwingChartCacheHelpers(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-helpers.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SCANNER_DSS_CHART_LOAD_GUARD = SCANNER_DSS_CHART_LOAD_GUARD_U.isApplied(PRE_SWING_CHART_CACHE_HELPERS)
+  ? SCANNER_DSS_CHART_LOAD_GUARD_U.undoScannerDssChartLoadGuard(
+      PRE_SWING_CHART_CACHE_HELPERS, fs.readFileSync(path.join(ROOT, 'js/services/scanner-dss-chart-load-guard.js'), 'utf8'))
+  : PRE_SWING_CHART_CACHE_HELPERS;
 const PRE_OPTION_STREAMER_DIAGNOSTICS = OPTION_STREAMER_DIAGNOSTICS_U.isApplied(PRE_SCANNER_DSS_CHART_LOAD_GUARD)
   ? OPTION_STREAMER_DIAGNOSTICS_U.undoOptionStreamerDiagnostics(
       PRE_SCANNER_DSS_CHART_LOAD_GUARD, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-option-streamer-diagnostics.js'), 'utf8'))
@@ -433,15 +438,21 @@ eq(INDEX.indexOf(ANCHOR_TAG + TAG + INLINE_OPEN) >= 0, true,
 // state is pinned against the layer that now owns it. Without this pair the
 // live document would be checked by nothing here — the gap the assertion-call
 // census caught, because this file gained a peel and no assertions.
-eq(LIVE_INDEX.length, SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_CHARS,
+eq(LIVE_INDEX.length, SWING_CHART_CACHE_HELPERS_U.EXTRACTED_CHARS,
   'the live document is the NEWEST layer\'s extracted length — the message names the\n   // role, not a layer, because naming the layer went stale the next cycle');
-eq(sha256(LIVE_INDEX), SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_SHA256, '…and its digest');
+eq(sha256(LIVE_INDEX), SWING_CHART_CACHE_HELPERS_U.EXTRACTED_SHA256, '…and its digest');
+// Re-terminated with the chain: the pins above moved up to the newest layer, so the
+// layer they used to name is asserted here on the peeled state rather than dropped.
+eq(PRE_SWING_CHART_CACHE_HELPERS.length, SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_CHARS,
+  'peeling the newest layer reaches the DSS chart load guard layer’s extracted length');
+eq(sha256(PRE_SWING_CHART_CACHE_HELPERS), SCANNER_DSS_CHART_LOAD_GUARD_U.EXTRACTED_SHA256,
+  'peeling the newest layer reaches the DSS chart load guard layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_SCANNER_DSS_CHART_LOAD_GUARD.length, OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_CHARS,
-  'peeling the newest layer reaches the option streamer diagnostics layer’s extracted length');
+  'peeling the DSS chart load guard layer reaches the option streamer diagnostics layer’s extracted length');
 eq(sha256(PRE_SCANNER_DSS_CHART_LOAD_GUARD), OPTION_STREAMER_DIAGNOSTICS_U.EXTRACTED_SHA256,
-  'peeling the newest layer reaches the option streamer diagnostics layer’s extracted digest');
+  'peeling the DSS chart load guard layer reaches the option streamer diagnostics layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_OPTION_STREAMER_DIAGNOSTICS.length, BACKEND_POSITIONS_ENRICHED_U.EXTRACTED_CHARS,
@@ -455,7 +466,7 @@ eq(PRE_BACKEND_POSITIONS_ENRICHED.length, RS_QUALITY_CHECK_U.EXTRACTED_CHARS,
 eq(sha256(PRE_BACKEND_POSITIONS_ENRICHED), RS_QUALITY_CHECK_U.EXTRACTED_SHA256,
   'peeling the newest layer reaches the RS quality check’s extracted digest');
 eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((t) => t.src && /^\.\//.test(t.src)).length,
-  LOCAL_SCRIPT_COUNT + 29, '…carrying one more local script for every layer cut since');
+  LOCAL_SCRIPT_COUNT + 30, '…carrying one more local script for every layer cut since');
 {
   const fromGit = git(['show', BASE_SHA + ':index.html']);
   eq(fromGit.length, UNDO.BASE_CHARS, 'the pinned base carries the pre-extraction index.html');
@@ -865,7 +876,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js',
+    ['index.html', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js',
       'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/chart-interactions.js',
       'js/services/journal-snapshot-helpers.js', MODULE_REL, 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and every layer cut after it');
@@ -903,7 +914,7 @@ section('10. Exact production scope, and the temporary audit is gone');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'js/portfolio/portfolio-vega-monitor.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
