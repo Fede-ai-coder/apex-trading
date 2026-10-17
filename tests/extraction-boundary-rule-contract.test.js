@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const SCANNER_DSS_1D_CHART = require('./lib/scanner-dss-1d-chart-undo.js');
 const SCANNER_STOCK_SCORING = require('./lib/scanner-stock-scoring-undo.js');
 const SWING_CHART_CACHE_HELPERS = require('./lib/swing-chart-cache-helpers-undo.js');
 const SCANNER_DSS_CHART_LOAD_GUARD = require('./lib/scanner-dss-chart-load-guard-undo.js');
@@ -212,6 +213,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = SCANNER_DSS_1D_CHART.undoScannerDss1dChart(
+    doc, read('js/ui/scanner-dss-1d-chart.js'));
   doc = SCANNER_STOCK_SCORING.undoScannerStockScoring(
     doc, read('js/services/scanner-stock-scoring.js'));
   doc = SWING_CHART_CACHE_HELPERS.undoSwingChartCacheHelpers(

@@ -132,6 +132,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/scanner-stock-scoring-undo.js');
+const SCANNER_DSS_1D_CHART_U = require('./lib/scanner-dss-1d-chart-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
 // cut was still a recommendation; it is no longer hypothetical.
@@ -422,6 +423,10 @@ const PRIOR_PURE_ASCII_LAYERS = 7;
 const PURE_ASCII_LAYERS = 8;
 const LAYERS_OPENING_ON_BANNER = 25;
 const LAYERS_WITH_A_DEPENDENCY = 22;
+// The count above is the figure AT THIS LAYER. A layer cut after it that also pins a
+// non-empty MONOLITH_DEPENDENCIES adds to the live count, so it is named here and set
+// aside rather than left to make the figure drift.
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['scanner-dss-1d-chart-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 1631;
@@ -475,10 +480,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('SCANNER STOCK SCORING — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
-// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
-// predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = SCANNER_DSS_1D_CHART_U.isApplied(HEAD_INDEX)
+  ? SCANNER_DSS_1D_CHART_U.undoScannerDss1dChart(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/scanner-dss-1d-chart.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1522,13 +1534,16 @@ section('8. Where this layer sits, and what it changed');
       if (!m) return false;
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     }).map((x) => x.f);
-  eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
-    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
-  ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) < 0, '…this contract NOT being one of them…');
+  ok(LATER_CONTRACTS_WITH_A_DEPENDENCY.every((f) => contractsPinning.indexOf(f) >= 0),
+    'every layer cut after this one that pins a dependency is among the contracts counted…');
+  const atThisLayer = contractsPinning.filter((f) => LATER_CONTRACTS_WITH_A_DEPENDENCY.indexOf(f) < 0);
+  eq(atThisLayer.length, LAYERS_WITH_A_DEPENDENCY,
+    '…and LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES at this layer, counted over the suite without them…');
+  ok(atThisLayer.indexOf(path.basename(CONTRACT_REL)) < 0, '…this contract NOT being one of them…');
   eq(MONOLITH_DEPENDENCIES.length, 0, '…since it pins an EMPTY list, which is why the count did not move, as the audit forecast…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
-    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
-  '…and the figure the contract that carries it pins is that same LAYERS_WITH_A_DEPENDENCY');
+    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY + LATER_CONTRACTS_WITH_A_DEPENDENCY.length,
+  '…and the contract that carries the live figure pins it with the later layers included');
 }
 // WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
 // anything moved, and §9 holds the shipped document to them.
@@ -1548,13 +1563,16 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer
+  // moved exactly the audited bytes and nothing else, so the claim is inverted
+  // rather than dropped. It now reads against a base that a LATER layer has also
+  // moved past, so the footprint is the document, this layer's module, and the
+  // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/ui/scanner-dss-1d-chart.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
