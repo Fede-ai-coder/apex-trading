@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_STALE_MARK_SQUEEZE_STATE = require('./portfolio-stale-mark-squeeze-state-undo.js');
 const SCANNER_DSS_1D_CHART = require('./scanner-dss-1d-chart-undo.js');
 const SCANNER_STOCK_SCORING = require('./scanner-stock-scoring-undo.js');
 const SWING_CHART_CACHE_HELPERS = require('./swing-chart-cache-helpers-undo.js');
@@ -237,6 +238,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-stale-mark-squeeze-state.js'),
+  'utf8'
+);
 const SCANNER_DSS_1D_CHART_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'ui', 'scanner-dss-1d-chart.js'),
   'utf8'
@@ -470,10 +475,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preScannerDss1dChart = SCANNER_DSS_1D_CHART.isApplied(html)
-    ? SCANNER_DSS_1D_CHART.undoScannerDss1dChart(
-      html, SCANNER_DSS_1D_CHART_SOURCE)
+  const prePortfolioStaleMarkSqueezeState = PORTFOLIO_STALE_MARK_SQUEEZE_STATE.isApplied(html)
+    ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE.undoPortfolioStaleMarkSqueezeState(
+      html, PORTFOLIO_STALE_MARK_SQUEEZE_STATE_SOURCE)
     : html;
+  const preScannerDss1dChart = SCANNER_DSS_1D_CHART.isApplied(prePortfolioStaleMarkSqueezeState)
+    ? SCANNER_DSS_1D_CHART.undoScannerDss1dChart(
+      prePortfolioStaleMarkSqueezeState, SCANNER_DSS_1D_CHART_SOURCE)
+    : prePortfolioStaleMarkSqueezeState;
   const preScannerStockScoring = SCANNER_STOCK_SCORING.isApplied(preScannerDss1dChart)
     ? SCANNER_STOCK_SCORING.undoScannerStockScoring(
       preScannerDss1dChart, SCANNER_STOCK_SCORING_SOURCE)

@@ -133,6 +133,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/scanner-dss-1d-chart-undo.js');
+const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
 // cut was still a recommendation; it is no longer hypothetical.
@@ -414,6 +415,9 @@ const PURE_ASCII_LAYERS = 8;
 const LAYERS_OPENING_ON_BANNER = 25;
 const PRIOR_LAYERS_WITH_A_DEPENDENCY = 22;
 const LAYERS_WITH_A_DEPENDENCY = 23;
+// The contract of the layer cut after this one. It pins an empty MONOLITH_DEPENDENCIES, so the live count
+// of layers that pin a dependency equals the figure above; §8 asserts both halves of that.
+const LATER_CONTRACT = 'tests/portfolio-stale-mark-squeeze-state-boundary-contract.test.js';
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 3504;
@@ -467,10 +471,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('SCANNER DSS 1D CHART — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
-// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
-// predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1673,7 +1684,8 @@ section('8. Where this layer sits, and what it changed');
   // THE THIRD CHAIN-WIDE COUNT, and the ONE THAT MOVED: layers whose contract pins a
   // non-empty MONOLITH_DEPENDENCIES. Counted over the suite with this contract in it
   // and again without it, then compared with the figure the contract that carries it
-  // pins. This is the newest layer, so no later contract is set aside.
+  // pins. A layer cut after this one that also pinned a dependency would be set aside
+  // by name; the one that has been cut pins an empty list, which is asserted.
   const contractsPinning = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => /-boundary-contract\.test\.js$/.test(f))
     .map((f) => ({ f, src: fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8') }))
@@ -1685,6 +1697,12 @@ section('8. Where this layer sits, and what it changed');
   eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
     'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
   ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) >= 0, '…this contract being one of them…');
+  {
+    const later = fs.readFileSync(path.join(ROOT, LATER_CONTRACT), 'utf8');
+    eq(later.match(/^const MONOLITH_DEPENDENCIES = (\[[^\]]*\]);$/m)[1], '[]',
+      '…the contract of the layer cut after this one pinning an EMPTY dependency list, so it is not among them and sets nothing aside…');
+    eq(contractsPinning.indexOf(path.basename(LATER_CONTRACT)), -1, '…and it is indeed not among the contracts counted…');
+  }
   eq(contractsPinning.length - 1, PRIOR_LAYERS_WITH_A_DEPENDENCY,
     '…so the count before this layer was PRIOR_LAYERS_WITH_A_DEPENDENCY, and it moved up by exactly one, as the audit forecast…');
   ok(MONOLITH_DEPENDENCIES.length > 0, '…this layer pinning a non-empty list, which is why it moved…');
@@ -1710,13 +1728,16 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer
+  // moved exactly the audited bytes and nothing else, so the claim is inverted
+  // rather than dropped. It now reads against a base that a LATER layer has also
+  // moved past, so the footprint is the document, this layer's module, and the
+  // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
