@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const SCANNER_DSS_1D_CHART_U = require('./lib/scanner-dss-1d-chart-undo.js');
 const SCANNER_STOCK_SCORING_U = require('./lib/scanner-stock-scoring-undo.js');
 const SWING_CHART_CACHE_HELPERS_U = require('./lib/swing-chart-cache-helpers-undo.js');
 const SCANNER_DSS_CHART_LOAD_GUARD_U = require('./lib/scanner-dss-chart-load-guard-undo.js');
@@ -485,10 +486,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_SCANNER_STOCK_SCORING = SCANNER_STOCK_SCORING_U.isApplied(SHIPPED_INDEX)
-  ? SCANNER_STOCK_SCORING_U.undoScannerStockScoring(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/scanner-stock-scoring.js'), 'utf8'))
+const PRE_SCANNER_DSS_1D_CHART = SCANNER_DSS_1D_CHART_U.isApplied(SHIPPED_INDEX)
+  ? SCANNER_DSS_1D_CHART_U.undoScannerDss1dChart(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/ui/scanner-dss-1d-chart.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_SCANNER_STOCK_SCORING = SCANNER_STOCK_SCORING_U.isApplied(PRE_SCANNER_DSS_1D_CHART)
+  ? SCANNER_STOCK_SCORING_U.undoScannerStockScoring(
+      PRE_SCANNER_DSS_1D_CHART, fs.readFileSync(path.join(ROOT, 'js/services/scanner-stock-scoring.js'), 'utf8'))
+  : PRE_SCANNER_DSS_1D_CHART;
 const PRE_SWING_CHART_CACHE_HELPERS = SWING_CHART_CACHE_HELPERS_U.isApplied(PRE_SCANNER_STOCK_SCORING)
   ? SWING_CHART_CACHE_HELPERS_U.undoSwingChartCacheHelpers(
       PRE_SCANNER_STOCK_SCORING, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-helpers.js'), 'utf8'))
