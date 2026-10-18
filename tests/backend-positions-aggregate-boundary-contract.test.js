@@ -141,7 +141,7 @@ const UNDO_REL = 'tests/lib/backend-positions-aggregate-undo.js';
 const AUDIT_REL = 'tests/temporary-backend-positions-aggregate-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/backend-positions-aggregate-audit.spec.js';
 const CONTRACT_SPEC_REL = 'tests/mutation-specs/backend-positions-aggregate-contract.spec.js';
-const TEST_FILE_COUNT = 187;
+const TEST_FILE_COUNT = 188;
 const LOCAL_SCRIPT_COUNT = 77;
 const MODULE_POSITION = 76;
 
