@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const JOURNAL_EXPIRY_AUDIT = require('./journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE = require('./portfolio-stale-mark-squeeze-state-undo.js');
 const SCANNER_DSS_1D_CHART = require('./scanner-dss-1d-chart-undo.js');
 const SCANNER_STOCK_SCORING = require('./scanner-stock-scoring-undo.js');
@@ -238,6 +239,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const JOURNAL_EXPIRY_AUDIT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'journal-expiry-audit.js'),
+  'utf8'
+);
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-stale-mark-squeeze-state.js'),
   'utf8'
@@ -475,10 +480,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioStaleMarkSqueezeState = PORTFOLIO_STALE_MARK_SQUEEZE_STATE.isApplied(html)
-    ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE.undoPortfolioStaleMarkSqueezeState(
-      html, PORTFOLIO_STALE_MARK_SQUEEZE_STATE_SOURCE)
+  const preJournalExpiryAudit = JOURNAL_EXPIRY_AUDIT.isApplied(html)
+    ? JOURNAL_EXPIRY_AUDIT.undoJournalExpiryAudit(
+      html, JOURNAL_EXPIRY_AUDIT_SOURCE)
     : html;
+  const prePortfolioStaleMarkSqueezeState = PORTFOLIO_STALE_MARK_SQUEEZE_STATE.isApplied(preJournalExpiryAudit)
+    ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE.undoPortfolioStaleMarkSqueezeState(
+      preJournalExpiryAudit, PORTFOLIO_STALE_MARK_SQUEEZE_STATE_SOURCE)
+    : preJournalExpiryAudit;
   const preScannerDss1dChart = SCANNER_DSS_1D_CHART.isApplied(prePortfolioStaleMarkSqueezeState)
     ? SCANNER_DSS_1D_CHART.undoScannerDss1dChart(
       prePortfolioStaleMarkSqueezeState, SCANNER_DSS_1D_CHART_SOURCE)
