@@ -304,6 +304,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/ui/scanner-dss-1d-chart.js',
   './js/portfolio/portfolio-stale-mark-squeeze-state.js',
   './js/services/journal-expiry-audit.js',
+  './js/portfolio/portfolio-regime-badge-html.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -1265,6 +1266,11 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const SCANNER_STOCK_SCORING_RELOCATED_ABOVE = require('./lib/scanner-stock-scoring-undo.js').RAW_CHARS;
   eq(SCANNER_STOCK_SCORING_RELOCATED_ABOVE, 1694,
      'the scanner stock scoring relocation removed exactly 1,694 chars from the monolith');
+  // The portfolio regime badge HTML cut sits at monolith offset 68,905, ABOVE both
+  // declarations as well, so it joins the sum.
+  const PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE = require('./lib/portfolio-regime-badge-html-undo.js').RAW_CHARS;
+  eq(PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE, 2031,
+     'the portfolio regime badge HTML relocation removed exactly 2,031 chars from the monolith');
   // The chart-interactions cut of #449 is NOT a term here: its region began at
   // 164,995 in monolith coordinates, and both declarations below sit ABOVE that,
   // so removing it shifts neither. "Relocated ABOVE" means above THESE, not
@@ -1273,7 +1279,7 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const RELOCATED_ABOVE = MCX_RELOCATED_ABOVE + MCX2_RELOCATED_ABOVE + PORTFOLIO_RELOCATED_ABOVE +
     DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE + SCANNER_IVR_RELOCATED_ABOVE +
     SCANNER_EARNINGS_RELOCATED_ABOVE + SCANNER_DXLINK_PRICES_RELOCATED_ABOVE +
-    SCANNER_STOCK_SCORING_RELOCATED_ABOVE;
+    SCANNER_STOCK_SCORING_RELOCATED_ABOVE + PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE;
   const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
@@ -2864,7 +2870,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 103,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 104,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
