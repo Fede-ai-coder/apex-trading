@@ -134,6 +134,7 @@ const {
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/scanner-dss-1d-chart-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
+const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
 // cut was still a recommendation; it is no longer hypothetical.
@@ -478,10 +479,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
+const PRE_JOURNAL_EXPIRY_AUDIT = JOURNAL_EXPIRY_AUDIT_U.isApplied(HEAD_INDEX)
+  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(PRE_JOURNAL_EXPIRY_AUDIT)
+  ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
+      PRE_JOURNAL_EXPIRY_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
+  : PRE_JOURNAL_EXPIRY_AUDIT;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1735,7 +1740,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,

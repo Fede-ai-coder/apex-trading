@@ -130,6 +130,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
+const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
 // cut was still a recommendation; it is no longer hypothetical.
@@ -416,6 +417,9 @@ const PRIOR_PURE_ASCII_LAYERS = 8;
 const PURE_ASCII_LAYERS = 8;
 const LAYERS_OPENING_ON_BANNER = 25;
 const LAYERS_WITH_A_DEPENDENCY = 23;
+// The contract of the layer cut after this one. It pins an empty MONOLITH_DEPENDENCIES, so the live count
+// of layers that pin a dependency equals the figure above; §8 asserts both halves of that.
+const LATER_CONTRACT = 'tests/journal-expiry-audit-boundary-contract.test.js';
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 1623;
@@ -469,10 +473,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('PORTFOLIO STALE MARK + SQUEEZE STATE — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
-// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
-// predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = JOURNAL_EXPIRY_AUDIT_U.isApplied(HEAD_INDEX)
+  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1372,7 +1383,7 @@ section('7. It loads bare, both functions are pure, and the decision tables hold
 }
 {
   const ctx = vm.createContext(Object.create(null));
-  vm.runInContext(BODY, ctx);
+  vm.runInContext(MODULE, ctx);
   eq(Object.getOwnPropertyNames(ctx).sort(), VM_GLOBALS.slice().sort(),
     'it LOADS in a completely bare VM and declares exactly its two owners');
   eq(VM_GLOBALS.map((n) => vm.runInContext(n + '.constructor.name', ctx)), ['Function', 'Function'],
@@ -1481,6 +1492,12 @@ section('8. Where this layer sits, and what it changed');
   eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
     'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
   ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) < 0, '…this contract not being one of them…');
+  {
+    const later = fs.readFileSync(path.join(ROOT, LATER_CONTRACT), 'utf8');
+    eq(later.match(/^const MONOLITH_DEPENDENCIES = (\[[^\]]*\]);$/m)[1], '[]',
+      '…the contract of the layer cut after this one pinning an EMPTY dependency list as well, so it is not among them either and sets nothing aside…');
+    eq(contractsPinning.indexOf(path.basename(LATER_CONTRACT)), -1, '…and it is indeed not among the contracts counted…');
+  }
   eq(MONOLITH_DEPENDENCIES.length, 0, '…it pinning an EMPTY list, which is why the count did not move, as the audit forecast…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
     .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
@@ -1505,13 +1522,16 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer
+  // moved exactly the audited bytes and nothing else, so the claim is inverted
+  // rather than dropped. It now reads against a base that a LATER layer has also
+  // moved past, so the footprint is the document, this layer's module, and the
+  // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/services/journal-expiry-audit.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),

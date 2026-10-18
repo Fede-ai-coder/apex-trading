@@ -186,6 +186,7 @@ const LIVE_INDEX = APP_LOADER.loadIndexHtml();
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
 const SCANNER_DSS_1D_CHART_U = require('./lib/scanner-dss-1d-chart-undo.js');
 const SCANNER_STOCK_SCORING_U = require('./lib/scanner-stock-scoring-undo.js');
@@ -226,10 +227,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_STALE_MARK_SQUEEZE_STATE = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
+const PRE_JOURNAL_EXPIRY_AUDIT = JOURNAL_EXPIRY_AUDIT_U.isApplied(LIVE_INDEX)
+  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_STALE_MARK_SQUEEZE_STATE = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(PRE_JOURNAL_EXPIRY_AUDIT)
+  ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
+      PRE_JOURNAL_EXPIRY_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
+  : PRE_JOURNAL_EXPIRY_AUDIT;
 const PRE_SCANNER_DSS_1D_CHART = SCANNER_DSS_1D_CHART_U.isApplied(PRE_PORTFOLIO_STALE_MARK_SQUEEZE_STATE)
   ? SCANNER_DSS_1D_CHART_U.undoScannerDss1dChart(
       PRE_PORTFOLIO_STALE_MARK_SQUEEZE_STATE, fs.readFileSync(path.join(ROOT, 'js/ui/scanner-dss-1d-chart.js'), 'utf8'))
