@@ -146,6 +146,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_REGIME_BADGE_HTML_U = require('./lib/portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
 const SCANNER_DSS_1D_CHART_U = require('./lib/scanner-dss-1d-chart-undo.js');
@@ -285,7 +286,7 @@ const INJECTION_POINTS = [
 // TWO of them guard every reference on their own list, this one and the one
 // that shipped before it. That is an `eq` over the set with the precedent
 // named, not an adjective about this one.
-const MODULES_PINNING_DEPENDENCIES = 23;
+const MODULES_PINNING_DEPENDENCIES = 24;
 const MODULES_GUARDING_EVERY_REFERENCE = 3;
 const MODULE_ALREADY_GUARDING = 'js/services/swing-weekly-candles.js';
 // A module that shipped AFTER this one and also guards every reference it makes: it reads S
@@ -484,10 +485,14 @@ console.log('relocation only · audited by #468 · base=' + BASE_SHA);
 // again this layer's shipped document rather than the head of the tree. Every
 // older contract in this chain already carries the same idiom.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_JOURNAL_EXPIRY_AUDIT = JOURNAL_EXPIRY_AUDIT_U.isApplied(HEAD_INDEX)
-  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
+const PRE_PORTFOLIO_REGIME_BADGE_HTML = PORTFOLIO_REGIME_BADGE_HTML_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_REGIME_BADGE_HTML_U.undoPortfolioRegimeBadgeHtml(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-regime-badge-html.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_JOURNAL_EXPIRY_AUDIT = JOURNAL_EXPIRY_AUDIT_U.isApplied(PRE_PORTFOLIO_REGIME_BADGE_HTML)
+  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
+      PRE_PORTFOLIO_REGIME_BADGE_HTML, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
+  : PRE_PORTFOLIO_REGIME_BADGE_HTML;
 const PRE_PORTFOLIO_STALE_MARK_SQUEEZE_STATE = PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.isApplied(PRE_JOURNAL_EXPIRY_AUDIT)
   ? PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U.undoPortfolioStaleMarkSqueezeState(
       PRE_JOURNAL_EXPIRY_AUDIT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-stale-mark-squeeze-state.js'), 'utf8'))
@@ -1553,7 +1558,7 @@ section('9. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is index.html, this module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so
@@ -1599,7 +1604,7 @@ section('9. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' ||
+    rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');
   // THE RATCHET, which this phase does not move: the audit leaves as this

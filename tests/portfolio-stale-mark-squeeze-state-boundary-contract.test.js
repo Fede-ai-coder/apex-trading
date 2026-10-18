@@ -130,6 +130,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
+const PORTFOLIO_REGIME_BADGE_HTML_U = require('./lib/portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
@@ -420,6 +421,9 @@ const LAYERS_WITH_A_DEPENDENCY = 23;
 // The contract of the layer cut after this one. It pins an empty MONOLITH_DEPENDENCIES, so the live count
 // of layers that pin a dependency equals the figure above; §8 asserts both halves of that.
 const LATER_CONTRACT = 'tests/journal-expiry-audit-boundary-contract.test.js';
+// The later layer that pins a NON-EMPTY list instead: it IS among the contracts counted,
+// and is set aside to recover the figure at this layer.
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['portfolio-regime-badge-html-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 1623;
@@ -480,10 +484,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = JOURNAL_EXPIRY_AUDIT_U.isApplied(HEAD_INDEX)
-  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
+const PRE_PORTFOLIO_REGIME_BADGE_HTML = PORTFOLIO_REGIME_BADGE_HTML_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_REGIME_BADGE_HTML_U.undoPortfolioRegimeBadgeHtml(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-regime-badge-html.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = JOURNAL_EXPIRY_AUDIT_U.isApplied(PRE_PORTFOLIO_REGIME_BADGE_HTML)
+  ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
+      PRE_PORTFOLIO_REGIME_BADGE_HTML, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
+  : PRE_PORTFOLIO_REGIME_BADGE_HTML;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1489,8 +1497,11 @@ section('8. Where this layer sits, and what it changed');
       if (!m) return false;
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     }).map((x) => x.f);
-  eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
-    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
+  ok(LATER_CONTRACTS_WITH_A_DEPENDENCY.every((f) => contractsPinning.indexOf(f) >= 0),
+    'every later layer that pins a non-empty list is among the contracts counted…');
+  const atThisLayer = contractsPinning.filter((f) => LATER_CONTRACTS_WITH_A_DEPENDENCY.indexOf(f) < 0);
+  eq(atThisLayer.length, LAYERS_WITH_A_DEPENDENCY,
+    '…and LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES at this layer, counted over the suite without them…');
   ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) < 0, '…this contract not being one of them…');
   {
     const later = fs.readFileSync(path.join(ROOT, LATER_CONTRACT), 'utf8');
@@ -1500,8 +1511,8 @@ section('8. Where this layer sits, and what it changed');
   }
   eq(MONOLITH_DEPENDENCIES.length, 0, '…it pinning an EMPTY list, which is why the count did not move, as the audit forecast…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
-    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
-  '…and the figure the contract that carries it pins is that same LAYERS_WITH_A_DEPENDENCY');
+    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY + LATER_CONTRACTS_WITH_A_DEPENDENCY.length,
+  '…and the figure the contract that carries the live count pins now, with the later layers included');
 }
 // WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
 // anything moved, and §9 holds the shipped document to them.
@@ -1529,7 +1540,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/services/journal-expiry-audit.js'].sort(),
+    ['index.html', MODULE_REL, 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
