@@ -305,6 +305,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-stale-mark-squeeze-state.js',
   './js/services/journal-expiry-audit.js',
   './js/portfolio/portfolio-regime-badge-html.js',
+  './js/portfolio/portfolio-backend-squeeze-extract.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -1271,6 +1272,8 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
   const PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE = require('./lib/portfolio-regime-badge-html-undo.js').RAW_CHARS;
   eq(PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE, 2031,
      'the portfolio regime badge HTML relocation removed exactly 2,031 chars from the monolith');
+  // The backend squeeze extract cut sits at monolith offset 905,366, BELOW both
+  // declarations, so unlike the layers above it is not a term in this sum.
   // The chart-interactions cut of #449 is NOT a term here: its region began at
   // 164,995 in monolith coordinates, and both declarations below sit ABOVE that,
   // so removing it shifts neither. "Relocated ABOVE" means above THESE, not
@@ -2870,7 +2873,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 104,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 105,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');

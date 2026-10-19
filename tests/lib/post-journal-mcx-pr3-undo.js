@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = require('./portfolio-backend-squeeze-extract-undo.js');
 const PORTFOLIO_REGIME_BADGE_HTML = require('./portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT = require('./journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE = require('./portfolio-stale-mark-squeeze-state-undo.js');
@@ -240,6 +241,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-backend-squeeze-extract.js'),
+  'utf8'
+);
 const PORTFOLIO_REGIME_BADGE_HTML_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-regime-badge-html.js'),
   'utf8'
@@ -485,10 +490,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioRegimeBadgeHtml = PORTFOLIO_REGIME_BADGE_HTML.isApplied(html)
-    ? PORTFOLIO_REGIME_BADGE_HTML.undoPortfolioRegimeBadgeHtml(
-      html, PORTFOLIO_REGIME_BADGE_HTML_SOURCE)
+  const prePortfolioBackendSqueezeExtract = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.isApplied(html)
+    ? PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.undoPortfolioBackendSqueezeExtract(
+      html, PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_SOURCE)
     : html;
+  const prePortfolioRegimeBadgeHtml = PORTFOLIO_REGIME_BADGE_HTML.isApplied(prePortfolioBackendSqueezeExtract)
+    ? PORTFOLIO_REGIME_BADGE_HTML.undoPortfolioRegimeBadgeHtml(
+      prePortfolioBackendSqueezeExtract, PORTFOLIO_REGIME_BADGE_HTML_SOURCE)
+    : prePortfolioBackendSqueezeExtract;
   const preJournalExpiryAudit = JOURNAL_EXPIRY_AUDIT.isApplied(prePortfolioRegimeBadgeHtml)
     ? JOURNAL_EXPIRY_AUDIT.undoJournalExpiryAudit(
       prePortfolioRegimeBadgeHtml, JOURNAL_EXPIRY_AUDIT_SOURCE)

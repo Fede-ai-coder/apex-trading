@@ -143,6 +143,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U = require('./lib/portfolio-backend-squeeze-extract-undo.js');
 const PORTFOLIO_REGIME_BADGE_HTML_U = require('./lib/portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT_U = require('./lib/journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
@@ -185,10 +186,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_REGIME_BADGE_HTML = PORTFOLIO_REGIME_BADGE_HTML_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_REGIME_BADGE_HTML_U.undoPortfolioRegimeBadgeHtml(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-regime-badge-html.js'), 'utf8'))
+const PRE_PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U.undoPortfolioBackendSqueezeExtract(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-squeeze-extract.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_REGIME_BADGE_HTML = PORTFOLIO_REGIME_BADGE_HTML_U.isApplied(PRE_PORTFOLIO_BACKEND_SQUEEZE_EXTRACT)
+  ? PORTFOLIO_REGIME_BADGE_HTML_U.undoPortfolioRegimeBadgeHtml(
+      PRE_PORTFOLIO_BACKEND_SQUEEZE_EXTRACT, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-regime-badge-html.js'), 'utf8'))
+  : PRE_PORTFOLIO_BACKEND_SQUEEZE_EXTRACT;
 const PRE_JOURNAL_EXPIRY_AUDIT = JOURNAL_EXPIRY_AUDIT_U.isApplied(PRE_PORTFOLIO_REGIME_BADGE_HTML)
   ? JOURNAL_EXPIRY_AUDIT_U.undoJournalExpiryAudit(
       PRE_PORTFOLIO_REGIME_BADGE_HTML, fs.readFileSync(path.join(ROOT, 'js/services/journal-expiry-audit.js'), 'utf8'))
@@ -650,7 +655,7 @@ section('11. Production footprint');
   eq(tracked.sort(), ['js/portfolio/backend-full-refresh-validation.js',
     'js/portfolio/backend-portfolios.js',
     'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/backend-positions-enriched.js',
-    'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js',
+    'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-data-fetch.js',
     'js/portfolio/portfolio-dxlink-greeks.js',
     'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-spy-price.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-vega-monitor.js'],
     'js/portfolio holds exactly the portfolio modules enumerated above and nothing else');
