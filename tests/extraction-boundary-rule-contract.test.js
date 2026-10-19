@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = require('./lib/portfolio-backend-squeeze-extract-undo.js');
 const PORTFOLIO_REGIME_BADGE_HTML = require('./lib/portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT = require('./lib/journal-expiry-audit-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
@@ -216,6 +217,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.undoPortfolioBackendSqueezeExtract(
+    doc, read('js/portfolio/portfolio-backend-squeeze-extract.js'));
   doc = PORTFOLIO_REGIME_BADGE_HTML.undoPortfolioRegimeBadgeHtml(
     doc, read('js/portfolio/portfolio-regime-badge-html.js'));
   doc = JOURNAL_EXPIRY_AUDIT.undoJournalExpiryAudit(
