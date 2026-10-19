@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_BETA_MISSING_REASON = require('./portfolio-beta-missing-reason-undo.js');
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = require('./portfolio-backend-squeeze-extract-undo.js');
 const PORTFOLIO_REGIME_BADGE_HTML = require('./portfolio-regime-badge-html-undo.js');
 const JOURNAL_EXPIRY_AUDIT = require('./journal-expiry-audit-undo.js');
@@ -241,6 +242,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_BETA_MISSING_REASON_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-beta-missing-reason.js'),
+  'utf8'
+);
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-backend-squeeze-extract.js'),
   'utf8'
@@ -490,10 +495,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const prePortfolioBackendSqueezeExtract = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.isApplied(html)
-    ? PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.undoPortfolioBackendSqueezeExtract(
-      html, PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_SOURCE)
+  const prePortfolioBetaMissingReason = PORTFOLIO_BETA_MISSING_REASON.isApplied(html)
+    ? PORTFOLIO_BETA_MISSING_REASON.undoPortfolioBetaMissingReason(
+      html, PORTFOLIO_BETA_MISSING_REASON_SOURCE)
     : html;
+  const prePortfolioBackendSqueezeExtract = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.isApplied(prePortfolioBetaMissingReason)
+    ? PORTFOLIO_BACKEND_SQUEEZE_EXTRACT.undoPortfolioBackendSqueezeExtract(
+      prePortfolioBetaMissingReason, PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_SOURCE)
+    : prePortfolioBetaMissingReason;
   const prePortfolioRegimeBadgeHtml = PORTFOLIO_REGIME_BADGE_HTML.isApplied(prePortfolioBackendSqueezeExtract)
     ? PORTFOLIO_REGIME_BADGE_HTML.undoPortfolioRegimeBadgeHtml(
       prePortfolioBackendSqueezeExtract, PORTFOLIO_REGIME_BADGE_HTML_SOURCE)
