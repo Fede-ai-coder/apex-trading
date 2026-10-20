@@ -84,6 +84,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-technical-alignment-debug-undo.js');
+const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U = require('./lib/portfolio-backend-squeeze-extract-undo.js');
@@ -177,7 +178,7 @@ const BY_CONSUMER = 1;
 const EVALUATION_TIME_READS = [];
 const TOP_LEVEL_STATEMENT_LINES = 0;
 const VM_GLOBALS = 2;
-const LAYERS_WITH_A_DEPENDENCY = 26;
+const LAYERS_WITH_A_DEPENDENCY = 27;
 const HELPER_CALL_SITES = 1;
 const PROMISE_ALL_SITES = 22;
 
@@ -311,10 +312,14 @@ console.log('relocation only · audited by #460 · base=' + BASE_SHA);
 // FIRST, and LIVE_* below means this layer's own shipped document — the one it
 // was written against — not whatever the head of the chain looks like today.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(HEAD_INDEX)
-  ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
+const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(HEAD_INDEX)
+  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(PRE_AI_SCAN_CONTEXT)
+  ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
+      PRE_AI_SCAN_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
+  : PRE_AI_SCAN_CONTEXT;
 const PRE_PORTFOLIO_BETA_MISSING_REASON = PORTFOLIO_BETA_MISSING_REASON_U.isApplied(PRE_OPTION_CHAIN_ERROR_HELPERS)
   ? PORTFOLIO_BETA_MISSING_REASON_U.undoPortfolioBetaMissingReason(
       PRE_OPTION_CHAIN_ERROR_HELPERS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-beta-missing-reason.js'), 'utf8'))
@@ -1113,7 +1118,7 @@ section('8. Reachability, the chain, and exact production scope');
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
   eq(changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')),
-    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js'].sort(),
     'production footprint is exactly index.html, this layer\'s module, and the module of every layer cut after it');
   ok(changed.indexOf(CONTRACT_REL) >= 0, 'the permanent contract is part of the change');
   // CONTRACT_REL NAMES THIS FILE, and until #461's mutation pass nothing said so.
@@ -1149,7 +1154,7 @@ section('8. Reachability, the chain, and exact production scope');
   ok(!changed.some((rel) => rel.startsWith('config/') || rel.startsWith('contracts/')),
     'no backend/model configuration changed');
   ok(changed.every((rel) => rel === 'index.html' || rel === MODULE_REL ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' || rel === 'js/services/option-chain-error-helpers.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' || rel === 'js/services/option-chain-error-helpers.js' || rel === 'js/services/ai-scan-context.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
   'every other changed path is a test artifact');

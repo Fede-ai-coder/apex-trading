@@ -1468,6 +1468,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 <script src="./js/portfolio/portfolio-backend-squeeze-extract.js"></script>
 <script src="./js/portfolio/portfolio-beta-missing-reason.js"></script>
 <script src="./js/services/option-chain-error-helpers.js"></script>
+<script src="./js/services/ai-scan-context.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -12146,9 +12147,6 @@ function removeEl(id){var e=document.getElementById(id);if(e)e.remove();}
 function hk(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}}
 function quickAsk(text){document.getElementById('ci').value=text;sendMsg();}
 function rulesCtx(){return Object.entries(S.tradingRules).map(function(e){return e[0]+': '+e[1];}).join('\n');}
-function scanCtx(limit){limit=limit||6;if(!S.scanData.length)return 'No scan data. Ask user to run scan first.';return S.scanData.slice(0,limit).map(function(d){var earningsNote='';if(d.nextEarnings){var dte=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);earningsNote=' EARNINGS_DATE='+d.nextEarnings+' DAYS_TO_EARNINGS='+dte+(dte<=45?' ***EARNINGS WITHIN OPTIONS DTE***':'');}return d.ticker+': price=$'+d.price+' score='+d.score+' signal='+d.signal+' RSI='+d.rsi+' MACD='+d.macd+' BB_upper=$'+(d.bbUpper||'N/A')+' BB_lower=$'+(d.bbLower||'N/A')+' BB_pos='+d.bbPos+' Squeeze='+d.squeeze+' HVR='+d.hvRank+'%'+earningsNote+' MA200dist='+d.ma200dist;}).join('\n');}
-function tickerCtx(ticker){var d=S.scanData.find(function(x){return x.ticker===ticker;});if(!d)return 'Ticker not in scan data.';var earningsNote='';if(d.nextEarnings){var dte=Math.round((new Date(d.nextEarnings)-Date.now())/86400000);earningsNote=' | EARNINGS_DATE='+d.nextEarnings+' | DAYS_TO_EARNINGS='+dte+(dte<=45?' | ***EARNINGS WITHIN OPTIONS DTE — HIGH RISK***':'');}return 'FULL DATA '+d.ticker+': price=$'+d.price+' change='+d.change+' score='+d.score+'/100 signal='+d.signal+' RSI='+d.rsi+' MACD='+d.macd+' BB_upper=$'+(d.bbUpper||'N/A')+' BB_SMA20=$'+(d.ma20||'N/A')+' BB_lower=$'+(d.bbLower||'N/A')+' BB_pos='+d.bbPos+' Squeeze='+d.squeeze+' HVR='+d.hvRank+'%'+earningsNote+' vs_MA20='+d.ma20dist+' vs_MA50='+d.ma50dist+' vs_MA200='+d.ma200dist+(d.ivRank!==null&&d.ivRank!==undefined?' IVR_real='+d.ivRank.toFixed(0):'')+(d.beta?' beta='+d.beta:'');}
-
 async function sendMsg(){
   var inp=document.getElementById('ci');var text=inp.value.trim();if(!text)return;
   inp.value='';appendMsg('user','YOU',text);

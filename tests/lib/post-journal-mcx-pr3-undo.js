@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const AI_SCAN_CONTEXT = require('./ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS = require('./option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON = require('./portfolio-beta-missing-reason-undo.js');
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = require('./portfolio-backend-squeeze-extract-undo.js');
@@ -243,6 +244,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const AI_SCAN_CONTEXT_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'ai-scan-context.js'),
+  'utf8'
+);
 const OPTION_CHAIN_ERROR_HELPERS_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'option-chain-error-helpers.js'),
   'utf8'
@@ -500,10 +505,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preOptionChainErrorHelpers = OPTION_CHAIN_ERROR_HELPERS.isApplied(html)
-    ? OPTION_CHAIN_ERROR_HELPERS.undoOptionChainErrorHelpers(
-      html, OPTION_CHAIN_ERROR_HELPERS_SOURCE)
+  const preAiScanContext = AI_SCAN_CONTEXT.isApplied(html)
+    ? AI_SCAN_CONTEXT.undoAiScanContext(
+      html, AI_SCAN_CONTEXT_SOURCE)
     : html;
+  const preOptionChainErrorHelpers = OPTION_CHAIN_ERROR_HELPERS.isApplied(preAiScanContext)
+    ? OPTION_CHAIN_ERROR_HELPERS.undoOptionChainErrorHelpers(
+      preAiScanContext, OPTION_CHAIN_ERROR_HELPERS_SOURCE)
+    : preAiScanContext;
   const prePortfolioBetaMissingReason = PORTFOLIO_BETA_MISSING_REASON.isApplied(preOptionChainErrorHelpers)
     ? PORTFOLIO_BETA_MISSING_REASON.undoPortfolioBetaMissingReason(
       preOptionChainErrorHelpers, PORTFOLIO_BETA_MISSING_REASON_SOURCE)
