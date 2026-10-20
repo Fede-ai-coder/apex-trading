@@ -1,100 +1,109 @@
 'use strict';
 
 // ═════════════════════════════════════════════════════════════════════════════
-// AI SCAN CONTEXT EXTRACTION — TEMPORARY BOUNDARY AUDIT (Phase 1).
+// AI SCAN CONTEXT — PERMANENT BOUNDARY CONTRACT.
 //
-// MEASUREMENT ONLY. Production stays byte-identical to the base; the next PR
-// moves the bytes and deletes this file, replaced one-for-one by the permanent
-// contract it becomes.
+// THE CUT IS MADE. [628563,630103) in monolith coordinates — 1,541 units raw and
+// 1,540 of body, TWO owners, synchronous — now lives in js/services/ai-scan-context.js.
+// `scanCtx(limit)` turns the first rows of the scan results, six when no limit is given,
+// into the lines of the prompt the chat sends to the model; `tickerCtx(ticker)` does the
+// same, at full width, for one ticker. Each notes an upcoming earnings date and flags it
+// when it falls within 45 days. Both read `S.scanData` and nothing else of the monolith,
+// and only when they are called. Neither owner has a comment line, and each is ONE line
+// of source; the block opens on the declaration of the first, directly under the one-line
+// declaration of `rulesCtx`, which stayed behind, and the blank line AFTER the block, in
+// front of `async function sendMsg`, stayed behind as the separator.
 //
-// THE RECOMMENDATION. [628563,630103) in monolith coordinates — 1,541 units raw and
-// 1,540 of body, TWO owners, synchronous — into js/services/ai-scan-context.js.
-// `scanCtx(limit)` turns the first rows of the scan results, six when no limit is
-// given, into the lines of the prompt the chat sends to the model; `tickerCtx(ticker)`
-// does the same, at full width, for one ticker. Each notes an upcoming earnings date
-// and flags it when it falls within 45 days. Both read `S.scanData` and nothing else of
-// the monolith, and only when they are called. Neither owner has a comment line, and
-// each is ONE line of source; the block opens on the declaration of the first, directly
-// under the one-line declaration of `rulesCtx`, which stays behind, and the blank line
-// AFTER the block, in front of `async function sendMsg`, is the separator.
+// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE. The undo helper runs
+// first and rebuilds the pre-extraction index.html byte for byte, so every
+// coordinate this file inherited from audit #522 is now proved by the
+// reconstruction that shipped rather than by a document that no longer exists.
+// A relocation is byte-exact or it is not done.
 //
-// ── THE FINDING, PART ONE: TWO ROWS TIE AT THE BEST SCORE, AND THE KEY ORDERS ──
+// THIS HEADER WAS RE-TENSED, NOT INHERITED. The audit's header described a
+// recommendation, a change that moved nothing, and a conversion still to come.
+// This file IS the conversion, so those sentences are rewritten rather than
+// carried over; the sections below were re-tensed the same way, and §8 and §9
+// INVERT the audit's "not yet" claims instead of dropping them.
+//
+// ── THE FINDING, PART ONE: TWO ROWS TIED AT THE BEST SCORE, AND THE KEY ORDERED ─
 // ── THEM BY LENGTH ──────────────────────────────────────────────────────────────
 //
 // The contract before this layer published this block as the first of its four runners-up,
 // with a single function in the parity code second. Measured again on the base that cut
-// left, the two still tie at (byConsumerSplit, raw nine) = (3, 5), and they are not the
+// left, the two still tied at (byConsumerSplit, raw nine) = (3, 5), and they were not the
 // same place with and without a neighbour: this block has two consumers, one dependency
 // and no sibling reference; the other row is one function with a different dependency in a
 // different place. The published ranking key (byConsumerSplit, raw nine, units ascending)
-// puts this block first by LENGTH ALONE, 1,540 units against 2,252, and the audit says so
-// rather than presenting a margin that is not there. Behind the tie the next lowest raw
-// nine at the best score is 8, so the pair is clear of every other row. §4 pins both rows
+// put this block first by LENGTH ALONE, 1,540 units against 2,252, and the audit said so
+// rather than presenting a margin that was not there. Behind the tie the next lowest raw
+// nine at the best score was 8, so the pair was clear of every other row. §4 pins both rows
 // in full and counts no row below 3 over the screen and the pass together.
 //
-// ── PART TWO: THE FLOOR IS CLEARED NARROWLY, AND BY THE SCREEN ITSELF ───────────
+// ── PART TWO: THE FLOOR WAS CLEARED NARROWLY, AND BY THE SCREEN ITSELF ──────────
 //
 // The block is 1,540 units, 40 over the 1,500 floor. Neither owner has documentation, so
-// the screen measures it from its declaration and from the cut alike, and it is a row of the
-// screen proper: the pass over sub-floor runs holds
-// nothing for it. Each owner ALONE is smaller still. The first alone is not a run at all, since
-// the seam rule refuses it for want of a blank line between it and the second; the second alone
-// is 864 units with a raw nine of 3, under the floor. §5 prices both.
+// the screen measured it from its declaration and from the cut alike, and it was a row of
+// the screen proper: the pass over sub-floor runs held nothing for it. Each owner ALONE is
+// smaller still. The first alone is not a run at all, since the seam rule refuses it for
+// want of a blank line between it and the second; the second alone is 864 units with a raw
+// nine of 3, under the floor. §5 prices both.
 //
 // ── PART THREE: FOUR CALLS FROM TWO CONSUMERS, AND ONE DEPENDENCY ───────────────
 //
 // The raw nine is 5, all of it inbound and one dependency: four call sites and `S`. The two
-// consumers, `sendMsg` and `orchestratedAnalysis`, each call BOTH functions, `scanCtx()` with no
-// argument and `tickerCtx` with a ticker, so the pair travels together. The block writes no
+// consumers, `sendMsg` and `orchestratedAnalysis`, each call BOTH functions, `scanCtx()` with
+// no argument and `tickerCtx` with a ticker, so the pair travels together. The block writes no
 // monolith name, deletes nothing, has no reference from a shipped module and touches the host
-// through none of window, document, storage, console, timers or fetch; it uses the language's own
-// `Date` and `Math`. Its one em dash is in CODE, inside the string literal `tickerCtx` returns for
-// a flagged earnings date, which makes the encoding of the file part of what the move must preserve.
+// through none of window, document, storage, console, timers or fetch; it uses the language's
+// own `Date` and `Math`. Its one em dash is in CODE, inside the string literal `tickerCtx`
+// returns for a flagged earnings date, which makes the encoding of the file part of what the
+// move must preserve.
 //
 // ── PART FOUR: WHAT THE LOAD ORDER DEPENDS ON, AND WHAT IS NOT MEASURED ─────────
 //
 // `S` is a `const` at the top of the monolith, a global lexical binding which a later classic
-// script reads by name, and the block reads it only inside its function bodies. All four sites are
-// inside function bodies too. §3 measures where the sites are. It does NOT measure what calls
-// `sendMsg` or `orchestratedAnalysis`, so it does not show that neither runs while the monolith
-// is being evaluated. Phase 2 puts the tag directly in front of the inline monolith, which makes the
-// question moot rather than answered here.
+// script reads by name, and the block reads it only inside its function bodies. All four sites
+// are inside function bodies too. §3 measures where the sites are. It does NOT measure what
+// calls `sendMsg` or `orchestratedAnalysis`, so it does not show that neither runs while the
+// monolith is being evaluated. The tag sits directly in front of the inline monolith, which
+// makes the question moot rather than answered here; §9 pins that position.
 //
 // ── PART FIVE: ONE OPENING WAS LEGAL ────────────────────────────────────────────
 //
-// The seam rule admits ONE line start between the owner above and the first declaration, the
-// declaration itself: there is no comment line and no blank line in between, so there is no opening
-// to weigh. What the cut leaves is the closing brace of `rulesCtx` directly against `async function
-// sendMsg`, a join the monolith holds nowhere today but of a shape it holds eighteen times already;
-// §2 counts both.
+// The seam rule admitted ONE line start between the owner above and the first declaration, the
+// declaration itself: there was no comment line and no blank line in between, so there was no
+// opening to weigh. What the cut left is the closing brace of `rulesCtx` directly against `async
+// function sendMsg`, a join the monolith held nowhere before the cut but of a shape it held
+// eighteen times already; §2 counts both.
 //
-// ── PART SIX: IT IS NOT THE FIRST OWNER OF ITS REGION, AND THE CUT TAKES NO ────
+// ── PART SIX: IT IS NOT THE FIRST OWNER OF ITS REGION, AND THE CUT TOOK NO ────
 // ── BANNER ──────────────────────────────────────────────────────────────────────
 //
 // The block is owners number 9 and 10 of 11 in the `CHAT` region. §5 prices EVERY owner above and
 // the one below as the cut extended to the end of that owner: of the eight above, one ties on
 // byConsumerSplit and is worse on the raw nine, and seven are worse on both; the one below is the
-// block's own first consumer, so extending the cut downward would take a caller along. The cut takes
-// no banner, so the document's top-level banners and owner regions do not move.
+// block's own first consumer, so extending the cut downward would have taken a caller along. The
+// cut took no banner, so the document's top-level banners and owner regions did not move.
 //
-// ── PART SEVEN: THE BEHAVIOUR IS MEASURED, NOT ASSUMED ──────────────────────────
+// ── PART SEVEN: THE BEHAVIOUR IS MEASURED ON THE SHIPPED MODULE ───────────────
 //
-// §7 loads the block in a VM with nothing defined, shows that it loads there and that calling either
-// function raises ReferenceError for `S`, then drives both through a state object that records every
-// access: the empty cases, the full line written out literally, the limit and its fallbacks, the
-// earnings note with its 45-day boundary, its rounding, a date that does not parse and every falsy
-// value, the Bollinger bounds and their truthiness fallback, the IVR and beta tail of the second
-// function, and which row a ticker finds. It pins two quirks without fixing them: a negative limit
-// counts from the end of the list, and a string IVR throws from `toFixed`.
+// §7 loads the SHIPPED MODULE in a VM with nothing defined, shows that it loads there and that
+// calling either function raises ReferenceError for `S`, then drives both through a state object
+// that records every access: the empty cases, the full line written out literally, the limit and
+// its fallbacks, the earnings note with its 45-day boundary, its rounding, a date that does not
+// parse and every falsy value, the Bollinger bounds and their truthiness fallback, the IVR and beta
+// tail of the second function, and which row a ticker finds. It pins two quirks without fixing them:
+// a negative limit counts from the end of the list, and a string IVR throws from `toFixed`.
 //
-// ── PRICED, AND WHERE IT WOULD SIT ──────────────────────────────────────────
+// ── PRICED, AND WHERE IT SITS ──────────────────────────────────────────────
 //
-// §8 ranks it by size against the sixty-three layers the chain holds: it would be the smallest, 19
-// units under the smallest layer there, which §8 measures against every layer rather than asserting.
-// Its body holds one non-ASCII character, in a string literal, so it is not pure ASCII and the
-// pure-ASCII count would not move; it does not open on a `// ── ` banner, so the banner count would not
-// move either; and it pins a NON-EMPTY monolith dependency list, `S`, so the count of layers that pin a
-// non-empty one WOULD move, by one. §8 measures all three.
+// §8 ranks it by size against the sixty-four layers the chain now holds: it is the smallest, 19
+// units under the layer that was smallest before it, which §8 measures against every layer rather
+// than asserting. Its body holds one non-ASCII character, in a string literal, so it is not pure
+// ASCII and the pure-ASCII count did not move; it does not open on a `// ── ` banner, so the banner
+// count did not move either; and it pins a NON-EMPTY monolith dependency list, `S`, so the count of
+// layers that pin a non-empty one DID move, by one. §8 measures all three.
 //
 // ═════════════════════════════════════════════════════════════════════════════
 const assert = require('assert');
@@ -113,11 +122,21 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const UNDO = require('./lib/ai-scan-context-undo.js');
 
-const MODULE_REL_IF_CUT = 'js/services/ai-scan-context.js';
+// The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
+// cut was still a recommendation; it is no longer hypothetical.
+const MODULE_REL = 'js/services/ai-scan-context.js';
 
 // ── The base ─────────────────────────────────────────────────────────────────
-const BASE_SHA = 'bbe841d';
+// The commit that carried the AUDIT — the pre-extraction state this contract
+// reconstructs. index.html is byte-identical here and at the audit's own base,
+// but only this commit carries the audit that §10 asserts was replaced
+// one-for-one.
+const BASE_SHA = 'aa76d50';
+// The commit the AUDIT measured, one merge earlier. Phase 1 changed no production
+// byte, so §1 asserts its index.html is this one's.
+const AUDIT_BASE_SHA = 'bbe841d';
 const BASE_CHARS = 1415705;
 const BASE_UTF8 = 1444072;
 const BASE_LF = 24433;
@@ -128,19 +147,27 @@ const TEST_FILE_COUNT = 192;
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-ai-scan-context-boundary-audit.test.js';
 const AUDIT_SPEC_REL = 'tests/mutation-specs/ai-scan-context-audit.spec.js';
+const CONTRACT_REL = 'tests/ai-scan-context-boundary-contract.test.js';
+const CONTRACT_SPEC_REL = 'tests/mutation-specs/ai-scan-context-contract.spec.js';
+const UNDO_REL = 'tests/lib/ai-scan-context-undo.js';
+// LIVE, and ratcheted with TEST_FILE_COUNT: the number of contracts pinning the
+// suite file count TODAY. It moves up by one whenever a cycle's audit lands,
+// because the audit pins it; Phase 2 RENAMES the file that carries the pin and
+// so adds none, which is why the rename left it where the audit had put it.
 const RATCHETED_CONTRACTS = 54;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
-// The contract that is newest at this base, and whose spec this phase retires.
+// The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/option-chain-error-helpers-boundary-contract.test.js';
-const BASE_DECLARED_MUTANTS = 214;
-// The spec this cycle retires — the outgoing CONTRACT's, which goes in Phase 1
-// as the rhythm runs — and what it carried. §10 asserts the arithmetic.
-const RETIRED_SPEC_REL = 'tests/mutation-specs/option-chain-error-helpers-contract.spec.js';
-const RETIRED_MUTANTS = 208;
+const BASE_DECLARED_MUTANTS = 223;
+// THE SPEC THIS PHASE RETIRES is the AUDIT's, and only the audit's: the outgoing
+// contract's spec went in Phase 1, which is the rhythm. §10 asserts the
+// arithmetic, not the total it happens to reach.
+const RETIRED_SPEC_REL = 'tests/mutation-specs/ai-scan-context-audit.spec.js';
+const RETIRED_MUTANTS = 217;
 const BASE_SPECS = 2;
 const MUTANT_BUDGET = 250;
-// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this audit's spec
-// now, the next layer's contract spec after Phase 2. The predicate is every
+// EXACTLY ONE NON-COVERAGE SPEC IS COMMITTED AT ANY TIME: this contract's spec
+// now, the next layer's audit spec after the next Phase 1. The predicate is every
 // `.spec.js` but the coverage spec, NOT `-contract.spec.js`, which could not
 // see an audit spec at all.
 const LAYER_SPECS = 1;
@@ -151,10 +178,10 @@ const CODE_CHARS = 1299169;
 const TOP_LEVEL_DECLS = 884;
 const OWNER_REGIONS = 114;
 
-// ── The recommended region ───────────────────────────────────────────────────
-// It opens on the declaration of the first function: neither owner has a comment line above it, and the line
-// above the block is the one-line declaration of `rulesCtx`, with NO blank line between. The blank line AFTER
-// the block, in front of `async function sendMsg`, is the structural separator.
+// ── The region ───────────────────────────────────────────────────────────────
+// It opened on the declaration of the first function: neither owner has a comment line above it, and the line
+// above the block was the one-line declaration of `rulesCtx`, with NO blank line between. The blank line AFTER
+// the block, in front of `async function sendMsg`, was the structural separator.
 const RAW_AT_IN_CODE = 628563;
 const DECL_AT_IN_CODE = 628563;
 const RAW_END_IN_CODE = 630104;
@@ -192,9 +219,9 @@ const PARSING_OPENINGS = 1;
 const MID_LINE_OPENING = 628562;
 const MID_LINE_ERROR = 'EXTRACTION_SEAM_NOT_LINE_START';
 const CANDIDATES_AT_DECLARATION = 1;
-// What the cut leaves behind: the closing brace of `rulesCtx` directly against the next function, with no blank
-// line between, a join the monolith already holds elsewhere; and what it removes: the join of that brace against
-// the first owner, which exists only here.
+// What the cut left behind: the closing brace of `rulesCtx` directly against the next function, with no blank
+// line between, a join the monolith already held elsewhere; and what it removed: the join of that brace against
+// the first owner, which existed only here.
 const JOIN_AFTER_CUT_PREFIX = '}\nasync function ';
 const JOIN_AFTER_CUT = '}\nasync function sendMsg';
 const JOIN_BEFORE_CUT = '}\nfunction scanCtx';
@@ -359,22 +386,29 @@ const PREVIOUS_RUNNERS_UP = [
   [628451, 3, 8, 1652],
 ];
 
-// ── Where it would sit ───────────────────────────────────────────────────────
-const CHAIN_LENGTH = 63;
+// ── Where it sits ────────────────────────────────────────────────────────────
+// The chain INCLUDING this layer. SMALLEST_LAYER_CHARS is the layer that was smallest BEFORE this one.
+const CHAIN_LENGTH = 64;
 const SMALLEST_LAYER_CHARS = 1559;
-const SIZE_RANK_IF_CUT = 1;
+const SIZE_RANK = 1;
+const LAYERS_SMALLER_THAN_THIS_CUT = 0;
 const LAYERS_LARGER_THAN_THIS_CUT = 63;
+const PRIOR_PURE_ASCII_LAYERS = 8;
 const PURE_ASCII_LAYERS = 8;
+const PRIOR_LAYERS_OPENING_ON_BANNER = 26;
 const LAYERS_OPENING_ON_BANNER = 26;
+const PRIOR_LAYERS_OPENING_ON_WIDE_BANNER = 29;
 const LAYERS_OPENING_ON_WIDE_BANNER = 29;
-const LAYERS_WITH_A_DEPENDENCY = 26;
+const PRIOR_LAYERS_WITH_A_DEPENDENCY = 26;
+const LAYERS_WITH_A_DEPENDENCY = 27;
 
-// ── If cut ───────────────────────────────────────────────────────────────────
-const TAG_IF_CUT = '<script src="./js/services/ai-scan-context.js"></script>\n';
+// ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 1484;
 const INDEX_AFTER = 1414221;
 const RESIDUAL_MONOLITH = 1297628;
 const LOCAL_SCRIPTS_AFTER = 108;
+// The tag's position among the local scripts, zero-based: the last of 108.
+const TAG_LOCAL_INDEX = 107;
 let pass = 0;
 function ok(v, m) { assert.ok(v, m); pass++; }
 function eq(a, b, m) { assert.deepStrictEqual(a, b, m); pass++; }
@@ -416,13 +450,23 @@ function codeLines(src) { return src.split('\n').filter((l) => !isBlankOrComment
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 
 
-console.log('AI SCAN CONTEXT EXTRACTION — TEMPORARY BOUNDARY AUDIT');
-console.log('measurement only · base=' + BASE_SHA);
+console.log('AI SCAN CONTEXT — PERMANENT BOUNDARY CONTRACT');
+console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// MEASUREMENT ONLY: nothing is peeled and nothing has moved, so the shipped
-// document IS the one this audit measures. Phase 2 puts a peel here and this
-// becomes the reconstruction the permanent contract runs against.
-const INDEX = APP_LOADER.loadIndexHtml();
+// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
+// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
+// predecessor received.
+const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
+const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+const LIVE_MONOLITH = LIVE_TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+
+// EVERYTHING BELOW IS MEASURED ON THE RECONSTRUCTED BASE, not on a remembered
+// copy of it: the undo helper runs first, so every coordinate this file
+// inherited from the audit is now proved by the reconstruction that shipped
+// rather than by a document that no longer exists.
+const INDEX = UNDO.undoAiScanContext(LIVE_INDEX, MODULE);
 
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -617,13 +661,82 @@ let rawRunCount = 0, seamRejectedCount = 0;
 async function main() {
 
 
-// CHAIN, read off the newest contract rather than written here: that file
-// carries the list ending at its own layer, and copying it would be a second
-// place to drift. Phase 2 gives this cycle its own literal.
-const CHAIN = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8')
-  .match(/^const CHAIN = \[([\s\S]*?)^\];/m)[1]
-  .split('\n').map((l) => l.trim()).filter((l) => l.startsWith("'"))
-  .map((l) => l.replace(/^'|',?$/g, ''));
+// CHAIN, chronological, oldest first — this cycle's own literal, as the audit
+// said Phase 2 would give it. Reading it off the previous newest contract was
+// right while this layer had not shipped; now this file IS the newest, so the
+// list ends at its own layer and the next cycle reads it from here.
+const CHAIN = [
+  'js/services/journal-core.js',
+  'js/services/mcx-regime-policy.js',
+  'js/ui/journal-ui.js',
+  'js/services/journal-remote-persistence.js',
+  'js/services/journal-backend-write-through.js',
+  'js/services/journal-migration.js',
+  'js/services/journal-manual-import.js',
+  'js/ui/journal-backup-restore.js',
+  'js/ui/mcx-macro-check.js',
+  'js/ui/mcx-charts.js',
+  'js/services/apex-post-auth-init.js',
+  'js/ui/tt-reconnect.js',
+  'js/ui/journal-close-legs.js',
+  'js/ui/journal-trade-forms.js',
+  'js/ui/journal-trade-detail.js',
+  'js/portfolio/portfolio-data-fetch.js',
+  'js/portfolio/backend-portfolios.js',
+  'js/portfolio/portfolio-expiry-manual.js',
+  'js/portfolio/portfolio-traffic-light.js',
+  'js/ui/backend-candle-store-chart.js',
+  'js/services/journal-rich-snapshot.js',
+  'js/portfolio/portfolio-backend-candles.js',
+  'js/services/journal-snapshot-prefetch.js',
+  'js/portfolio/portfolio-dxlink-greeks.js',
+  'js/config/strategy-templates.js',
+  'js/portfolio/portfolio-vega-monitor.js',
+  'js/services/scanner-ivr-throttle.js',
+  'js/services/scanner-earnings-throttle.js',
+  'js/ui/chart-interactions.js',
+  'js/services/journal-snapshot-helpers.js',
+  'js/services/swing-weekly-candles.js',
+  'js/services/swing-direction.js',
+  'js/portfolio/backend-positions-aggregate.js',
+  'js/portfolio/portfolio-technical-merge.js',
+  'js/portfolio/portfolio-technical-alignment-debug.js',
+  'js/services/journal-map-audit.js',
+  'js/services/dxlink-greeks-fetch.js',
+  'js/portfolio/portfolio-technical-parity.js',
+  'js/portfolio/portfolio-spy-price.js',
+  'js/services/apex-storage-recovery.js',
+  'js/portfolio/portfolio-leg-quantity.js',
+  'js/portfolio/backend-full-refresh-validation.js',
+  'js/portfolio/portfolio-snapshot-fallback.js',
+  'js/portfolio/portfolio-technical-batch-fetch.js',
+  'js/ui/rs-skip-breakdown-html.js',
+  'js/portfolio/portfolio-greeks-freshness.js',
+  'js/portfolio/portfolio-underlying-fallback-plan.js',
+  'js/portfolio/portfolio-price-freshness.js',
+  'js/portfolio/portfolio-missing-underlyings-gate.js',
+  'js/services/scanner-dxlink-prices.js',
+  'js/services/rs-quality-check.js',
+  'js/portfolio/backend-positions-enriched.js',
+  'js/portfolio/portfolio-option-streamer-diagnostics.js',
+  'js/services/scanner-dss-chart-load-guard.js',
+  'js/services/swing-chart-cache-helpers.js',
+  'js/services/scanner-stock-scoring.js',
+  'js/ui/scanner-dss-1d-chart.js',
+  'js/portfolio/portfolio-stale-mark-squeeze-state.js',
+  'js/services/journal-expiry-audit.js',
+  'js/portfolio/portfolio-regime-badge-html.js',
+  'js/portfolio/portfolio-backend-squeeze-extract.js',
+  'js/portfolio/portfolio-beta-missing-reason.js',
+  'js/services/option-chain-error-helpers.js',
+  'js/services/ai-scan-context.js',
+];
+
+// THE SELF-INCLUSION GUARD. CHAIN now ends at THIS layer and this file is its
+// contract, so any census over CHAIN that reads contracts would count this cut as
+// evidence for a claim about the layers that preceded it. Every such census runs
+// over PRIOR_LAYERS and asserts this layer's own half separately.
+const PRIOR_LAYERS = CHAIN.slice(0, CHAIN.length - 1);
 const CHAIN_SET = new Set(CHAIN);
 const OWNER_KIND = new Map();
 for (const s of SIBLINGS) {
@@ -703,7 +816,7 @@ function nonLocalAssignmentsUncorrected(text) {
   return out;
 }
 // The corrected scan: every declarator of a `var`/`let`/`const` list is local,
-// not only the first. The shipped scan above is kept so the audit can measure
+// not only the first. The shipped scan above is kept so this contract can measure
 // what it got wrong.
 function declaredNamesIn(text) {
   const masked = maskLiterals(text);
@@ -748,6 +861,8 @@ eq(sha256(INDEX), BASE_SHA256, '…and this digest');
 eq(sha256(git(['show', BASE_SHA + ':index.html'])), BASE_SHA256,
   '…which is the digest of the BASE_SHA commit\'s index.html, read out of git, so the base '
   + 'is a commit and not a remembered number');
+eq(sha256(git(['show', AUDIT_BASE_SHA + ':index.html'])), BASE_SHA256,
+  '…and the same digest as the document at AUDIT_BASE_SHA, where the audit measured it: Phase 1 moved no byte');
 eq(LOCALS.length, LOCAL_SCRIPTS, 'it loads LOCAL_SCRIPTS local application scripts');
 eq(INDEX.indexOf(CODE), CODE_AT, 'the inline monolith starts at CODE_AT');
 eq(CODE.length, CODE_CHARS, '…and is CODE_CHARS units of residual code');
@@ -755,7 +870,7 @@ eq(DECLS.length, TOP_LEVEL_DECLS, 'it holds TOP_LEVEL_DECLS top-level declaratio
 eq(REGIONS.length, OWNER_REGIONS, '…across OWNER_REGIONS owner regions');
 // THE PREVIOUS LAYER'S OWN FORECASTS, checked. The contract that shipped the option-chain error
 // helpers predicted the document, the residual monolith and the script
-// count this audit measures, so the two cycles are joined by numbers.
+// count this contract measures, so the two cycles are joined by numbers.
 {
   const prev = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8');
   eq(CODE.length, Number(prev.match(/^const RESIDUAL_MONOLITH = (\d+);$/m)[1]),
@@ -836,7 +951,7 @@ const OPENINGS = [];
     '…and the one opening parses as a standalone script, which is what loading it would do: PARSING_OPENINGS of the SEAM_LEGAL_OPENINGS');
 }
 
-// WHAT THE CUT TAKES is two lines and no documentation: neither function has a comment line above it, and the
+// WHAT THE CUT TOOK is two lines and no documentation: neither function has a comment line above it, and the
 // programme's blockAbove rule agrees.
 {
   eq(blockAbove(BY_NAME.get(OWNER)), null, 'the programme\'s blockAbove rule finds NO comment block above ' + OWNER + '…');
@@ -848,14 +963,14 @@ const OPENINGS = [];
   eq(first.end + 1 - first.start + 1 + (second.end + 1 - second.start) + 1, BODY_CHARS,
     '…so the body is the two lines and their two newlines, and nothing else');
 }
-// WHAT THE CUT LEAVES. The brace of the owner above directly against the next function: a join of a shape the monolith already holds.
+// WHAT THE CUT LEFT. The brace of the owner above directly against the next function: a join of a shape the monolith already held.
 {
   const atCut = CODE.slice(0, RAW_AT_IN_CODE) + CODE.slice(RAW_END_IN_CODE);
-  eq(count(CODE, JOIN_AFTER_CUT), 0, 'the monolith holds the join `}` newline `async function ' + NEXT_DECL + '` NOWHERE today, a block and a blank line standing between them…');
+  eq(count(CODE, JOIN_AFTER_CUT), 0, 'the monolith holds the join `}` newline `async function ' + NEXT_DECL + '` NOWHERE before the cut, a block and a blank line standing between them…');
   eq(count(atCut, JOIN_AFTER_CUT), 1, '…and exactly once after the cut…');
   eq(atCut.indexOf(JOIN_AFTER_CUT), RAW_AT_IN_CODE - 2, '…at the closing brace of ' + OWNER_BEFORE + ', where the cut was made…');
   eq(count(CODE, JOIN_AFTER_CUT_PREFIX), JOINS_LIKE_THE_CUT_BEFORE,
-    '…but a closing brace directly against an async function is a shape the document holds JOINS_LIKE_THE_CUT_BEFORE times already, so the cut adds a join of a kind it has…');
+    '…but a closing brace directly against an async function is a shape the document held JOINS_LIKE_THE_CUT_BEFORE times already, so the cut added a join of a kind it had…');
   eq(count(atCut, JOIN_AFTER_CUT_PREFIX), JOINS_LIKE_THE_CUT_BEFORE + 1, '…one more after the cut');
   eq(count(CODE, JOIN_BEFORE_CUT), 1, 'while the join of that brace against THIS block exists once, at the cut…');
   eq(count(atCut, JOIN_BEFORE_CUT), 0, '…and is gone after it, leaving with the block');
@@ -885,7 +1000,7 @@ eq(REC.names.length, OWNER_COUNT, '…OWNER_COUNT of them');
   eq(own.map((d) => d.name), OWNERS_EXPECTED, '…and the declarations in range are those names, in that order');
   eq(own.map((d) => d.chars), OWNER_SIZES, '…at OWNER_SIZES units');
   eq(own.filter((d) => d.form === 'function').length, OWNER_COUNT,
-    '…both declared functions, so this layer would ship no mutable binding');
+    '…both declared functions, so this layer ships no mutable binding');
   ok(own.every((d) => !d.isAsync), '…SYNCHRONOUS');
   eq((MASKED.slice(RAW_AT_IN_CODE, BODY_END_IN_CODE).match(/\bfunction\b/g) || []).length, OWNER_COUNT + 2,
     '…with exactly TWO function expressions inside them besides the owners, the `map` callback of the first and the `find` callback of the second, both anonymous and both called synchronously by the array method…');
@@ -942,7 +1057,7 @@ eq(REC.sites, CONSUMER_SITES_AT, '…at CONSUMER_SITES_AT');
   eq(CONSUMER_DECLS.map((c) => REC.sites.filter((at) => at > c[1] && at < c[2]).length), [2, 2],
     '…and each consumer holds TWO of the four sites within its own text');
   ok(REC.sites.every((at) => SITE_BODIES.some((b) => b[0] === at && (hostOf(at) || {}).name === b[1])),
-    '…THAT is as far as this audit goes: it measures where the sites are, and does NOT measure what calls ' + CONSUMERS.join(' or '));
+    '…THAT is as far as this contract goes: it measures where the sites are, and does NOT measure what calls ' + CONSUMERS.join(' or '));
 }
 // THE ONE DEPENDENCY, `S`: a `const` the monolith declares at its top, read inside the body at CALL time, with its declaration and a CONTROL.
 {
@@ -1010,7 +1125,7 @@ eq(REC.sites, CONSUMER_SITES_AT, '…at CONSUMER_SITES_AT');
     'control — the host-global scan finds two planted mentions');
 }
 // ─────────────────────────────────────────────────────────────────────────────
-section('4. THE FINDING: two rows tie at (3, 5), and the published key orders them by length');
+section('4. THE FINDING: two rows tied at (3, 5), and the published key ordered them by length');
 // ─────────────────────────────────────────────────────────────────────
 // WHAT THE PREVIOUS CONTRACT PUBLISHED, read out of it.
 const prevText = fs.readFileSync(path.join(ROOT, PREVIOUS_CONTRACT), 'utf8');
@@ -1022,7 +1137,7 @@ const prevNum = (name) => Number(prevText.match(new RegExp('^const ' + name + ' 
   eq(prevNum('RAW_CHARS'), PREVIOUS_RAW_CHARS, 'the cut that left was PREVIOUS_RAW_CHARS units raw…');
   eq(prevNum('RAW_AT_IN_CODE'), PREVIOUS_RAW_AT, '…opening at PREVIOUS_RAW_AT…');
   ok(PREVIOUS_RAW_AT > RAW_AT_IN_CODE,
-    '…and it sat entirely AFTER this block, so everything this audit measures before it did not move, and everything at or after it moved down by exactly that many units, as read from the rows below');
+    '…and it sat entirely AFTER this block, so everything this contract measures before it did not move, and everything at or after it moved down by exactly that many units, as read from the rows below');
   const moved = (at) => (at >= PREVIOUS_RAW_AT ? at - PREVIOUS_RAW_CHARS : at);
   const listed = listOf('RUNNERS_UP');
   eq(listed, PREVIOUS_RUNNERS_UP, 'the previous contract published exactly PREVIOUS_RUNNERS_UP…');
@@ -1031,7 +1146,7 @@ const prevNum = (name) => Number(prevText.match(new RegExp('^const ' + name + ' 
   eq([moved(listed[1][0]), listed[1][1], listed[1][2], listed[1][3]], TIED_AT_BEST[1].slice(0, 1).concat([BY_CONSUMER_SPLIT, FULL_NINE, TIED_AT_BEST[1][2]]),
     '…the SECOND being the row it ties with, moved by that rule to where it stands now, since it sat after the cut that shipped…');
   eq([moved(listed[2][0]), listed[2][1], listed[2][2], listed[2][3]], RUNNERS_UP[1],
-    '…the THIRD, moved by the same rule, is this audit\'s second runner-up…');
+    '…the THIRD, moved by the same rule, is this contract\'s second runner-up…');
   ok(listed.some((r) => r[0] < PREVIOUS_RAW_AT) && listed.some((r) => r[0] >= PREVIOUS_RAW_AT),
     '…the rule having moved some of them and left others where they were, both cases present among the four');
   // THE FOURTH OVERLAPS THE CUT, so it cannot be a runner-up: it is the same lines plus the one above.
@@ -1216,7 +1331,7 @@ const ownRun = (i, j) => {
   eq(hiddenRows.filter((c) => c.lo >= RAW_AT_IN_CODE && c.hi <= BODY_END_IN_CODE).map((c) => [c.lo, c.hi]), [],
     '…and the pass over sub-floor runs none: neither owner has documentation to re-measure from');
 }
-// THE BANNER REGION it sits inside. The cut is owners number 9 and 10 of 11 and the banner is far above it, so the cut takes NO banner
+// THE BANNER REGION it sits inside. The cut was owners number 9 and 10 of 11 and the banner is far above it, so the cut took NO banner
 // and the document's banners and owner regions do not move — which the regions are recomputed on the text without the block to show.
 {
   const reg = REGION;
@@ -1252,7 +1367,7 @@ const ownRun = (i, j) => {
   };
   const before = regionsOf(CODE), after = regionsOf(clean);
   eq([before.marks.length, after.marks.length], [BANNER_MARKS, BANNER_MARKS],
-    'the cut takes NO banner: the document\'s top-level banners stay at BANNER_MARKS…');
+    'the cut took NO banner: the document\'s top-level banners stay at BANNER_MARKS…');
   eq([before.regions.length, after.regions.length], [OWNER_REGIONS, OWNER_REGIONS],
     '…and its owner regions at OWNER_REGIONS…');
   eq(after.regions.filter((r) => r.start === reg.start).map((r) => r.end), [reg.end - RAW_CHARS],
@@ -1281,7 +1396,7 @@ eq(cleanRuns.length, CLEAN_CANDIDATES, '…CLEAN_CANDIDATES of which run nothing
   eq(tri(left) - tri(own), DELTA_RAW_RUNS,
     '…and the raw-run change is exactly what that loss predicts: a region of ' + left + ' owners makes ' + tri(left) + ' runs where one of ' + own + ' made ' + tri(own) + ', a difference of DELTA_RAW_RUNS');
   ok(DELTA_RAW_RUNS < 0 && DELTA_SEAM_REJECTED < 0 && DELTA_CANDIDATES < 0 && DELTA_CLEAN < 0,
-    '…the seam rejections and candidate counts shrinking with it, which this audit measures and does not derive');
+    '…the seam rejections and candidate counts shrinking with it, which this contract measures and does not derive');
 }
 ok(DECLS.some((d) => d.start === DECL_AT_IN_CODE), 'the declaration opening is a declaration start…');
 eq(candidateRuns.filter((c) => c.lo === RAW_AT_IN_CODE).map((c) => c.hi).sort((a, b) => a - b).indexOf(BODY_END_IN_CODE) >= 0, true,
@@ -1289,7 +1404,7 @@ eq(candidateRuns.filter((c) => c.lo === RAW_AT_IN_CODE).map((c) => c.hi).sort((a
 eq(candidateRuns.filter((c) => c.lo === RAW_AT_IN_CODE).length > 1, true,
   '…alongside runs that open there and run on past the cut into the next function, which are not the cut');
 // ─────────────────────────────────────────────────────────────────────────────
-section('7. The block loads bare, needs `S` to run, and every branch of both functions is measured');
+section('7. The SHIPPED module loads bare, needs `S` to run, and every branch of both functions is measured');
 // ─────────────────────────────────────────────────────────────────────
 {
   const lines = BODY.split('\n');
@@ -1317,7 +1432,7 @@ section('7. The block loads bare, needs `S` to run, and every branch of both fun
       deleteProperty(t, k) { rec.writes.push(['delete', String(k)]); return delete t[k]; },
     });
     const ctx = vm.createContext(Object.assign(Object.create(null), { S }));
-    vm.runInContext(BODY, ctx);
+    vm.runInContext(MODULE, ctx);
     vm.runInContext('Date.now = function () { return ' + NOW + '; };', ctx);
     ctx.__rows = scanData;
     return {
@@ -1342,7 +1457,7 @@ section('7. The block loads bare, needs `S` to run, and every branch of both fun
 
   // LOADING needs nothing; CALLING needs `S`.
   const bare = vm.createContext(Object.create(null));
-  vm.runInContext(BODY, bare);
+  vm.runInContext(MODULE, bare);
   eq(Object.getOwnPropertyNames(bare).sort(), VM_GLOBALS.slice().sort(),
     'it LOADS in a completely bare VM with nothing defined, and declares exactly its two owners');
   eq(VM_GLOBALS.map((n) => vm.runInContext(n + '.constructor.name', bare)), ['Function', 'Function'], '…both ordinary synchronous functions');
@@ -1353,7 +1468,7 @@ section('7. The block loads bare, needs `S` to run, and every branch of both fun
     'control — the same bare VM raises ReferenceError for any function that reads a name it does not have, so the failures above are the reason claimed');
   {
     const withS = vm.createContext(Object.assign(Object.create(null), { S: { scanData: [] } }));
-    vm.runInContext(BODY, withS);
+    vm.runInContext(MODULE, withS);
     eq([vm.runInContext('scanCtx()', withS), vm.runInContext('tickerCtx("X")', withS)], [NO_SCAN, NO_TICKER],
       '…while with an empty `S.scanData` and nothing else defined both answer, so `S` is the only thing they need');
     eq(Object.getOwnPropertyNames(withS).sort(), VM_GLOBALS.concat(['S']).sort(), '…and leave no global of their own behind');
@@ -1479,84 +1594,297 @@ section('7. The block loads bare, needs `S` to run, and every branch of both fun
   }
 }
 // ─────────────────────────────────────────────────────────────────────
-section('8. Where this layer would sit, and what it would change');
+section('8. Where this layer sits, and what it changed');
 // ─────────────────────────────────────────────────────────────────────
 {
-  ok(CHAIN.indexOf(MODULE_REL_IF_CUT) < 0, 'this module is not in the chain yet');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)), '…and its path does not exist yet');
-  ok(CHAIN.filter((rel) => path.dirname(rel) === path.dirname(MODULE_REL_IF_CUT)).length > 0 && fs.existsSync(path.join(ROOT, path.dirname(MODULE_REL_IF_CUT))), '…its directory, js/services, already holding layers of the chain');
+  // THE AUDIT ASSERTED THE OPPOSITE of the first two: while the cut was still a
+  // recommendation this module was absent from the chain and from disk. It
+  // ships now, so the claims are INVERTED rather than deleted — an assertion
+  // that stops being made is the way this programme loses coverage.
+  ok(CHAIN.indexOf(MODULE_REL) >= 0, 'this module is IN the chain now');
+  eq(CHAIN[CHAIN.length - 1], MODULE_REL, '…as its newest layer, at the end of the list');
+  ok(fs.existsSync(path.join(ROOT, MODULE_REL)), '…and its path exists');
+  ok(CHAIN.filter((rel) => path.dirname(rel) === path.dirname(MODULE_REL)).length > 1,
+    '…in js/services, beside the other services layers');
   eq(CHAIN.length, CHAIN_LENGTH, 'the chain is CHAIN_LENGTH layers long');
   const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const sizes = sources.map((s) => s.length).sort((a, b) => a - b);
-  eq(sizes[0], SMALLEST_LAYER_CHARS, 'the smallest shipped layer is SMALLEST_LAYER_CHARS units');
-  eq(SMALLEST_LAYER_CHARS - BODY_CHARS, 19, '…and this cut is 19 units smaller than that');
-  ok(BODY_CHARS < SMALLEST_LAYER_CHARS, 'this cut is SMALLER than that, by ' + (SMALLEST_LAYER_CHARS - BODY_CHARS) + ' units, so it would be the smallest layer the chain holds…');
-  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK_IF_CUT,
-    '…measured against every layer rather than inferred from the first: it would rank SIZE_RANK_IF_CUT by size');
+  eq(sizes[0], BODY_CHARS, 'the smallest shipped layer is THIS module, BODY_CHARS units, and it is the smallest of the whole chain…');
+  eq(sizes[1], SMALLEST_LAYER_CHARS, '…the next smallest being SMALLEST_LAYER_CHARS, the previous smallest, which the audit forecast this module would pass by 19 units…');
+  eq(sizes[1] - sizes[0], 19, '…19 units exactly…');
+  eq(sizes.filter((u) => u < BODY_CHARS).length + 1, SIZE_RANK,
+    '…measured against every layer rather than inferred from the first: it ranks SIZE_RANK by size…');
+  eq(sizes.filter((u) => u < BODY_CHARS).length, LAYERS_SMALLER_THAN_THIS_CUT,
+    '…with LAYERS_SMALLER_THAN_THIS_CUT layers smaller than it…');
   eq(sizes.filter((u) => u > BODY_CHARS).length, LAYERS_LARGER_THAN_THIS_CUT,
-    '…with LAYERS_LARGER_THAN_THIS_CUT layers larger than it, which is EVERY layer in the chain: the rank is the first because none is smaller, measured over the whole set');
-  eq(sizes.filter((u) => u === BODY_CHARS).length, 0, '…and none exactly its size');
-  eq(SIZE_RANK_IF_CUT + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH + 1,
-    '…the rank and that count partitioning the chain plus this cut, so neither drifts alone');
-  // THE CHAIN-WIDE SHAPE COUNTS. This body holds NON_ASCII_CHARS non-ASCII character, in a string literal, so the pure-ASCII
-  // count would NOT move. It opens on a function declaration, not on a `// ── ` banner of any width, so neither banner count would move.
+    '…and LAYERS_LARGER_THAN_THIS_CUT layers larger…');
+  eq(sizes.filter((u) => u === BODY_CHARS).length, 1, '…none of the others exactly its size, the one at that length being itself…');
+  eq(sizes.filter((u) => u < BODY_CHARS).length, 0, '…and not one layer smaller, so the superlative is measured over the whole chain…');
+  eq(sizes[SIZE_RANK - 1], MODULE.length, '…the layer at that rank in size order being this module…');
+  // The chain now CONTAINS this layer, so the partition is over CHAIN_LENGTH
+  // itself. While the cut was a recommendation the chain excluded it and the
+  // sum was CHAIN_LENGTH + 1 — the `+ 1` moved out when the layer moved in.
+  eq(SIZE_RANK + LAYERS_LARGER_THAN_THIS_CUT, CHAIN_LENGTH,
+    '…the rank and that count partitioning the chain, so neither drifts alone');
+  // THE THREE CHAIN-WIDE COUNTS, and the audit forecast that the dependency count would
+  // move and that the pure-ASCII and banner counts would not. The shape counts are asserted as comparisons between two
+  // measurements, over the chain before this layer and over the whole chain,
+  // rather than carried forward as numbers.
+  const prior = PRIOR_LAYERS.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+  eq(prior.length, CHAIN_LENGTH - 1, 'PRIOR_LAYERS is the chain without this layer');
   const ascii = (s2) => !/[^\x00-\x7F]/.test(s2);
   const banner = (s2) => /^\s*\/\/ ── /.test(s2.split('\n')[0]);
   const wide = (s2) => /^\s*\/\/ ─{2,}[ \t]+\S/.test(s2.split('\n')[0]);
-  eq(sources.filter(ascii).length, PURE_ASCII_LAYERS, 'PURE_ASCII_LAYERS of the chain are pure ASCII today');
-  ok(!ascii(BODY), '…and this body is not, holding NON_ASCII_CHARS non-ASCII character, so that count would NOT move');
-  eq(sources.concat([BODY]).filter(ascii).length, PURE_ASCII_LAYERS, '…measured with it included, which is the same count');
+  eq(prior.filter(ascii).length, PRIOR_PURE_ASCII_LAYERS, 'PRIOR_PURE_ASCII_LAYERS of the chain before this layer are pure ASCII…');
+  ok(!ascii(MODULE), '…and this module is NOT, asserted of the module directly: it holds NON_ASCII_CHARS non-ASCII character, one em dash in a string literal…');
+  eq(sources.filter(ascii).length, PURE_ASCII_LAYERS, '…so the count over the whole chain is PURE_ASCII_LAYERS…');
+  eq(PURE_ASCII_LAYERS, PRIOR_PURE_ASCII_LAYERS, '…the SAME number: it did not move, as the audit forecast');
+  eq(prior.filter(banner).length, PRIOR_LAYERS_OPENING_ON_BANNER,
+    'PRIOR_LAYERS_OPENING_ON_BANNER of the chain before this layer open on a `── ` banner line…');
+  ok(!banner(MODULE), '…and this module does NOT, asserted of the module directly: its first line is a function declaration…');
   eq(sources.filter(banner).length, LAYERS_OPENING_ON_BANNER,
-    'LAYERS_OPENING_ON_BANNER of the chain open on a `── ` banner line today');
-  ok(!banner(BODY), '…and this body does NOT, so that count would NOT move…');
-  eq(sources.concat([BODY]).filter(banner).length, LAYERS_OPENING_ON_BANNER, '…measured with it included, which is the same count');
-  eq(sources.filter(wide).length, LAYERS_OPENING_ON_WIDE_BANNER,
-    'while LAYERS_OPENING_ON_WIDE_BANNER open on a banner of two or more dashes, the reading topLevelBanners uses…');
-  ok(!wide(BODY), '…and this body does not open on one of those either, so the wider count would not move…');
-  eq(sources.concat([BODY]).filter(wide).length, LAYERS_OPENING_ON_WIDE_BANNER, '…measured with it included, which is the same count: neither shape count moves');
-  // THE THIRD CHAIN-WIDE COUNT, and the one that WOULD move here: layers whose contract pins a non-empty MONOLITH_DEPENDENCIES.
-  // Counted over the suite and then compared with the figure the contract that carries it pins.
-  const pinning = fs.readdirSync(path.join(ROOT, 'tests'))
+    '…so the count over the whole chain is LAYERS_OPENING_ON_BANNER…');
+  eq(LAYERS_OPENING_ON_BANNER, PRIOR_LAYERS_OPENING_ON_BANNER, '…the SAME number: it did not move, as the audit forecast…');
+  eq(prior.filter(wide).length, PRIOR_LAYERS_OPENING_ON_WIDE_BANNER,
+    '…while PRIOR_LAYERS_OPENING_ON_WIDE_BANNER of the chain before it open on a banner of two or more dashes, the reading topLevelBanners uses…');
+  ok(!wide(MODULE), '…this module does not open on one of those either…');
+  eq(sources.filter(wide).length, LAYERS_OPENING_ON_WIDE_BANNER, '…the count over the whole chain being LAYERS_OPENING_ON_WIDE_BANNER…');
+  eq(LAYERS_OPENING_ON_WIDE_BANNER, PRIOR_LAYERS_OPENING_ON_WIDE_BANNER, '…the SAME number: neither shape count moved, as the audit forecast');
+  // THE THIRD CHAIN-WIDE COUNT, and the one that moved: layers whose
+  // contract pins a non-empty MONOLITH_DEPENDENCIES. Counted over the suite with
+  // this contract in it, then compared with the figure the contract that carries
+  // it pins. This contract pins one monolith function, so it is among them.
+  const contractsPinning = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => /-boundary-contract\.test\.js$/.test(f))
-    .map((f) => fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))
-    .filter((src) => {
+    .map((f) => ({ f, src: fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8') }))
+    .filter(({ src }) => {
       const m = src.match(/^const MONOLITH_DEPENDENCIES = (\[[^\]]*\]);$/m);
       if (!m) return false;
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
-    });
-  eq(pinning.length, LAYERS_WITH_A_DEPENDENCY,
+    }).map((x) => x.f);
+  eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
     'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
+  ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) >= 0, '…this contract being one of them…');
+  eq(MONOLITH_DEPENDENCIES.length, 1, '…it pinning the non-empty list of its one monolith binding, `S`, which is why the count moved, as the audit forecast…');
+  eq(contractsPinning.filter((f) => f !== path.basename(CONTRACT_REL)).length, PRIOR_LAYERS_WITH_A_DEPENDENCY,
+    '…PRIOR_LAYERS_WITH_A_DEPENDENCY of the others pinning one, so it is the next of them and the count is one higher…');
+  eq(LAYERS_WITH_A_DEPENDENCY, PRIOR_LAYERS_WITH_A_DEPENDENCY + 1, '…by exactly one…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
     .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
-  '…which is the figure the contract that carries it pins');
-  ok(MONOLITH_DEPENDENCIES.length > 0, '…and this cut pins a NON-EMPTY list, its one monolith binding, `S`, so that count WOULD move, to LAYERS_WITH_A_DEPENDENCY + 1: of the three chain-wide counts, that is the one that moves');
+  '…and the figure the contract that carries it pins is that same LAYERS_WITH_A_DEPENDENCY');
 }
-// WHAT THE CUT WOULD COST THE DOCUMENT, forecast here so Phase 2 can be held
-// to it the way the last cycle held this one to its own forecast.
-eq(TAG_IF_CUT.length, RAW_CHARS - NET_REDUCTION,
-  'the tag it would add is RAW_CHARS less NET_REDUCTION units');
-eq(TAG_IF_CUT, '<script src="./' + MODULE_REL_IF_CUT + '"></script>\n',
-  '…and names the module this audit recommends');
-eq(BASE_CHARS - NET_REDUCTION, INDEX_AFTER, 'index.html would land at INDEX_AFTER');
+// WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
+// anything moved, and §9 holds the shipped document to them.
+eq(UNDO.TAG.length, RAW_CHARS - NET_REDUCTION,
+  'the tag it added is RAW_CHARS less NET_REDUCTION units');
+eq(UNDO.TAG, '<script src="./' + MODULE_REL + '"></script>\n',
+  '…and names the module this layer shipped');
+eq(BASE_CHARS - NET_REDUCTION, INDEX_AFTER, 'index.html lands at INDEX_AFTER');
 eq(CODE_CHARS - RAW_CHARS, RESIDUAL_MONOLITH, '…leaving RESIDUAL_MONOLITH of inline code');
 eq(LOCAL_SCRIPTS + 1, LOCAL_SCRIPTS_AFTER, '…and LOCAL_SCRIPTS_AFTER local scripts');
-eq(count(INDEX, TAG_IF_CUT), 0, '…and no such tag exists yet');
-eq(LOCALS[LOCALS.length - 1], 'js/services/option-chain-error-helpers.js',
-  '…the tag would follow the newest local script, which is the previous layer');
+eq(count(INDEX, UNDO.TAG), 0,
+  '…and the RECONSTRUCTED base carries no such tag, which is what makes it the base');
+
 // ─────────────────────────────────────────────────────────────────────────────
-section('9. Production is byte-identical to the base');
+section('9. The relocation is the whole of the production change');
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
+  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
+  // production paths, the document and the new module, and no third.
   const all = Array.from(new Set(changed.concat(status)));
-  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')), [],
-    'NOT ONE production file differs from the base: this PR measures, it does not move');
+  eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
+    ['index.html', MODULE_REL].sort(),
+    'exactly TWO production paths differ from the base: the document and the new module');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
-    '…and the base commit\'s index.html is the length measured above');
-  ok(!fs.existsSync(path.join(ROOT, MODULE_REL_IF_CUT)),
-    '…with the module this audit recommends not yet written');
+    '…and the base commit\'s index.html is the length the reconstruction reproduces');
+  eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),
+    '…byte for byte: the reconstruction IS that document, not a copy of its numbers');
+  ok(!git(['show', BASE_SHA + ':index.html']).includes(UNDO.TAG),
+    '…and the base carried no tag for this module');
+  ok(fs.existsSync(path.join(ROOT, MODULE_REL)),
+    '…while the module the audit recommended is now written');
+
+  // THE SHIPPED DOCUMENT is what the audit predicted, to the byte.
+  eq(LIVE_INDEX.length, UNDO.EXTRACTED_CHARS, 'the shipped index.html is the extracted length');
+  eq(Buffer.byteLength(LIVE_INDEX, 'utf8'), UNDO.EXTRACTED_UTF8, '…its byte length');
+  eq((LIVE_INDEX.match(/\n/g) || []).length, UNDO.EXTRACTED_LF, '…its line-feed count');
+  eq(sha256(LIVE_INDEX), UNDO.EXTRACTED_SHA256, '…and its digest');
+  eq(LIVE_INDEX.length, INDEX_AFTER,
+    '…which is INDEX_AFTER, the figure the audit forecast before anything moved');
+  eq(LIVE_MONOLITH.length, RESIDUAL_MONOLITH,
+    '…and the residual inline monolith is RESIDUAL_MONOLITH, the other forecast');
+  eq(LIVE_LOCALS.length, UNDO.EXTRACTED_LOCAL_SCRIPTS,
+    '…carrying one more local script than the base');
+  eq(LOCALS.length + 1, LIVE_LOCALS.length,
+    '…exactly one more, measured against the reconstruction rather than against a pin');
+  eq(count(LIVE_INDEX, UNDO.TAG), 1, 'exactly one tag for this module');
+  eq(count(LIVE_INDEX, UNDO.ANCHOR_TAG + UNDO.TAG + UNDO.INLINE_OPEN), 1,
+    '…immediately after the previous layer and immediately before the inline monolith');
+
+  // THE MODULE IS THE AUDITED BLOCK VERBATIM — asserted as bytes, not numbers.
+  eq(MODULE.length, UNDO.MODULE_CHARS, 'the shipped module is MODULE_CHARS units');
+  eq(Buffer.byteLength(MODULE, 'utf8'), UNDO.MODULE_UTF8, '…its byte length');
+  eq((MODULE.match(/\n/g) || []).length, UNDO.MODULE_LF, '…its line-feed count');
+  eq(sha256(MODULE), UNDO.MODULE_SHA256, '…and its digest');
+  eq(MODULE, CODE.slice(RAW_AT_IN_CODE, BODY_END_IN_CODE),
+    'the module IS the audited block of the reconstructed monolith, byte for byte — not a '
+    + 'copy of its measurements');
+  eq(sha256(MODULE), BODY_SHA256,
+    '…and its digest is the BODY_SHA256 the audit pinned before the move');
+  eq(CODE.slice(RAW_AT_IN_CODE, RAW_END_IN_CODE), MODULE + UNDO.SEPARATOR,
+    '…with the raw fragment being the module plus the one structural separator');
+  ok(MODULE.endsWith(BODY_ENDING) && !MODULE.endsWith('\n\n'),
+    '…and the module ends on a real line of code, not on the separator it gave up');
+  ok(MODULE.startsWith(DECL_FIRST_LINE_PREFIX),
+    '…and OPENS on the declaration of ' + OWNER + ', DECL_FIRST_LINE_PREFIX, there being no documentation above it: the boundary §2 defends');
+  eq(MODULE.split('\n')[1].slice(0, SECOND_FIRST_LINE_PREFIX.length), SECOND_FIRST_LINE_PREFIX,
+    '…its second line the declaration of ' + OWNER_LAST + ', SECOND_FIRST_LINE_PREFIX');
+  eq(Buffer.byteLength(MODULE, 'utf8') - MODULE.length, 2 * EM_DASHES,
+    '…its UTF-8 length longer than its UTF-16 length by two bytes for each em dash…');
+  eq((MODULE.match(/[^\x00-\x7F]/g) || []).length, NON_ASCII_CHARS, '…of which it holds NON_ASCII_CHARS…');
+  eq((MODULE.match(/—/g) || []).length, EM_DASHES, '…EM_DASHES of them an em dash, the whole of the non-ASCII…');
+  ok(MODULE.split('\n').filter((l) => /[^\x00-\x7F]/.test(l)).every((l) => !l.trim().startsWith('//')),
+    '…every one on a line of CODE, inside the string literal `tickerCtx` returns for a flagged earnings date, so the move preserves what the model is sent, byte for byte');
+}
+// THE TAG'S POSITION. Nothing here shows the load order to be load-bearing (§3 says what it does not measure),
+// and it is pinned all the same: last of the local scripts, immediately before the inline monolith, whose
+// consumer stays behind.
+{
+  const tagIndex = LIVE_LOCALS.indexOf(MODULE_REL);
+  eq(tagIndex, TAG_LOCAL_INDEX, 'the tag is local script number TAG_LOCAL_INDEX + 1, found by NAME…');
+  eq(LIVE_LOCALS[LIVE_LOCALS.length - 1], MODULE_REL,
+    '…and it is the LAST local script, so nothing loads after it that could depend on it');
+  eq(LIVE_LOCALS[tagIndex - 1], 'js/services/option-chain-error-helpers.js',
+    '…immediately after the previous layer');
+  {
+    const at = LIVE_TAGS.findIndex((t) => t.src === './' + MODULE_REL);
+    ok(at >= 0 && !LIVE_TAGS[at + 1].src, '…with the inline monolith, whose consumer calls it, the very next script');
+  }
+  for (const name of OWNERS_EXPECTED) {
+    eq(count(LIVE_MONOLITH, 'function ' + name + '('), 0,
+      'the declaration of ' + name + ' has left the monolith…');
+  }
+  // THE SHIPPED DOCUMENT STILL NAMES BOTH FUNCTIONS at the four sites in the two consumers: the block's own text left, the
+  // calls did not.
+  eq(refSites(LIVE_MONOLITH, OWNER).length + refSites(LIVE_MONOLITH, OWNER_LAST).length, CONSUMER_SITES,
+    '…while the shipped monolith names ' + OWNER + ' and ' + OWNER_LAST + ' at the CONSUMER_SITES sites that stayed, two each…');
+  eq([refSites(LIVE_MONOLITH, OWNER).length, refSites(LIVE_MONOLITH, OWNER_LAST).length], [2, 2], '…two for each function…');
+  eq(refSites(MASKED, OWNER).concat(refSites(MASKED, OWNER_LAST)).filter((at) => at < RAW_AT_IN_CODE || at >= RAW_END_IN_CODE).length, CONSUMER_SITES,
+    '…the same CONSUMER_SITES the reconstructed base held from outside the block…');
+  // The module itself names both, the control that makes the counts below measurements.
+  ok(refSites(MODULE, OWNER).length >= 1 && refSites(MODULE, OWNER_LAST).length >= 1,
+    'control — the same count over the module itself finds both names…');
+  eq(LIVE_LOCALS.filter((rel) => rel !== MODULE_REL).reduce((t2, rel) => {
+    const src = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    return t2 + refSites(src, OWNER).length + refSites(src, OWNER_LAST).length;
+  }, 0), 0,
+  '…and not one other local script names either function, so the module is reached only from the monolith');
+  eq(scanTopLevelDeclarations(MODULE).map((d) => d.name), OWNERS_EXPECTED,
+    'the module declares exactly its two owners and nothing else');
+  eq(scanTopLevelDeclarations(LIVE_MONOLITH).filter((d) => d.name === OWNER_BEFORE).length, 1,
+    '…while ' + OWNER_BEFORE + ' stays declared in the monolith');
+  eq(scanTopLevelDeclarations(LIVE_MONOLITH).filter((d) => MONOLITH_DEPENDENCIES.indexOf(d.name) >= 0).map((d) => d.name).sort(),
+    MONOLITH_DEPENDENCIES.slice().sort(), '…and so does the one binding the module reads at call time, `S`');
+  eq(scanTopLevelDeclarations(LIVE_MONOLITH).filter((d) => CONSUMERS.indexOf(d.name) >= 0).map((d) => d.name).sort(),
+    CONSUMERS.slice().sort(), '…and its two consumers, which call the module\'s functions');
+  eq(scanTopLevelDeclarations(LIVE_MONOLITH).filter((d) => d.name === NEXT_DECL).length, 1,
+    '…and ' + NEXT_DECL + ', which follows the cut, stays too');
+  eq(count(LIVE_MONOLITH, JOIN_AFTER_CUT), 1,
+    '…and the shipped monolith holds the join the audit forecast, the closing brace of ' + OWNER_BEFORE + ' directly against `async function ' + NEXT_DECL + '`, once…');
+  eq(LIVE_MONOLITH.indexOf(JOIN_AFTER_CUT), RAW_AT_IN_CODE - 2, '…at the place the cut was made…');
+  eq(count(LIVE_MONOLITH, JOIN_AFTER_CUT_PREFIX), JOINS_LIKE_THE_CUT_BEFORE + 1,
+    '…one more of a shape the document held JOINS_LIKE_THE_CUT_BEFORE times already…');
+  eq(count(LIVE_MONOLITH, JOIN_BEFORE_CUT), 0, '…and the join of that brace against this block gone with the block');
+  // CONTROL: the same predicate fails on a document with the tag moved, so the
+  // pin is a measurement and not a statement that is true of any document.
+  const moved = UNDO.TAG + LIVE_INDEX.replace(UNDO.TAG, '');
+  const movedLocals = APP_LOADER.parseScriptTags(moved)
+    .filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
+  ok(movedLocals.indexOf(MODULE_REL) !== TAG_LOCAL_INDEX && movedLocals[movedLocals.length - 1] !== MODULE_REL,
+    'control — with the tag moved to the top of the document, both of those pins would fail');
+}
+// THE UNDO'S REACHABLE GUARDS, each driven by PLANTING the exact violation it
+// claims to catch. A guard that is never made to fire is a guard nobody has
+// checked, and its EXACT message is asserted so a mutant cannot pass by raising
+// some other error. BASE_IDENTITY is deliberately absent: the helper's header
+// states it is a redundant final gate, unreachable once the module digest and
+// the whole-document digest have both passed.
+{
+  const E = 'AI_SCAN_CONTEXT_UNDO_';
+  throwsWith(() => UNDO.undoAiScanContext(null, MODULE), E + 'BAD_INPUT',
+    'a non-string document is refused');
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, null), E + 'BAD_INPUT',
+    '…and a non-string module');
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, MODULE.slice(0, -1)),
+    E + 'MODULE_IDENTITY', 'a truncated module is refused');
+  // A MODULE THAT RE-ABSORBED THE SEPARATOR IS CAUGHT BY SIZE, not by the
+  // separator gate — it is 1,541 units, not 1,540 — which is exactly what the
+  // helper's own gate-1 comment claims.
+  eq((MODULE + '\n').length, RAW_CHARS,
+    'control — a module that re-absorbed the separator is one unit too long, the raw length');
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, MODULE + '\n'),
+    E + 'MODULE_IDENTITY', '…so SIZE refuses it, before the separator gate is reached');
+  {
+    // THE SEPARATOR GATE, reached on its own terms: a module of the RIGHT length
+    // and the RIGHT line-feed count that still does not end on a line of code.
+    // The naive mutant — swap the trailing `}\n` for `\n\n` — does NOT reach it:
+    // that moves the line-feed count and gate 1 refuses it first. One LF is
+    // traded away elsewhere to keep the count, which is what makes the probe
+    // land on this gate rather than on the one above it.
+    const blankEnded = MODULE.slice(0, -2).replace('\n', ' ') + '\n\n';
+    eq(blankEnded.length, MODULE.length, 'control — the blank-ended module is the right length');
+    eq(Buffer.byteLength(blankEnded, 'utf8'), Buffer.byteLength(MODULE, 'utf8'), '…the right byte length');
+    eq((blankEnded.match(/\n/g) || []).length, (MODULE.match(/\n/g) || []).length,
+      '…and has the same line-feed count, so only the separator gate can refuse it');
+    ok(blankEnded.endsWith('\n\n'), '…and it really does end on a blank line');
+    throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, blankEnded),
+      E + 'MODULE_SEPARATOR',
+      '…and the separator gate refuses it with its OWN error, so a caller learns which '
+      + 'mistake it made');
+  }
+  {
+    // Same length, same line-feed count, different bytes: only the digest can
+    // catch this one, which is why the digest is a separate gate.
+    const swapped = MODULE.replace('scanData', 'scanDatA');
+    eq(swapped.length, MODULE.length, 'control — the tampered module is the same length');
+    ok(swapped !== MODULE, '…and really does differ from it');
+    throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, swapped),
+      E + 'MODULE_IDENTITY', '…and a same-length tampered module is still refused');
+  }
+  {
+    // The byte count is pinned on its own: swapping a 1-byte letter for a 2-byte
+    // one keeps the length and the line-feed count and moves only the byte length.
+    const widened = MODULE.replace('t', 'é');
+    eq(widened.length, MODULE.length, 'control — the widened module has the same UTF-16 length');
+    eq(Buffer.byteLength(widened, 'utf8') - Buffer.byteLength(MODULE, 'utf8'), 1,
+      '…and is one UTF-8 byte longer');
+    throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX, widened),
+      E + 'MODULE_IDENTITY', '…and is refused all the same');
+  }
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX.replace(UNDO.TAG, ''), MODULE),
+    E + 'TAG_IDENTITY', 'a document with no tag is refused');
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX + UNDO.TAG, MODULE),
+    E + 'TAG_IDENTITY', '…and one with a duplicate tag');
+  {
+    // The tag moved to the top of the document: present exactly once, but no
+    // longer adjacent to the anchor and the inline open.
+    const moved = UNDO.TAG + LIVE_INDEX.replace(UNDO.TAG, '');
+    eq(count(moved, UNDO.TAG), 1, 'control — the moved tag is still present exactly once');
+    throwsWith(() => UNDO.undoAiScanContext(moved, MODULE),
+      E + 'TAG_ADJACENCY', '…so it is ADJACENCY that refuses a reordered tag, not identity');
+  }
+  throwsWith(() => UNDO.undoAiScanContext(LIVE_INDEX.replace('<body', '<body '), MODULE),
+    E + 'EXTRACTED_IDENTITY', 'foreign content anywhere in the document is refused');
+  throwsWith(() => UNDO.undoAiScanContext(INDEX, MODULE),
+    E + 'TAG_IDENTITY',
+    'and the ALREADY-UNEXTRACTED document is refused too: undoing twice is not a no-op');
+  // isApplied is ROUTING, not safety — the helper's header says so.
+  eq(UNDO.isApplied(LIVE_INDEX), true, 'isApplied is true for the shipped document');
+  eq(UNDO.isApplied(INDEX), false, '…and false once this layer is peeled off');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1567,17 +1895,32 @@ section('10. The change set, the ratchet and the budget');
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const all = Array.from(new Set(changed.concat(status))).sort();
-  ok(all.indexOf(AUDIT_REL) >= 0, 'this audit is part of the change');
-  eq(fs.readFileSync(path.join(ROOT, AUDIT_REL), 'utf8'), fs.readFileSync(__filename, 'utf8'),
-    '…and AUDIT_REL is the path of THIS file, byte for byte');
-  ok(all.indexOf(AUDIT_SPEC_REL) >= 0, '…and its mutation spec');
-  ok(all.every((rel) => rel.startsWith('tests/')), '…and every changed path is a test artifact');
-  // THE RATCHET.
+  // THE AUDIT IS GONE, AND THIS FILE IS WHAT REPLACED IT — one for one, which
+  // is the rhythm. The audit asserted AUDIT_REL was its own path; that claim is
+  // inverted here rather than dropped.
+  ok(all.indexOf(AUDIT_REL) >= 0, 'the audit is part of the change — as a deletion');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_REL)), '…and its path no longer exists');
+  eq(git(['cat-file', '-e', BASE_SHA + ':' + AUDIT_REL]), '',
+    '…while the base commit DID carry it, so the deletion is of something real');
+  eq(CONTRACT_REL, path.relative(ROOT, __filename),
+    'CONTRACT_REL is the path of THIS file, which is what the audit became');
+  ok(all.indexOf(CONTRACT_REL) >= 0, '…and it is part of the change');
+  ok(!fs.existsSync(path.join(ROOT, AUDIT_SPEC_REL)), 'the audit\'s spec is gone too');
+  ok(fs.existsSync(path.join(ROOT, CONTRACT_SPEC_REL)), '…replaced by this contract\'s');
+  ok(fs.existsSync(path.join(ROOT, UNDO_REL)), 'and the undo helper ships');
+  eq(path.join(ROOT, UNDO_REL), require.resolve('./lib/ai-scan-context-undo.js'),
+    '…and UNDO_REL is the very file this contract loads its reconstruction from, not merely a helper that exists');
+  eq(all.filter((rel) => !rel.startsWith('tests/') && rel !== 'index.html'
+    && !rel.startsWith('js/')), [],
+  '…with every remaining changed path being a test artifact, the document or a module');
+  // THE RATCHET. The audit left and this contract arrived, so the suite file
+  // count is UNCHANGED — which is asserted against git rather than assumed from
+  // the fact that a rename happened.
   eq(fs.readdirSync(path.join(ROOT, 'tests')).filter((f) => f.endsWith('.test.js')).length,
-    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files with this audit in it');
+    TEST_FILE_COUNT, 'the suite is TEST_FILE_COUNT files');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/'])
-    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, TEST_FILE_COUNT - 1,
-  '…one more than the base commit carried, read out of git');
+    .split('\n').filter((f) => /^tests\/[^/]+\.test\.js$/.test(f)).length, TEST_FILE_COUNT,
+  '…the same count the base commit carried, read out of git: one file left as one arrived');
   const RATCHETED = /^const TEST_FILE_COUNT = \d+;$/m;
   const contracts = fs.readdirSync(path.join(ROOT, 'tests'))
     .filter((f) => f.endsWith('.test.js') &&
@@ -1585,21 +1928,21 @@ section('10. The change set, the ratchet and the budget');
   eq(contracts.length, RATCHETED_CONTRACTS, 'RATCHETED_CONTRACTS files pin the suite file count');
   ok(contracts.every((f) => new RegExp('^const TEST_FILE_COUNT = ' + TEST_FILE_COUNT + ';$', 'm')
     .test(fs.readFileSync(path.join(ROOT, 'tests', f), 'utf8'))),
-  '…and every one of them now pins the ratcheted value, this audit included');
-  ok(contracts.indexOf(path.basename(AUDIT_REL)) >= 0,
-    '…this audit being one of them, so it ratchets itself rather than exempting itself');
+  '…and every one of them pins the same value, this contract included');
+  ok(contracts.indexOf(path.basename(CONTRACT_REL)) >= 0,
+    '…this contract being one of them, so it ratchets itself rather than exempting itself');
   // THE BUDGET.
-  const auditSpec = require(path.join(ROOT, AUDIT_SPEC_REL));
-  eq(auditSpec.target, AUDIT_REL, 'the audit spec targets this audit');
+  const contractSpec = require(path.join(ROOT, CONTRACT_SPEC_REL));
+  eq(contractSpec.target, CONTRACT_REL, 'this contract\'s spec targets this contract');
   const coverage = fs.readFileSync(path.join(ROOT, COVERAGE_CONTRACT), 'utf8');
   const declaredNow = Number(coverage.match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]);
   const budgetNow = Number(coverage.match(/^const MUTANT_BUDGET = (\d+);$/m)[1]);
   eq(Number(git(['show', BASE_SHA + ':' + COVERAGE_CONTRACT])
     .match(/^const DECLARED_MUTANTS = (\d+);$/m)[1]), BASE_DECLARED_MUTANTS,
   'the base declared BASE_DECLARED_MUTANTS mutants');
-  eq(declaredNow, BASE_DECLARED_MUTANTS + auditSpec.mutants.length - RETIRED_MUTANTS,
-    '…and the live total is the base, LESS the spec this cycle retires, PLUS this audit\'s own '
-    + '— the arithmetic of the change rather than the total it happens to reach');
+  eq(declaredNow, BASE_DECLARED_MUTANTS + contractSpec.mutants.length - RETIRED_MUTANTS,
+    '…and the live total is the base, LESS the audit spec this phase retires, PLUS this '
+    + 'contract\'s own — the arithmetic of the change rather than the total it reaches');
   eq(git(['ls-tree', '-r', '--name-only', BASE_SHA, 'tests/mutation-specs/'])
     .split('\n').filter(Boolean).length, BASE_SPECS,
   '…the base having carried BASE_SPECS specs, read out of git');
@@ -1609,23 +1952,23 @@ section('10. The change set, the ratchet and the budget');
   ok(declaredNow < budgetNow, '…and the declared total is under it');
   // ABSENCE ALONE IS NOT A PIN.
   ok(!fs.existsSync(path.join(ROOT, RETIRED_SPEC_REL)),
-    'the outgoing CONTRACT\'s spec is retired, in Phase 1 as the rhythm runs');
+    'the AUDIT\'s spec is retired, in Phase 2 as the rhythm runs');
   eq(git(['cat-file', '-e', BASE_SHA + ':' + RETIRED_SPEC_REL]), '',
     '…and that path is the one the base commit carried, not merely one that never existed');
-  ok(fs.existsSync(path.join(ROOT, PREVIOUS_CONTRACT)),
-    '…while the CONTRACT it targeted still ships and still runs: the spec retires, not the file');
-  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + PREVIOUS_CONTRACT + "'") >= 0,
-    '…and it is the contract that retired spec TARGETED, not merely a contract that exists');
+  eq(RETIRED_SPEC_REL, AUDIT_SPEC_REL,
+    'the retired path IS the audit\'s spec: the retirement is in phase order, and it is the '
+    + 'outgoing CONTRACT\'s spec that went in Phase 1 instead');
+  ok(git(['show', BASE_SHA + ':' + RETIRED_SPEC_REL]).indexOf("target: '" + AUDIT_REL + "'") >= 0,
+    '…and it is the audit that retired spec TARGETED, not merely a file that existed');
   const layerSpecs = fs.readdirSync(path.join(ROOT, 'tests/mutation-specs'))
     .filter((f) => /\.spec\.js$/.test(f) && f !== 'mutation-coverage-contract.spec.js');
   eq(layerSpecs.length, LAYER_SPECS, 'exactly LAYER_SPECS non-coverage spec is committed');
-  eq(layerSpecs, [path.basename(AUDIT_SPEC_REL)], '…and during Phase 1 it is THIS audit\'s');
+  eq(layerSpecs, [path.basename(CONTRACT_SPEC_REL)], '…and it is THIS contract\'s');
 }
 
 
-
 console.log('\n' + pass + ' assertions passed.');
-console.log('AI_SCAN_CONTEXT_AUDIT_OK');
+console.log('AI_SCAN_CONTEXT_CONTRACT_OK');
 }
 
 main();

@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const AI_SCAN_CONTEXT = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON = require('./lib/portfolio-beta-missing-reason-undo.js');
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = require('./lib/portfolio-backend-squeeze-extract-undo.js');
@@ -219,6 +220,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = AI_SCAN_CONTEXT.undoAiScanContext(
+    doc, read('js/services/ai-scan-context.js'));
   doc = OPTION_CHAIN_ERROR_HELPERS.undoOptionChainErrorHelpers(
     doc, read('js/services/option-chain-error-helpers.js'));
   doc = PORTFOLIO_BETA_MISSING_REASON.undoPortfolioBetaMissingReason(
