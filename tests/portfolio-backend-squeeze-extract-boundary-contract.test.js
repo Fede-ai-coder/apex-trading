@@ -128,6 +128,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-backend-squeeze-extract-undo.js');
+const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
@@ -418,6 +419,10 @@ const PRIOR_LAYERS_OPENING_ON_WIDE_BANNER = 29;
 const LAYERS_OPENING_ON_WIDE_BANNER = 29;
 const PRIOR_LAYERS_WITH_A_DEPENDENCY = 24;
 const LAYERS_WITH_A_DEPENDENCY = 25;
+// The count above is the figure AT THIS LAYER. The later layer that pins a NON-EMPTY list
+// instead IS among the contracts counted over the suite, and is set aside to recover the
+// figure at this layer rather than left to make it drift.
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['option-chain-error-helpers-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 2846;
@@ -478,10 +483,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const LIVE_INDEX = PORTFOLIO_BETA_MISSING_REASON_U.isApplied(HEAD_INDEX)
-  ? PORTFOLIO_BETA_MISSING_REASON_U.undoPortfolioBetaMissingReason(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-beta-missing-reason.js'), 'utf8'))
+const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(HEAD_INDEX)
+  ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
   : HEAD_INDEX;
+const LIVE_INDEX = PORTFOLIO_BETA_MISSING_REASON_U.isApplied(PRE_OPTION_CHAIN_ERROR_HELPERS)
+  ? PORTFOLIO_BETA_MISSING_REASON_U.undoPortfolioBetaMissingReason(
+      PRE_OPTION_CHAIN_ERROR_HELPERS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-beta-missing-reason.js'), 'utf8'))
+  : PRE_OPTION_CHAIN_ERROR_HELPERS;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1658,16 +1667,19 @@ section('8. Where this layer sits, and what it changed');
       if (!m) return false;
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     }).map((x) => x.f);
-  eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
-    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
+  ok(LATER_CONTRACTS_WITH_A_DEPENDENCY.every((f) => contractsPinning.indexOf(f) >= 0),
+    'every later layer that pins a non-empty list is among the contracts counted…');
+  const atThisLayer = contractsPinning.filter((f) => LATER_CONTRACTS_WITH_A_DEPENDENCY.indexOf(f) < 0);
+  eq(atThisLayer.length, LAYERS_WITH_A_DEPENDENCY,
+    '…and LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES at this layer, counted over the suite without them…');
   ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) >= 0, '…this contract being one of them…');
   eq(MONOLITH_DEPENDENCIES.length, 2, '…it pinning the non-empty list of its two monolith functions, which is why the count moved, as the audit forecast…');
-  eq(contractsPinning.filter((f) => f !== path.basename(CONTRACT_REL)).length, PRIOR_LAYERS_WITH_A_DEPENDENCY,
+  eq(atThisLayer.filter((f) => f !== path.basename(CONTRACT_REL)).length, PRIOR_LAYERS_WITH_A_DEPENDENCY,
     '…PRIOR_LAYERS_WITH_A_DEPENDENCY of the others pinning one, so it is the next of them and the count is one higher…');
   eq(LAYERS_WITH_A_DEPENDENCY, PRIOR_LAYERS_WITH_A_DEPENDENCY + 1, '…by exactly one…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
-    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
-  '…and the figure the contract that carries it pins is that same LAYERS_WITH_A_DEPENDENCY');
+    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY + LATER_CONTRACTS_WITH_A_DEPENDENCY.length,
+  '…and the figure the contract that carries the live count pins now, with the later layers included');
 }
 // WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
 // anything moved, and §9 holds the shipped document to them.
@@ -1694,7 +1706,7 @@ section('9. The relocation is the whole of the production change');
   // the document, this layer's module, and the module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-beta-missing-reason.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
