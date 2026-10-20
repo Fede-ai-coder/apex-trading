@@ -128,7 +128,7 @@ const EXTERNAL_CODE = {
 const GENERATED_BY = ['showDetail'];
 const STATIC_HANDLER = 'onclick="showAccountPanel()"';
 const MODULE_POSITION = 59;
-const PARTS_TOTAL = 107;
+const PARTS_TOTAL = 108;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -263,6 +263,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
 const PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U = require('./lib/portfolio-backend-squeeze-extract-undo.js');
 const PORTFOLIO_REGIME_BADGE_HTML_U = require('./lib/portfolio-regime-badge-html-undo.js');
@@ -307,10 +308,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_PORTFOLIO_BETA_MISSING_REASON = PORTFOLIO_BETA_MISSING_REASON_U.isApplied(LIVE_INDEX)
-  ? PORTFOLIO_BETA_MISSING_REASON_U.undoPortfolioBetaMissingReason(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-beta-missing-reason.js'), 'utf8'))
+const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(LIVE_INDEX)
+  ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_PORTFOLIO_BETA_MISSING_REASON = PORTFOLIO_BETA_MISSING_REASON_U.isApplied(PRE_OPTION_CHAIN_ERROR_HELPERS)
+  ? PORTFOLIO_BETA_MISSING_REASON_U.undoPortfolioBetaMissingReason(
+      PRE_OPTION_CHAIN_ERROR_HELPERS, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-beta-missing-reason.js'), 'utf8'))
+  : PRE_OPTION_CHAIN_ERROR_HELPERS;
 const PRE_PORTFOLIO_BACKEND_SQUEEZE_EXTRACT = PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U.isApplied(PRE_PORTFOLIO_BETA_MISSING_REASON)
   ? PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U.undoPortfolioBackendSqueezeExtract(
       PRE_PORTFOLIO_BETA_MISSING_REASON, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-backend-squeeze-extract.js'), 'utf8'))
@@ -679,7 +684,7 @@ eq(PARTS.findIndex((p) => p.src === MODULE_SRC), MODULE_POSITION, 'this module l
 // this module and the inline monolith.
 eq(PARTS[MODULE_POSITION + 1].src, './js/portfolio/backend-portfolios.js',
   '…followed by the backend-portfolios module, which was cut later');
-eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 47,
+eq(PARTS.findIndex((p) => !p.src), MODULE_POSITION + 48,
   '…and the inline monolith is that many positions on, one further with every layer cut since');
 {
   // The referencing set is DERIVED, not assumed.
@@ -758,11 +763,11 @@ const changed = Array.from(new Set(committed.concat(status))).sort();
 // well. One module per later layer, so the list is index.html + this module +
 // one entry per peel hop above — and that count is asserted, not narrated,
 // because the narrated one ("the four layers") was two cycles stale.
-const LATER_LAYERS = [PORTFOLIO_BETA_MISSING_REASON_U, PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U, PORTFOLIO_REGIME_BADGE_HTML_U, JOURNAL_EXPIRY_AUDIT_U, PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U, SCANNER_DSS_1D_CHART_U, SCANNER_STOCK_SCORING_U, SWING_CHART_CACHE_HELPERS_U, SCANNER_DSS_CHART_LOAD_GUARD_U, OPTION_STREAMER_DIAGNOSTICS_U, BACKEND_POSITIONS_ENRICHED_U, RS_QUALITY_CHECK_U, SCANNER_DXLINK_PRICES_U, PORTFOLIO_MISSING_UNDERLYINGS_GATE_U, PORTFOLIO_PRICE_FRESHNESS_U, PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U, PORTFOLIO_GREEKS_FRESHNESS_U, RS_SKIP_BREAKDOWN_HTML_U, PORTFOLIO_TECHNICAL_BATCH_FETCH_U, PORTFOLIO_SNAPSHOT_FALLBACK_U, BACKEND_FULL_REFRESH_VALIDATION_U, PORTFOLIO_LEG_QUANTITY_U, APEX_STORAGE_RECOVERY_U, PORTFOLIO_SPY_PRICE_U, PORTFOLIO_TECHNICAL_PARITY_U, DXLINK_GREEKS_FETCH_U, JOURNAL_MAP_AUDIT_U, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
+const LATER_LAYERS = [OPTION_CHAIN_ERROR_HELPERS_U, PORTFOLIO_BETA_MISSING_REASON_U, PORTFOLIO_BACKEND_SQUEEZE_EXTRACT_U, PORTFOLIO_REGIME_BADGE_HTML_U, JOURNAL_EXPIRY_AUDIT_U, PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U, SCANNER_DSS_1D_CHART_U, SCANNER_STOCK_SCORING_U, SWING_CHART_CACHE_HELPERS_U, SCANNER_DSS_CHART_LOAD_GUARD_U, OPTION_STREAMER_DIAGNOSTICS_U, BACKEND_POSITIONS_ENRICHED_U, RS_QUALITY_CHECK_U, SCANNER_DXLINK_PRICES_U, PORTFOLIO_MISSING_UNDERLYINGS_GATE_U, PORTFOLIO_PRICE_FRESHNESS_U, PORTFOLIO_UNDERLYING_FALLBACK_PLAN_U, PORTFOLIO_GREEKS_FRESHNESS_U, RS_SKIP_BREAKDOWN_HTML_U, PORTFOLIO_TECHNICAL_BATCH_FETCH_U, PORTFOLIO_SNAPSHOT_FALLBACK_U, BACKEND_FULL_REFRESH_VALIDATION_U, PORTFOLIO_LEG_QUANTITY_U, APEX_STORAGE_RECOVERY_U, PORTFOLIO_SPY_PRICE_U, PORTFOLIO_TECHNICAL_PARITY_U, DXLINK_GREEKS_FETCH_U, JOURNAL_MAP_AUDIT_U, PORTFOLIO_TECHNICAL_ALIGNMENT_DEBUG_U, PORTFOLIO_TECHNICAL_MERGE_U, BACKEND_POSITIONS_AGGREGATE_U, SWING_DIRECTION_U, SWING_WEEKLY_CANDLES_U, JOURNAL_SNAPSHOT_HELPERS_U, CHART_INTERACTIONS_U, SCANNER_EARNINGS_U, SCANNER_IVR_U, VEGA_MONITOR_U, STRATEGY_TEMPLATES_U, DXLINK_GREEKS_U, SNAPSHOT_PREFETCH_U, BACKEND_CANDLES_U, RICH_SNAPSHOT_U, CANDLE_CHART_U,
   TRAFFIC_LIGHT_U, EXPIRY_MANUAL_U, BACKEND_PORTFOLIOS_U];
 const production = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
 eq(production,
-  ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', MODULE_REL,
+  ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', MODULE_REL,
    'js/portfolio/portfolio-dxlink-greeks.js',
    'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js',
    'js/portfolio/portfolio-vega-monitor.js', 'js/services/journal-map-audit.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js',
@@ -794,7 +799,7 @@ ok(changed.every((rel) => rel === 'index.html' || rel === 'js/portfolio/portfoli
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' || rel === 'js/services/option-chain-error-helpers.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
   rel === 'js/config/strategy-templates.js' ||
   rel === 'js/portfolio/portfolio-expiry-manual.js' || rel === 'js/portfolio/portfolio-traffic-light.js' || rel === 'js/ui/backend-candle-store-chart.js' || rel === 'js/services/journal-rich-snapshot.js' || rel === 'js/portfolio/portfolio-backend-candles.js' || rel === 'js/services/journal-snapshot-prefetch.js' || rel === 'js/portfolio/backend-portfolios.js' || rel === 'js/portfolio/portfolio-dxlink-greeks.js' ||
