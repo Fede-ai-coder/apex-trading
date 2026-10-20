@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
@@ -493,10 +494,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(SHIPPED_INDEX)
-  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(SHIPPED_INDEX)
+  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(PRE_APEX_PARITY_COMPARE)
+  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
+      PRE_APEX_PARITY_COMPARE, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+  : PRE_APEX_PARITY_COMPARE;
 const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(PRE_AI_SCAN_CONTEXT)
   ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
       PRE_AI_SCAN_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
