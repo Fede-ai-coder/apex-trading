@@ -309,6 +309,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/portfolio/portfolio-beta-missing-reason.js',
   './js/services/option-chain-error-helpers.js',
   './js/services/ai-scan-context.js',
+  './js/services/apex-parity-compare.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2876,7 +2877,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 108,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 109,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
@@ -3296,23 +3297,24 @@ deepEq(BASE_NO_DSB.filter(function (p) {
   // service to be evaluated BEFORE the monolith. Note the exposure is wrapped in
   // try/catch, so a wrong script order would NOT throw: it would silently leave the
   // debug handle undefined. This predicate is what makes that order regression loud.
-  eq(deps.length, 13, 'the real document has exactly 13 cross-script LOAD-TIME dependencies (including Manual Import window exposure)');
+  eq(deps.length, 14, 'the real document has exactly 14 cross-script LOAD-TIME dependencies (including Manual Import window exposure)');
   deepEq(deps.map(function (d) { return d.name; }).sort(),
-    ['_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
+    ['_apexCompareCandleArrays', '_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
      '_isTransientFetchError', '_ttCallWithRetry', 'apexDebugBackendDirectionalPreview',
      'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot',
      'apexDebugSfsDetailChart', 'apexImportJournalTradesJson',
      'jAddTrade', 'jDeleteTrade', 'jUpdateTrade'],
-    'the 13 identifiers evaluated at load time from earlier modules');
+    'the 14 identifiers evaluated at load time from earlier modules');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))),
     ['./js/services/journal-backend-write-through.js', 'INLINE'],
     'cross-script load-time dependencies belong exactly to Journal Write-through and the inline monolith');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.provider; }))).sort(),
-    ['./js/api/backend-client.js', './js/services/backend-directional-snapshot-service.js',
+    ['./js/api/backend-client.js', './js/services/apex-parity-compare.js',
+     './js/services/backend-directional-snapshot-service.js',
      './js/services/candle-normalization.js', './js/services/journal-core.js',
      './js/services/journal-manual-import.js', './js/services/sfs-scan-service.js',
      './js/ui/backend-directional-preview.js'],
-    'those 13 come from exactly 7 provider modules');
+    'those 14 come from exactly 8 provider modules');
   deepEq(deps.filter(function (d) { return d.provider === SERVICE_SRC; })
              .map(function (d) { return d.name; }).sort(),
     ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],

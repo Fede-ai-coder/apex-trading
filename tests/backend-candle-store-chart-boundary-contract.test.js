@@ -164,6 +164,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
@@ -210,10 +211,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(LIVE_INDEX)
-  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(LIVE_INDEX)
+  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(PRE_APEX_PARITY_COMPARE)
+  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
+      PRE_APEX_PARITY_COMPARE, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+  : PRE_APEX_PARITY_COMPARE;
 const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(PRE_AI_SCAN_CONTEXT)
   ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
       PRE_AI_SCAN_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))

@@ -462,6 +462,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
@@ -508,10 +509,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(INDEX)
-  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
-      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(INDEX)
+  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
+      INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
   : INDEX;
+const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(PRE_APEX_PARITY_COMPARE)
+  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
+      PRE_APEX_PARITY_COMPARE, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+  : PRE_APEX_PARITY_COMPARE;
 const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(PRE_AI_SCAN_CONTEXT)
   ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
       PRE_AI_SCAN_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
@@ -746,15 +751,21 @@ const preManualIndex = MANUAL_U.undoJournalManualImport(preBackupRestore, MANUAL
 const preMigrationIndex = MIGRATION_U.undoJournalMigration(preManualIndex, MIGRATION_MODULE);
 eq(preMigrationIndex, expectedIndex,
   'undoing the later Migration extraction yields exactly audit base minus slice plus one Write-through tag');
-eq(INDEX.length, AI_SCAN_CONTEXT_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(INDEX), AI_SCAN_CONTEXT_U.EXTRACTED_SHA256,
+eq(INDEX.length, APEX_PARITY_COMPARE_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(INDEX), APEX_PARITY_COMPARE_U.EXTRACTED_SHA256,
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
+eq(PRE_APEX_PARITY_COMPARE.length, AI_SCAN_CONTEXT_U.EXTRACTED_CHARS,
+  'peeling the newest layer reaches the AI scan context layer’s extracted length');
+eq(sha256(PRE_APEX_PARITY_COMPARE), AI_SCAN_CONTEXT_U.EXTRACTED_SHA256,
+  'peeling the newest layer reaches the AI scan context layer’s extracted digest');
+// Re-terminated with the chain: the pins above moved up to the newest layer, so the
+// layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_AI_SCAN_CONTEXT.length, OPTION_CHAIN_ERROR_HELPERS_U.EXTRACTED_CHARS,
-  'peeling the newest layer reaches the option-chain error helpers layer’s extracted length');
+  'peeling the AI scan context layer reaches the option-chain error helpers layer’s extracted length');
 eq(sha256(PRE_AI_SCAN_CONTEXT), OPTION_CHAIN_ERROR_HELPERS_U.EXTRACTED_SHA256,
-  'peeling the newest layer reaches the option-chain error helpers layer’s extracted digest');
+  'peeling the AI scan context layer reaches the option-chain error helpers layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_OPTION_CHAIN_ERROR_HELPERS.length, PORTFOLIO_BETA_MISSING_REASON_U.EXTRACTED_CHARS,
@@ -1141,7 +1152,7 @@ const changed = Array.from(new Set(committedChanged.concat(statusChanged))).sort
 const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort();
 eq(changedProduction, [
   'index.html', 'js/config/strategy-templates.js', MODULE_REL,
-  'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-migration.js',
+  'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/services/journal-migration.js',
   'js/services/journal-manual-import.js', 'js/ui/journal-backup-restore.js',
   'js/services/journal-rich-snapshot.js',
   'js/services/journal-snapshot-helpers.js',

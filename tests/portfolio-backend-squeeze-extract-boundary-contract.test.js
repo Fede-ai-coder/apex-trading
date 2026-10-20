@@ -128,6 +128,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/portfolio-backend-squeeze-extract-undo.js');
+const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
 const PORTFOLIO_BETA_MISSING_REASON_U = require('./lib/portfolio-beta-missing-reason-undo.js');
@@ -423,7 +424,7 @@ const LAYERS_WITH_A_DEPENDENCY = 25;
 // The count above is the figure AT THIS LAYER. The later layer that pins a NON-EMPTY list
 // instead IS among the contracts counted over the suite, and is set aside to recover the
 // figure at this layer rather than left to make it drift.
-const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js'];
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js', 'apex-parity-compare-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 2846;
@@ -484,10 +485,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(HEAD_INDEX)
-  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(HEAD_INDEX)
+  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(PRE_APEX_PARITY_COMPARE)
+  ? AI_SCAN_CONTEXT_U.undoAiScanContext(
+      PRE_APEX_PARITY_COMPARE, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
+  : PRE_APEX_PARITY_COMPARE;
 const PRE_OPTION_CHAIN_ERROR_HELPERS = OPTION_CHAIN_ERROR_HELPERS_U.isApplied(PRE_AI_SCAN_CONTEXT)
   ? OPTION_CHAIN_ERROR_HELPERS_U.undoOptionChainErrorHelpers(
       PRE_AI_SCAN_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/option-chain-error-helpers.js'), 'utf8'))
@@ -1711,7 +1716,7 @@ section('9. The relocation is the whole of the production change');
   // the document, this layer's module, and the module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
