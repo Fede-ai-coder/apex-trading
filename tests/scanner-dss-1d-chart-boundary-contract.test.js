@@ -134,6 +134,7 @@ const {
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/scanner-dss-1d-chart-undo.js');
 const PORTFOLIO_STALE_MARK_SQUEEZE_STATE_U = require('./lib/portfolio-stale-mark-squeeze-state-undo.js');
+const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS_U = require('./lib/option-chain-error-helpers-undo.js');
@@ -427,7 +428,7 @@ const LAYERS_WITH_A_DEPENDENCY = 23;
 const LATER_CONTRACT = 'tests/portfolio-stale-mark-squeeze-state-boundary-contract.test.js';
 // The later layer that pins a NON-EMPTY list instead: it IS among the contracts counted,
 // and is set aside to recover the figure at this layer.
-const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['portfolio-regime-badge-html-boundary-contract.test.js', 'portfolio-backend-squeeze-extract-boundary-contract.test.js', 'option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js', 'apex-parity-compare-boundary-contract.test.js'];
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['portfolio-regime-badge-html-boundary-contract.test.js', 'portfolio-backend-squeeze-extract-boundary-contract.test.js', 'option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js', 'apex-parity-compare-boundary-contract.test.js', 'swing-trend-context-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 3504;
@@ -488,10 +489,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(HEAD_INDEX)
-  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
+const PRE_SWING_TREND_CONTEXT = SWING_TREND_CONTEXT_U.isApplied(HEAD_INDEX)
+  ? SWING_TREND_CONTEXT_U.undoSwingTrendContext(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(PRE_SWING_TREND_CONTEXT)
+  ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
+      PRE_SWING_TREND_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
+  : PRE_SWING_TREND_CONTEXT;
 const PRE_AI_SCAN_CONTEXT = AI_SCAN_CONTEXT_U.isApplied(PRE_APEX_PARITY_COMPARE)
   ? AI_SCAN_CONTEXT_U.undoAiScanContext(
       PRE_APEX_PARITY_COMPARE, fs.readFileSync(path.join(ROOT, 'js/services/ai-scan-context.js'), 'utf8'))
@@ -1776,7 +1781,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js'].sort(),
+    ['index.html', MODULE_REL, 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/services/swing-trend-context.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,

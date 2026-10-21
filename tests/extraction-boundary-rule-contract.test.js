@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const SWING_TREND_CONTEXT = require('./lib/swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT = require('./lib/ai-scan-context-undo.js');
 const OPTION_CHAIN_ERROR_HELPERS = require('./lib/option-chain-error-helpers-undo.js');
@@ -221,6 +222,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = SWING_TREND_CONTEXT.undoSwingTrendContext(
+    doc, read('js/services/swing-trend-context.js'));
   doc = APEX_PARITY_COMPARE.undoApexParityCompare(
     doc, read('js/services/apex-parity-compare.js'));
   doc = AI_SCAN_CONTEXT.undoAiScanContext(
