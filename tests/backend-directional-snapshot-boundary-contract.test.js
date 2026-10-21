@@ -311,6 +311,7 @@ const SCANNER_IVR_EXTRACTION_SCRIPTS = [
   './js/services/ai-scan-context.js',
   './js/services/apex-parity-compare.js',
   './js/services/swing-trend-context.js',
+  './js/services/apex-parity-backend-fetch.js',
 ];
 const DECLARED_NON_DSB_SCRIPTS = STRESS_COMPANION_SCRIPTS
   .concat(PESS_EXTRACTION_SCRIPTS)
@@ -2878,7 +2879,7 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, ALL_LOCAL_SCRIPTS.len
 // could not fail; it had already fallen three groups behind. The groups are
 // listed once, in DECLARED_NON_DSB_SCRIPTS above, and the clause immediately
 // before this one proves that list is exhaustive.
-eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 110,
+eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 111,
    'index.html loads the DSB-fixture local scripts plus the declared extraction modules before the\n' +
    '   inline monolith — the total is the pin, not this sentence, which said "73 in all" against a\n' +
    '   pin of 74 for a cycle because a number written twice only gets updated once');
