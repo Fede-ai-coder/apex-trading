@@ -123,6 +123,7 @@ const {
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/apex-parity-compare-undo.js');
+const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
 
 // The module this layer shipped. The audit called it MODULE_REL_IF_CUT while the
 // cut was still a recommendation; it is no longer hypothetical.
@@ -415,6 +416,10 @@ const PRIOR_LAYERS_OPENING_ON_WIDE_BANNER = 29;
 const LAYERS_OPENING_ON_WIDE_BANNER = 29;
 const PRIOR_LAYERS_WITH_A_DEPENDENCY = 27;
 const LAYERS_WITH_A_DEPENDENCY = 28;
+// The count above is the figure AT THIS LAYER. The later layer that pins a NON-EMPTY list
+// instead IS among the contracts counted over the suite, and is set aside to recover the
+// figure at this layer rather than left to make it drift.
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['swing-trend-context-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 2331;
@@ -473,10 +478,17 @@ const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', m
 console.log('APEX PARITY COMPARE — PERMANENT BOUNDARY CONTRACT');
 console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 
-// THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
-// peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
-// predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+// A LATER CYCLE HAS CUT, so this is no longer the newest layer and LIVE_INDEX is
+// no longer the head of the tree — exactly as the sentence this replaces said
+// would happen. HEAD_INDEX is the live document; LIVE_INDEX keeps its meaning
+// throughout this file, THIS layer's shipped document, which is what every
+// assertion below about extracted lengths, digests and tag adjacency refers to.
+// Peeling newest-first is what restores it.
+const HEAD_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = SWING_TREND_CONTEXT_U.isApplied(HEAD_INDEX)
+  ? SWING_TREND_CONTEXT_U.undoSwingTrendContext(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8'))
+  : HEAD_INDEX;
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
@@ -1720,16 +1732,19 @@ section('8. Where this layer sits, and what it changed');
       if (!m) return false;
       try { return JSON.parse(m[1].replace(/'/g, '"')).length > 0; } catch (e) { return false; }
     }).map((x) => x.f);
-  eq(contractsPinning.length, LAYERS_WITH_A_DEPENDENCY,
-    'LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES, counted over the suite…');
+  ok(LATER_CONTRACTS_WITH_A_DEPENDENCY.every((f) => contractsPinning.indexOf(f) >= 0),
+    'every later layer that pins a non-empty list is among the contracts counted…');
+  const atThisLayer = contractsPinning.filter((f) => LATER_CONTRACTS_WITH_A_DEPENDENCY.indexOf(f) < 0);
+  eq(atThisLayer.length, LAYERS_WITH_A_DEPENDENCY,
+    '…and LAYERS_WITH_A_DEPENDENCY shipped contracts pin a non-empty MONOLITH_DEPENDENCIES at this layer, counted over the suite without them…');
   ok(contractsPinning.indexOf(path.basename(CONTRACT_REL)) >= 0, '…this contract being one of them…');
   eq(MONOLITH_DEPENDENCIES.length, 1, '…it pinning the non-empty list of its one monolith binding, `APEX_PARITY_TOL`, which is why the count moved, as the audit forecast…');
-  eq(contractsPinning.filter((f) => f !== path.basename(CONTRACT_REL)).length, PRIOR_LAYERS_WITH_A_DEPENDENCY,
+  eq(atThisLayer.filter((f) => f !== path.basename(CONTRACT_REL)).length, PRIOR_LAYERS_WITH_A_DEPENDENCY,
     '…PRIOR_LAYERS_WITH_A_DEPENDENCY of the others pinning one, so it is the next of them and the count is one higher…');
   eq(LAYERS_WITH_A_DEPENDENCY, PRIOR_LAYERS_WITH_A_DEPENDENCY + 1, '…by exactly one…');
   eq(Number(fs.readFileSync(path.join(ROOT, 'tests/backend-positions-aggregate-boundary-contract.test.js'), 'utf8')
-    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY,
-  '…and the figure the contract that carries it pins is that same LAYERS_WITH_A_DEPENDENCY');
+    .match(/^const LAYERS_WITH_A_DEPENDENCY = (\d+);$/m)[1]), LAYERS_WITH_A_DEPENDENCY + LATER_CONTRACTS_WITH_A_DEPENDENCY.length,
+  '…and the figure the contract that carries the live count pins now, with the later layers included');
 }
 // WHAT THE RELOCATION COST THE DOCUMENT — the audit forecast these before
 // anything moved, and §9 holds the shipped document to them.
@@ -1750,13 +1765,15 @@ section('9. The relocation is the whole of the production change');
   const changed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
-  // THE AUDIT ASSERTED THAT NOTHING MOVED. This phase moves exactly the audited
-  // bytes and nothing else, so the claim is inverted rather than dropped: TWO
-  // production paths, the document and the new module, and no third.
+  // THE AUDIT ASSERTED THAT NOTHING MOVED. The phase that shipped this layer moved exactly the audited
+  // bytes and nothing else, so the claim was inverted rather than dropped: the document and the new module,
+  // and no third. It now reads against a base that a LATER layer has also moved past, so the footprint is
+  // the document, this layer's module, and the module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL].sort(),
-    'exactly TWO production paths differ from the base: the document and the new module');
+    ['index.html', MODULE_REL, 'js/services/swing-trend-context.js'].sort(),
+    'the production footprint is index.html, this layer\'s module, and the module of every '
+    + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,
     '…and the base commit\'s index.html is the length the reconstruction reproduces');
   eq(sha256(git(['show', BASE_SHA + ':index.html'])), sha256(INDEX),

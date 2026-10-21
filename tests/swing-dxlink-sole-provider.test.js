@@ -478,19 +478,26 @@ const key = (s, tf) => s + '|' + tf;
     // The Swing block, comments stripped: prose may DOCUMENT the removed endpoint, code may not
     // call it. Bounded by the two markers already used by the existing SWING suites.
     //
-    // THE BLOCK NOW SPANS TWO FILES. #453 moved its first half — the weekly
+    // THE BLOCK NOW SPANS THREE FILES. #453 moved its first part — the weekly
     // candle derivation, opening on `// ─── Weekly candle derivation` — into
-    // js/services/swing-weekly-candles.js. The guard has to cover the same bytes
-    // it always did, so it scans the module and the residual block together;
-    // scanning index.html alone would silently stop watching 9,360 units.
+    // js/services/swing-weekly-candles.js, and the trend context that follows it, opening on
+    // `// ─── Trend context from a candle series`, has since moved into
+    // js/services/swing-trend-context.js. The guard has to cover the same bytes
+    // it always did, in the same order, so it scans the two modules and the residual block
+    // together; scanning index.html alone would silently stop watching 9,360 units and then
+    // 1,614 more.
     const MODULE_BLOCK = fs.readFileSync(
       path.join(ROOT, 'js/services/swing-weekly-candles.js'), 'utf8');
     ok(MODULE_BLOCK.indexOf('// ─── Weekly candle derivation') === 0,
       '8: the extracted half of the SWING block was located in its module');
-    const start = HTML.indexOf('// ─── Trend context from a candle series');
+    const TREND_BLOCK = fs.readFileSync(
+      path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8');
+    ok(TREND_BLOCK.indexOf('// ─── Trend context from a candle series') === 0,
+      '8: the second extracted piece of the SWING block was located in its module');
+    const start = HTML.indexOf('// ─── 4H tactical timing');
     const end = HTML.indexOf('async function _swingRenderSpyContext');
     ok(start > 0 && end > start, '8: the residual half of the SWING block was located in index.html');
-    const block = MODULE_BLOCK + HTML.slice(start, end);
+    const block = MODULE_BLOCK + TREND_BLOCK + HTML.slice(start, end);
     const code = block.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     const banned = [
       [/\/market\/candles\//, 'the Railway/Yahoo candles endpoint'],
