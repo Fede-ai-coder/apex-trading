@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const APEX_PARITY_BACKEND_FETCH = require('./apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT = require('./swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE = require('./apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT = require('./ai-scan-context-undo.js');
@@ -246,6 +247,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const APEX_PARITY_BACKEND_FETCH_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'apex-parity-backend-fetch.js'),
+  'utf8'
+);
 const SWING_TREND_CONTEXT_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-trend-context.js'),
   'utf8'
@@ -515,10 +520,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preSwingTrendContext = SWING_TREND_CONTEXT.isApplied(html)
-    ? SWING_TREND_CONTEXT.undoSwingTrendContext(
-      html, SWING_TREND_CONTEXT_SOURCE)
+  const preApexParityBackendFetch = APEX_PARITY_BACKEND_FETCH.isApplied(html)
+    ? APEX_PARITY_BACKEND_FETCH.undoApexParityBackendFetch(
+      html, APEX_PARITY_BACKEND_FETCH_SOURCE)
     : html;
+  const preSwingTrendContext = SWING_TREND_CONTEXT.isApplied(preApexParityBackendFetch)
+    ? SWING_TREND_CONTEXT.undoSwingTrendContext(
+      preApexParityBackendFetch, SWING_TREND_CONTEXT_SOURCE)
+    : preApexParityBackendFetch;
   const preApexParityCompare = APEX_PARITY_COMPARE.isApplied(preSwingTrendContext)
     ? APEX_PARITY_COMPARE.undoApexParityCompare(
       preSwingTrendContext, APEX_PARITY_COMPARE_SOURCE)

@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
 const AI_SCAN_CONTEXT_U = require('./lib/ai-scan-context-undo.js');
@@ -495,10 +496,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_SWING_TREND_CONTEXT = SWING_TREND_CONTEXT_U.isApplied(SHIPPED_INDEX)
-  ? SWING_TREND_CONTEXT_U.undoSwingTrendContext(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8'))
+const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(SHIPPED_INDEX)
+  ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_SWING_TREND_CONTEXT = SWING_TREND_CONTEXT_U.isApplied(PRE_APEX_PARITY_BACKEND_FETCH)
+  ? SWING_TREND_CONTEXT_U.undoSwingTrendContext(
+      PRE_APEX_PARITY_BACKEND_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8'))
+  : PRE_APEX_PARITY_BACKEND_FETCH;
 const PRE_APEX_PARITY_COMPARE = APEX_PARITY_COMPARE_U.isApplied(PRE_SWING_TREND_CONTEXT)
   ? APEX_PARITY_COMPARE_U.undoApexParityCompare(
       PRE_SWING_TREND_CONTEXT, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-compare.js'), 'utf8'))
