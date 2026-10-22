@@ -170,7 +170,7 @@ const BASE_UTF8 = 1470064;
 const BASE_LF = 24909;
 const BASE_SHA256 = '6340bcbd6507c40c113fe19dd2b078196d8770099c853273e65020a95f1ebc89';
 const LOCAL_SCRIPTS = 94;
-const TEST_FILE_COUNT = 196;
+const TEST_FILE_COUNT = 197;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-rs-quality-check-boundary-audit.test.js';
@@ -187,7 +187,7 @@ const CONTRACT_SPEC_MUTANTS = 142;
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 58;
+const RATCHETED_CONTRACTS = 59;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/scanner-dxlink-prices-boundary-contract.test.js';
