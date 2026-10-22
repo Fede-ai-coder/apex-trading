@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const SWING_CHART_CACHE_EVALUATE = require('./swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH = require('./apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT = require('./swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE = require('./apex-parity-compare-undo.js');
@@ -247,6 +248,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const SWING_CHART_CACHE_EVALUATE_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-chart-cache-evaluate.js'),
+  'utf8'
+);
 const APEX_PARITY_BACKEND_FETCH_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'apex-parity-backend-fetch.js'),
   'utf8'
@@ -520,10 +525,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preApexParityBackendFetch = APEX_PARITY_BACKEND_FETCH.isApplied(html)
-    ? APEX_PARITY_BACKEND_FETCH.undoApexParityBackendFetch(
-      html, APEX_PARITY_BACKEND_FETCH_SOURCE)
+  const preSwingChartCacheEvaluate = SWING_CHART_CACHE_EVALUATE.isApplied(html)
+    ? SWING_CHART_CACHE_EVALUATE.undoSwingChartCacheEvaluate(
+      html, SWING_CHART_CACHE_EVALUATE_SOURCE)
     : html;
+  const preApexParityBackendFetch = APEX_PARITY_BACKEND_FETCH.isApplied(preSwingChartCacheEvaluate)
+    ? APEX_PARITY_BACKEND_FETCH.undoApexParityBackendFetch(
+      preSwingChartCacheEvaluate, APEX_PARITY_BACKEND_FETCH_SOURCE)
+    : preSwingChartCacheEvaluate;
   const preSwingTrendContext = SWING_TREND_CONTEXT.isApplied(preApexParityBackendFetch)
     ? SWING_TREND_CONTEXT.undoSwingTrendContext(
       preApexParityBackendFetch, SWING_TREND_CONTEXT_SOURCE)
