@@ -148,7 +148,7 @@ const BASE_UTF8 = 1438653;
 const BASE_LF = 24329;
 const BASE_SHA256 = 'cadfe025fdb363cb702a0f285ca9c53b1b464f321f08c1ab38ece5c62908d3f3';
 const LOCAL_SCRIPTS = 110;
-const TEST_FILE_COUNT = 196;
+const TEST_FILE_COUNT = 197;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-apex-parity-backend-fetch-boundary-audit.test.js';
@@ -165,7 +165,7 @@ const CONTRACT_SPEC_MUTANTS = 240;
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 58;
+const RATCHETED_CONTRACTS = 59;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/swing-trend-context-boundary-contract.test.js';

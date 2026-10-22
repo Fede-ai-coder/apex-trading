@@ -170,7 +170,7 @@ const BASE_UTF8 = 1466452;
 const BASE_LF = 24829;
 const BASE_SHA256 = '2769c16701180463a17a64340d907a18543b04d516352101bf37ae04cd43c854';
 const LOCAL_SCRIPTS = 96;
-const TEST_FILE_COUNT = 196;
+const TEST_FILE_COUNT = 197;
 
 // ── The files of this change ─────────────────────────────────────────────────
 const AUDIT_REL = 'tests/temporary-option-streamer-diagnostics-boundary-audit.test.js';
@@ -187,7 +187,7 @@ const CONTRACT_SPEC_MUTANTS = 143;
 // suite file count TODAY, which moves up by one whenever a cycle's audit lands,
 // because the audit pins it. At the commit that shipped this layer it was one
 // fewer, since Phase 2 RENAMES the file that carries the pin and so adds none.
-const RATCHETED_CONTRACTS = 58;
+const RATCHETED_CONTRACTS = 59;
 const COVERAGE_CONTRACT = 'tests/mutation-coverage-contract.test.js';
 // The contract that was newest before this one shipped.
 const PREVIOUS_CONTRACT = 'tests/backend-positions-enriched-boundary-contract.test.js';
