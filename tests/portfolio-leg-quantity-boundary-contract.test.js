@@ -141,6 +141,7 @@ const {
   isBlankOrComment, snapBodyEnd, assertSeam,
   topLevelBanners, evaluationTimeReads, literalView, isPropertyWriteAt,
 } = require('./lib/extraction-boundary.js');
+const SWING_CHART_CACHE_EVALUATE_U = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
 const APEX_PARITY_COMPARE_U = require('./lib/apex-parity-compare-undo.js');
@@ -496,10 +497,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // with every newer layer taken back off. The chain grows by a line here each
 // cycle; it is not a count written in prose.
 const SHIPPED_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(SHIPPED_INDEX)
-  ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
-      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
+const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(SHIPPED_INDEX)
+  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
+      SHIPPED_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
   : SHIPPED_INDEX;
+const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(PRE_SWING_CHART_CACHE_EVALUATE)
+  ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
+      PRE_SWING_CHART_CACHE_EVALUATE, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
+  : PRE_SWING_CHART_CACHE_EVALUATE;
 const PRE_SWING_TREND_CONTEXT = SWING_TREND_CONTEXT_U.isApplied(PRE_APEX_PARITY_BACKEND_FETCH)
   ? SWING_TREND_CONTEXT_U.undoSwingTrendContext(
       PRE_APEX_PARITY_BACKEND_FETCH, fs.readFileSync(path.join(ROOT, 'js/services/swing-trend-context.js'), 'utf8'))
