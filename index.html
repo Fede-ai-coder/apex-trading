@@ -15813,7 +15813,14 @@ async function _pfDrawChart(posId, ticker) {
     var _pfFbRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
     var _pfFbDx = !!(_pfFbRow && _pfFbRow._priceSource === 'DXLink' && _pfFbRow.price && _pfFbRow.bid != null);
     var _pfFbPos = positionManager.getById(posId);
-    if (!_pfFbDx && _pfFbPos && _pfFbPos.underlyingPriceIsLive !== true) {
+    // At most one attempt per ticker per minute: the open chart is redrawn on every
+    // portfolio auto-refresh, and subscribeDxlinkQuotes already skips symbols that are
+    // subscribed, in flight or cooling down, so no extra subscription is ever stacked.
+    var _pfFbMap = _pfDrawChart._liveFbAt || (_pfDrawChart._liveFbAt = {});
+    var _pfFbNow = Date.now();
+    if (!_pfFbDx && _pfFbPos && _pfFbPos.underlyingPriceIsLive !== true &&
+        !(_pfFbMap[ticker] && (_pfFbNow - _pfFbMap[ticker]) < 60000)) {
+      _pfFbMap[ticker] = _pfFbNow;
       await subscribeDxlinkQuotes([ticker]);
       var _pfFbPx = await fetchLiveQuote(ticker);
       if (_pfExpandedPosId !== posId) return;

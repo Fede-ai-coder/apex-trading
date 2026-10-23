@@ -638,13 +638,18 @@ section('15. _pfDrawChart reads a one-shot DXLink quote only when no fresh price
     return log;
   };
 
+  sandbox._pfDrawChart._liveFbAt = {};
   const a = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
   ok(a.subscribed.join() === 'ADBE' && a.fetched.join() === 'ADBE', '15: no DXLink row, price not live → one-shot subscribe + live read for ADBE');
   ok(a.updates.length === 1 && a.updates[0].id === 303 && a.updates[0].d.underlyingPrice === 261.5 &&
      a.updates[0].d.underlyingPriceSource === 'DXLink' && a.updates[0].d.underlyingPriceIsLive === true,
     '15: the fresh mark is stored on the position (same value feeds 1D and 4H)');
+  const a2 = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
+  ok(a2.subscribed.length === 0 && a2.fetched.length === 0, '15: redraw within a minute (auto-refresh) → no new subscribe or fetch');
+  sandbox._pfDrawChart._liveFbAt = {};
   const b = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, null);
   ok(b.fetched.length === 1 && b.updates.length === 0, '15: stale/missing quote → nothing is written');
+  sandbox._pfDrawChart._liveFbAt = {};
   const c = await run([{ ticker: 'ADBE', _priceSource: 'DXLink', price: 300, bid: 299.9 }], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
   ok(c.subscribed.length === 0 && c.fetched.length === 0 && c.updates.length === 0, '15: a DXLink scanner quote → no fallback');
   const d = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true }, 261.5);
