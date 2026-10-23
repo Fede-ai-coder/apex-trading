@@ -22344,6 +22344,15 @@ var journalManager = (function() {
   // (= OPEN trades) saved under another env namespace are recovered, never lost.
   try {
     var _load = apexNonDestructiveLoadArray('apex_trades');
+    // Durable IDs only after a backend-confirmed DELETE. Recover this ledger
+    // BEFORE applying any migration or cache-fallback rules on page startup.
+    var _confirmedDeletedOnDisk = Object.create(null);
+    try {
+      var _confirmedIds = JSON.parse(localStorage.getItem(apexStorageKey('apex_journal_confirmed_deletes')) || '[]');
+      if (Array.isArray(_confirmedIds)) _confirmedIds.forEach(function(id) {
+        _confirmedDeletedOnDisk[String(id)] = true;
+      });
+    } catch (_ledgerReadErr) {}
     _trades = (_load.arr || []).filter(function(t) {
       return t && !_confirmedDeletedOnDisk[String(t.id || t.tradeId)];
     }).map(_migrateTrade);
