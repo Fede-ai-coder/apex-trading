@@ -463,7 +463,7 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // THIS IS THE NEWEST LAYER, so LIVE_INDEX is the head of the tree and nothing is
 // peeled before it. The next cycle's Phase 2 adds a peel here, as this one's
 // predecessor received.
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const LIVE_TAGS = APP_LOADER.parseScriptTags(LIVE_INDEX);
 const LIVE_LOCALS = LIVE_TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
