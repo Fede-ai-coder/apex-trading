@@ -22344,7 +22344,17 @@ var journalManager = (function() {
   // (= OPEN trades) saved under another env namespace are recovered, never lost.
   try {
     var _load = apexNonDestructiveLoadArray('apex_trades');
-    _trades = (_load.arr || []).map(_migrateTrade);
+    // A confirmed remote DELETE must not be undone by sibling storage recovery.
+    var _confirmedDeletedOnDisk = Object.create(null);
+    try {
+      var _deletedIds = JSON.parse(localStorage.getItem(apexStorageKey('apex_journal_confirmed_deletes')) || '[]');
+      if (Array.isArray(_deletedIds)) _deletedIds.forEach(function(id) {
+        _confirmedDeletedOnDisk[String(id)] = true;
+      });
+    } catch (_ledgerReadErr) {}
+    _trades = (_load.arr || []).filter(function(t) {
+      return t && !_confirmedDeletedOnDisk[String(t.id || t.tradeId)];
+    }).map(_migrateTrade);
     _trades.forEach(function(t) { journalTradeLegExpiryAudit('after initial storage load', t); });
     if (_load.usedFallback) {
       _recoveredFromFallback = true;
@@ -22530,6 +22540,10 @@ var journalManager = (function() {
       ['portfolioId','ticker','strategy','expiry','expiration','expirationDate','expiryDate','legs','entryDate','exitDate','realizedPnL','notes','status'].forEach(function(k) {
         if (data[k] !== undefined) trade[k] = data[k];
       });
+      // A late pre-update GET must not overwrite a newly submitted Journal edit.
+      var previousMs = Date.parse(trade.updatedAt || '');
+      var nextMs = Math.max(Date.now(), isFinite(previousMs) ? previousMs + 1 : 0);
+      trade.updatedAt = new Date(nextMs).toISOString();
       _save();
       return trade;
     },
@@ -23129,6 +23143,9 @@ var portfolioExpiry = (function() {
       // write-through wrapper, which stores this operation's promise. Capture
       // EACH trade's promise before the next trade overwrites the slot.
       if (res.applied) {
+        if (typeof _jPendingExpiryWriteIds !== 'undefined') {
+          _jPendingExpiryWriteIds[String(r.trade.id)] = true;
+        }
         writes.push({
           tradeId: r.trade.id,
           promise: journalManager._lastBackendWrite
@@ -23140,6 +23157,9 @@ var portfolioExpiry = (function() {
       var item = writes[i], outcome = null;
       try { outcome = item.promise ? await item.promise : null; }
       catch (e) { outcome = {ok:false, error:(e && e.message) || String(e)}; }
+      if (typeof _jPendingExpiryWriteIds !== 'undefined') {
+        delete _jPendingExpiryWriteIds[String(item.tradeId)];
+      }
       if (outcome && outcome.ok && outcome.source === 'backend') {
         confirmed++;
       } else {
@@ -23327,6 +23347,8 @@ async function _pfExpiryApply(portfolioId) {
   }
   if (!confirm('Apply safe cleanup for ' + otm + ' OTM expired leg(s)?\n' +
                (rev ? rev + ' leg(s) with ITM/uncertain classification will be left for manual review.\n' : '') +
+               'WARNING: OTM was classified using the latest underlying price, NOT the official expiry-day settlement.\n' +
+               'Proceed only if you independently verified OTM for EVERY listed leg on its expiry date.\n' +
                'This records an EXPIRATION event in the Trading Journal and marks the leg(s) EXPIRED_OTM.')) return;
   try {
     var res = await portfolioExpiry.applySafeOTMCleanupAll(portfolioId);
@@ -23408,7 +23430,15 @@ var _jLastKnownGoodCount  = 0;      // length of the last-known-good snapshot
 var _journalSyncFailed    = false;  // true after the most recent sync failed transiently
 // Session-local tombstones for DELETEs acknowledged by the backend. A GET that
 // started before a confirmed DELETE must never reintroduce the removed trade.
-var _jConfirmedDeletedTradeIds = Object.create(null);
+var _jConfirmedDeletedTradeIds = (function() {
+  var ids = Object.create(null);
+  try {
+    var stored = JSON.parse(localStorage.getItem(apexStorageKey('apex_journal_confirmed_deletes')) || '[]');
+    if (Array.isArray(stored)) stored.forEach(function(id) { ids[String(id)] = true; });
+  } catch (e) {}
+  return ids;
+})();
+var _jPendingExpiryWriteIds = Object.create(null);
 
 // Last backend WRITE (save/update/delete) outcome — read-only diagnostic surfaced by
 // apexDebugPortfolioState(). This is the single source of truth for "did the backend
@@ -23430,7 +23460,8 @@ function _recordJournalBackendSave(info) {
 function _jRecordBackendSnapshot(normTrades) {
   if (Array.isArray(normTrades) && normTrades.length) {
     var active = normTrades.filter(function(t) {
-      return t && !_jConfirmedDeletedTradeIds[String(t.id)];
+      return t && !(typeof _jConfirmedDeletedTradeIds !== 'undefined' &&
+        _jConfirmedDeletedTradeIds[String(t.id)]);
     });
     if (active.length) {
       _jLastKnownGoodTrades = active.slice();
@@ -23486,7 +23517,10 @@ async function _jSyncJournalFromBackend() {
     // carries the link under a different key. Non-destructive: fills only when
     // missing, never overwrites.
     var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId).filter(function(t) {
-      return t && !_jConfirmedDeletedTradeIds[String(t.id)];
+      return t && !(typeof _jConfirmedDeletedTradeIds !== 'undefined' &&
+        _jConfirmedDeletedTradeIds[String(t.id)]) &&
+        !(typeof _jPendingExpiryWriteIds !== 'undefined' &&
+        _jPendingExpiryWriteIds[String(t.id)]);
     });
     var _withPid = _normTrades.filter(function(t){ return t && t.portfolioId != null && t.portfolioId !== ''; }).length;
     console.log('[JOURNAL-DIAG] backend trades with resolved portfolioId: ' + _withPid + '/' + _normTrades.length);
@@ -24071,6 +24105,12 @@ async function deleteTrade(id) {
     return;
   }
   _jConfirmedDeletedTradeIds[sid] = true;
+  try {
+    localStorage.setItem(apexStorageKey('apex_journal_confirmed_deletes'),
+      JSON.stringify(Object.keys(_jConfirmedDeletedTradeIds)));
+  } catch (e) {
+    console.warn('[JOURNAL-SYNC] Could not persist confirmed-delete ledger:', e);
+  }
   if (Array.isArray(_jLastKnownGoodTrades)) {
     _jLastKnownGoodTrades = _jLastKnownGoodTrades.filter(function(t) {
       return String(t.id) !== sid;
