@@ -164,6 +164,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_UNREALIZED_PNL_U = require('./lib/portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE_U = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
@@ -214,10 +215,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(LIVE_INDEX)
-  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+const PRE_PORTFOLIO_UNREALIZED_PNL = PORTFOLIO_UNREALIZED_PNL_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_UNREALIZED_PNL_U.undoPortfolioUnrealizedPnl(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-unrealized-pnl.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(PRE_PORTFOLIO_UNREALIZED_PNL)
+  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
+      PRE_PORTFOLIO_UNREALIZED_PNL, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+  : PRE_PORTFOLIO_UNREALIZED_PNL;
 const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(PRE_SWING_CHART_CACHE_EVALUATE)
   ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
       PRE_SWING_CHART_CACHE_EVALUATE, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))

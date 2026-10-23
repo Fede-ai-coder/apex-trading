@@ -186,6 +186,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_UNREALIZED_PNL_U = require('./lib/portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE_U = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
@@ -236,10 +237,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(LIVE_INDEX)
-  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+const PRE_PORTFOLIO_UNREALIZED_PNL = PORTFOLIO_UNREALIZED_PNL_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_UNREALIZED_PNL_U.undoPortfolioUnrealizedPnl(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-unrealized-pnl.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(PRE_PORTFOLIO_UNREALIZED_PNL)
+  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
+      PRE_PORTFOLIO_UNREALIZED_PNL, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+  : PRE_PORTFOLIO_UNREALIZED_PNL;
 const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(PRE_SWING_CHART_CACHE_EVALUATE)
   ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
       PRE_SWING_CHART_CACHE_EVALUATE, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
@@ -818,7 +823,7 @@ section('10. Production footprint');
     'js/portfolio/backend-portfolios.js',
     'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js',
      'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js',
-     'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-spy-price.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-vega-monitor.js'],
+     'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-leg-quantity.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-spy-price.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-unrealized-pnl.js', 'js/portfolio/portfolio-vega-monitor.js'],
     'js/portfolio holds exactly the portfolio modules enumerated above and nothing else');
 }
 

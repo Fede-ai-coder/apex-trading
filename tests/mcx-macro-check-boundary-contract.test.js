@@ -205,6 +205,7 @@ const BACKEND_CANDLES_U = require('./lib/portfolio-backend-candles-undo.js');
 // they are the newest layer of all: peel them FIRST.
 // The vega monitor ratios were cut AFTER the strategy templates, so they are
 // the newest layer of all: peel them FIRST.
+const PORTFOLIO_UNREALIZED_PNL_U = require('./lib/portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE_U = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
@@ -255,10 +256,14 @@ const DXLINK_GREEKS_U = require('./lib/portfolio-dxlink-greeks-undo.js');
 // rather than silently measuring the wrong document. WHICH layer is newest is
 // not narrated here — the chain below IS that statement. The sentence this
 // replaces named one, and stopped being true the next time a layer shipped.
-const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(LIVE_INDEX)
-  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
-      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+const PRE_PORTFOLIO_UNREALIZED_PNL = PORTFOLIO_UNREALIZED_PNL_U.isApplied(LIVE_INDEX)
+  ? PORTFOLIO_UNREALIZED_PNL_U.undoPortfolioUnrealizedPnl(
+      LIVE_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-unrealized-pnl.js'), 'utf8'))
   : LIVE_INDEX;
+const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(PRE_PORTFOLIO_UNREALIZED_PNL)
+  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
+      PRE_PORTFOLIO_UNREALIZED_PNL, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+  : PRE_PORTFOLIO_UNREALIZED_PNL;
 const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(PRE_SWING_CHART_CACHE_EVALUATE)
   ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
       PRE_SWING_CHART_CACHE_EVALUATE, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
@@ -866,15 +871,21 @@ eq(PRE_APEX_POST_AUTH.length, APEX_POST_AUTH_U.BASE_CHARS,
 eq(sha256(PRE_APEX_POST_AUTH), APEX_POST_AUTH_U.BASE_SHA256,
   'peeling the Apex post-auth layer reaches the pinned post-#409 index hash');
 eq(MCX_CHARTS_U.isApplied(PRE_APEX_POST_AUTH), true, 'the post-#409 document carries the later MCX charts layer');
-eq(LIVE_INDEX.length, SWING_CHART_CACHE_EVALUATE_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
-eq(sha256(LIVE_INDEX), SWING_CHART_CACHE_EVALUATE_U.EXTRACTED_SHA256,
+eq(LIVE_INDEX.length, PORTFOLIO_UNREALIZED_PNL_U.EXTRACTED_CHARS, 'the live shipped index UTF-16 length is the newest layer’s extracted value');
+eq(sha256(LIVE_INDEX), PORTFOLIO_UNREALIZED_PNL_U.EXTRACTED_SHA256,
   'the live shipped index SHA-256 is the newest layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
+eq(PRE_PORTFOLIO_UNREALIZED_PNL.length, SWING_CHART_CACHE_EVALUATE_U.EXTRACTED_CHARS,
+  'peeling the newest layer reaches the swing chart cache evaluate layer’s extracted length');
+eq(sha256(PRE_PORTFOLIO_UNREALIZED_PNL), SWING_CHART_CACHE_EVALUATE_U.EXTRACTED_SHA256,
+  'peeling the newest layer reaches the swing chart cache evaluate layer’s extracted digest');
+// Re-terminated with the chain: the pins above moved up to the newest layer, so the
+// layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_SWING_CHART_CACHE_EVALUATE.length, APEX_PARITY_BACKEND_FETCH_U.EXTRACTED_CHARS,
-  'peeling the newest layer reaches the apex parity backend fetch layer’s extracted length');
+  'peeling the swing chart cache evaluate layer reaches the apex parity backend fetch layer’s extracted length');
 eq(sha256(PRE_SWING_CHART_CACHE_EVALUATE), APEX_PARITY_BACKEND_FETCH_U.EXTRACTED_SHA256,
-  'peeling the newest layer reaches the apex parity backend fetch layer’s extracted digest');
+  'peeling the swing chart cache evaluate layer reaches the apex parity backend fetch layer’s extracted digest');
 // Re-terminated with the chain: the pins above moved up to the newest layer, so the
 // layer they used to name is asserted here on the peeled state rather than dropped.
 eq(PRE_APEX_PARITY_BACKEND_FETCH.length, SWING_TREND_CONTEXT_U.EXTRACTED_CHARS,
@@ -1006,7 +1017,7 @@ eq(sha256(PRE_RICH_SNAPSHOT), '67a94fd413e30fd970a6aee717d5a563a3fc662668ea4fb01
 // pinned, one layer down, by the TT reconnect peel assertions above.
 // The post-MCX-charts document those two lines used to pin is still pinned,
 // one layer down, by the Apex post-auth peel assertions above.
-eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, SWING_CHART_CACHE_EVALUATE_U.EXTRACTED_LOCAL_SCRIPTS,
+eq(APP_LOADER.parseScriptTags(LIVE_INDEX).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, PORTFOLIO_UNREALIZED_PNL_U.EXTRACTED_LOCAL_SCRIPTS,
   'the current shipped index carries the newest layer’s local-script count');
 eq(APP_LOADER.parseScriptTags(PRE_TT_RECONNECT).filter((entry) => entry.src && /^\.\//.test(entry.src)).length, 55,
   '…and peeling the TT reconnect layer returns it to the post-#410 55');
@@ -1560,7 +1571,7 @@ section('10. Exact prompt construction and success transcript');
   section('15. Exact production scope and cumulative fallout inventory');
   const changed = changedPaths();
   const changedProduction = changed.filter((rel) => rel === 'index.html' || rel.startsWith('js/'));
-  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/services/swing-trend-context.js', 'js/services/apex-parity-backend-fetch.js', 'js/services/swing-chart-cache-evaluate.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
+  eq(changedProduction, ['index.html', 'js/config/strategy-templates.js', 'js/portfolio/backend-full-refresh-validation.js', 'js/portfolio/portfolio-snapshot-fallback.js', 'js/portfolio/portfolio-technical-batch-fetch.js', 'js/ui/rs-skip-breakdown-html.js', 'js/portfolio/portfolio-greeks-freshness.js', 'js/portfolio/portfolio-underlying-fallback-plan.js', 'js/portfolio/portfolio-price-freshness.js', 'js/portfolio/portfolio-missing-underlyings-gate.js', 'js/services/scanner-dxlink-prices.js', 'js/services/rs-quality-check.js', 'js/portfolio/backend-positions-enriched.js', 'js/portfolio/portfolio-option-streamer-diagnostics.js', 'js/services/scanner-dss-chart-load-guard.js', 'js/services/swing-chart-cache-helpers.js', 'js/services/scanner-stock-scoring.js', 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/services/swing-trend-context.js', 'js/services/apex-parity-backend-fetch.js', 'js/services/swing-chart-cache-evaluate.js', 'js/portfolio/portfolio-unrealized-pnl.js', 'js/portfolio/backend-portfolios.js', 'js/portfolio/portfolio-backend-candles.js', 'js/portfolio/portfolio-data-fetch.js', 'js/portfolio/portfolio-dxlink-greeks.js', 'js/portfolio/portfolio-expiry-manual.js', 'js/portfolio/portfolio-traffic-light.js', 'js/portfolio/portfolio-vega-monitor.js', 'js/services/apex-post-auth-init.js', 'js/services/dxlink-greeks-fetch.js', 'js/portfolio/portfolio-technical-parity.js', 'js/portfolio/portfolio-spy-price.js', 'js/services/apex-storage-recovery.js', 'js/portfolio/portfolio-leg-quantity.js',
   'js/services/journal-map-audit.js',
   'js/services/journal-rich-snapshot.js', 'js/services/journal-snapshot-helpers.js', 'js/services/journal-snapshot-prefetch.js', 'js/services/scanner-earnings-throttle.js', 'js/services/scanner-ivr-throttle.js', 'js/portfolio/backend-positions-aggregate.js', 'js/portfolio/portfolio-technical-merge.js', 'js/portfolio/portfolio-technical-alignment-debug.js', 'js/services/swing-direction.js', 'js/services/swing-weekly-candles.js', 'js/ui/backend-candle-store-chart.js', 'js/ui/chart-interactions.js', 'js/ui/journal-close-legs.js', 'js/ui/journal-trade-detail.js', 'js/ui/journal-trade-forms.js', 'js/ui/mcx-charts.js', MODULE_REL, 'js/ui/tt-reconnect.js'].sort(),
     'production footprint is exactly index.html plus the MCX macro-check owner and the later MCX charts, Apex post-auth, TT reconnect and Journal Close Legs owners');
@@ -1581,7 +1592,7 @@ section('10. Exact prompt construction and success transcript');
     rel === 'js/services/swing-weekly-candles.js' ||
     rel === 'js/services/swing-direction.js' ||
     rel === 'js/portfolio/backend-positions-aggregate.js' || rel === 'js/portfolio/portfolio-technical-merge.js' || rel === 'js/portfolio/portfolio-technical-alignment-debug.js' ||
-    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' || rel === 'js/services/option-chain-error-helpers.js' || rel === 'js/services/ai-scan-context.js' || rel === 'js/services/apex-parity-compare.js' || rel === 'js/services/swing-trend-context.js' || rel === 'js/services/apex-parity-backend-fetch.js' || rel === 'js/services/swing-chart-cache-evaluate.js' ||
+    rel === 'js/services/journal-map-audit.js' || rel === 'js/services/dxlink-greeks-fetch.js' || rel === 'js/portfolio/portfolio-spy-price.js' || rel === 'js/services/apex-storage-recovery.js' || rel === 'js/portfolio/portfolio-leg-quantity.js' || rel === 'js/portfolio/backend-full-refresh-validation.js' || rel === 'js/portfolio/portfolio-snapshot-fallback.js' || rel === 'js/portfolio/portfolio-technical-batch-fetch.js' || rel === 'js/ui/rs-skip-breakdown-html.js' || rel === 'js/portfolio/portfolio-greeks-freshness.js' || rel === 'js/portfolio/portfolio-underlying-fallback-plan.js' || rel === 'js/portfolio/portfolio-price-freshness.js' || rel === 'js/portfolio/portfolio-missing-underlyings-gate.js' || rel === 'js/services/scanner-dxlink-prices.js' || rel === 'js/services/rs-quality-check.js' || rel === 'js/portfolio/backend-positions-enriched.js' || rel === 'js/portfolio/portfolio-option-streamer-diagnostics.js' || rel === 'js/services/scanner-dss-chart-load-guard.js' || rel === 'js/services/swing-chart-cache-helpers.js' || rel === 'js/services/scanner-stock-scoring.js' || rel === 'js/ui/scanner-dss-1d-chart.js' || rel === 'js/portfolio/portfolio-stale-mark-squeeze-state.js' || rel === 'js/services/journal-expiry-audit.js' || rel === 'js/portfolio/portfolio-regime-badge-html.js' || rel === 'js/portfolio/portfolio-backend-squeeze-extract.js' || rel === 'js/portfolio/portfolio-beta-missing-reason.js' || rel === 'js/services/option-chain-error-helpers.js' || rel === 'js/services/ai-scan-context.js' || rel === 'js/services/apex-parity-compare.js' || rel === 'js/services/swing-trend-context.js' || rel === 'js/services/apex-parity-backend-fetch.js' || rel === 'js/services/swing-chart-cache-evaluate.js' || rel === 'js/portfolio/portfolio-unrealized-pnl.js' ||
     rel === 'js/portfolio/portfolio-technical-parity.js' || rel === 'CLAUDE.md' ||
     rel === 'js/config/strategy-templates.js' ||
     rel === 'js/ui/mcx-charts.js' || rel === 'js/services/apex-post-auth-init.js' || rel === 'js/ui/tt-reconnect.js' ||
