@@ -227,6 +227,9 @@ const J = (a) => JSON.stringify(a);
     console: { log() {}, warn() {}, error() {} },
     JSON, Array, Date, String, Object, parseFloat,
     _trades: [],
+    // Runtime initial storage scan initializes this ledger before the
+    // migration block. The isolated migration fixture must mirror that step.
+    _confirmedDeletedOnDisk: Object.create(null),
   };
   vm.createContext(ctx);
   vm.runInContext([
@@ -260,7 +263,13 @@ const J = (a) => JSON.stringify(a);
   assert(b2.length === 1, '8: reload creates NO additional backup (no spam)');
   assert(storage._has('apex_positions') && storage.getItem('apex_positions') === legacyRaw,
     '8: source key still fully intact after reload');
-  console.log('✓ 8 legacy apex_positions migration: source preserved, backup kept, idempotent');
+  // Once a remote DELETE was confirmed, migration must NOT re-import it.
+  ctx._trades = [];
+  ctx._confirmedDeletedOnDisk.P1 = true;
+  ctx.runMig();
+  assert(ctx._trades.length === 0, '8: confirmed-delete ID is never re-migrated');
+  assert(storage.getItem('apex_positions') === legacyRaw, '8: source remains untouched after delete tombstone');
+  console.log('✓ 8 legacy apex_positions migration: source preserved, backup kept, idempotent; tombstones respected');
 })();
 
 console.log('\n' + (failed ? ('FAILED ' + failed + ' / ' + (passed + failed)) : ('ALL PASS (' + passed + ' assertions)')));
