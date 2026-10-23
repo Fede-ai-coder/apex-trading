@@ -135,7 +135,7 @@ function vmCtx(extra) {
     jSave: rows => { legacyRows = rows; },
   });
   vm.runInContext(fn('var _jLegacyLoadFromBackend = jLoadFromBackend;',
-    '// ═══════════════════════════════════════════════════════════════\\n// PRE-TRADE RISK CHECK'), legacyCtx);
+    '// ═══════════════════════════════════════════════════════════════\n// PRE-TRADE RISK CHECK'), legacyCtx);
   assert.strictEqual(await legacyCtx.jLoadFromBackend(),true);
   assert.deepStrictEqual(legacyRows.map(row=>row.id),['T3'],
     'late legacy GET cannot reinsert a deleted ID');
