@@ -51,6 +51,7 @@ const { scanTopLevelDeclarations, functionBodyRanges, maskLiterals } = require('
 const { isBlankOrComment, snapBodyEnd, assertSeam, topLevelBanners, BINDING_FORMS, bindingNames,
   evaluationTimeReads } = require('./lib/extraction-boundary.js');
 
+const PORTFOLIO_UNREALIZED_PNL = require('./lib/portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT = require('./lib/swing-trend-context-undo.js');
@@ -224,6 +225,8 @@ section('3. The four invariants, at sixteen REAL historical boundaries');
 const HISTORY = [];
 {
   let doc = APP_LOADER.loadIndexHtml();
+  doc = PORTFOLIO_UNREALIZED_PNL.undoPortfolioUnrealizedPnl(
+    doc, read('js/portfolio/portfolio-unrealized-pnl.js'));
   doc = SWING_CHART_CACHE_EVALUATE.undoSwingChartCacheEvaluate(
     doc, read('js/services/swing-chart-cache-evaluate.js'));
   doc = APEX_PARITY_BACKEND_FETCH.undoApexParityBackendFetch(

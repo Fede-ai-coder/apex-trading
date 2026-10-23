@@ -133,6 +133,7 @@ const {
 } = require('./lib/extraction-boundary.js');
 const UNDO = require('./lib/scanner-stock-scoring-undo.js');
 const SCANNER_DSS_1D_CHART_U = require('./lib/scanner-dss-1d-chart-undo.js');
+const PORTFOLIO_UNREALIZED_PNL_U = require('./lib/portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE_U = require('./lib/swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH_U = require('./lib/apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT_U = require('./lib/swing-trend-context-undo.js');
@@ -437,7 +438,7 @@ const LAYERS_WITH_A_DEPENDENCY = 22;
 // The count above is the figure AT THIS LAYER. A layer cut after it that also pins a
 // non-empty MONOLITH_DEPENDENCIES adds to the live count, so it is named here and set
 // aside rather than left to make the figure drift.
-const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['scanner-dss-1d-chart-boundary-contract.test.js', 'portfolio-regime-badge-html-boundary-contract.test.js', 'portfolio-backend-squeeze-extract-boundary-contract.test.js', 'option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js', 'apex-parity-compare-boundary-contract.test.js', 'swing-trend-context-boundary-contract.test.js', 'apex-parity-backend-fetch-boundary-contract.test.js', 'swing-chart-cache-evaluate-boundary-contract.test.js'];
+const LATER_CONTRACTS_WITH_A_DEPENDENCY = ['scanner-dss-1d-chart-boundary-contract.test.js', 'portfolio-regime-badge-html-boundary-contract.test.js', 'portfolio-backend-squeeze-extract-boundary-contract.test.js', 'option-chain-error-helpers-boundary-contract.test.js', 'ai-scan-context-boundary-contract.test.js', 'apex-parity-compare-boundary-contract.test.js', 'swing-trend-context-boundary-contract.test.js', 'apex-parity-backend-fetch-boundary-contract.test.js', 'swing-chart-cache-evaluate-boundary-contract.test.js', 'portfolio-unrealized-pnl-boundary-contract.test.js'];
 
 // ── What the relocation cost the document ────────────────────────────────────
 const NET_REDUCTION = 1631;
@@ -498,10 +499,14 @@ console.log('reconstructed from the shipped module · base=' + BASE_SHA);
 // assertion below about extracted lengths, digests and tag adjacency refers to.
 // Peeling newest-first is what restores it.
 const HEAD_INDEX = APP_LOADER.loadIndexHtml();
-const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(HEAD_INDEX)
-  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
-      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+const PRE_PORTFOLIO_UNREALIZED_PNL = PORTFOLIO_UNREALIZED_PNL_U.isApplied(HEAD_INDEX)
+  ? PORTFOLIO_UNREALIZED_PNL_U.undoPortfolioUnrealizedPnl(
+      HEAD_INDEX, fs.readFileSync(path.join(ROOT, 'js/portfolio/portfolio-unrealized-pnl.js'), 'utf8'))
   : HEAD_INDEX;
+const PRE_SWING_CHART_CACHE_EVALUATE = SWING_CHART_CACHE_EVALUATE_U.isApplied(PRE_PORTFOLIO_UNREALIZED_PNL)
+  ? SWING_CHART_CACHE_EVALUATE_U.undoSwingChartCacheEvaluate(
+      PRE_PORTFOLIO_UNREALIZED_PNL, fs.readFileSync(path.join(ROOT, 'js/services/swing-chart-cache-evaluate.js'), 'utf8'))
+  : PRE_PORTFOLIO_UNREALIZED_PNL;
 const PRE_APEX_PARITY_BACKEND_FETCH = APEX_PARITY_BACKEND_FETCH_U.isApplied(PRE_SWING_CHART_CACHE_EVALUATE)
   ? APEX_PARITY_BACKEND_FETCH_U.undoApexParityBackendFetch(
       PRE_SWING_CHART_CACHE_EVALUATE, fs.readFileSync(path.join(ROOT, 'js/services/apex-parity-backend-fetch.js'), 'utf8'))
@@ -1625,7 +1630,7 @@ section('9. The relocation is the whole of the production change');
   // module of every layer cut after it.
   const all = Array.from(new Set(changed.concat(status)));
   eq(all.filter((rel) => rel === 'index.html' || rel.startsWith('js/')).sort(),
-    ['index.html', MODULE_REL, 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/services/swing-trend-context.js', 'js/services/apex-parity-backend-fetch.js', 'js/services/swing-chart-cache-evaluate.js'].sort(),
+    ['index.html', MODULE_REL, 'js/ui/scanner-dss-1d-chart.js', 'js/portfolio/portfolio-stale-mark-squeeze-state.js', 'js/services/journal-expiry-audit.js', 'js/portfolio/portfolio-regime-badge-html.js', 'js/portfolio/portfolio-backend-squeeze-extract.js', 'js/portfolio/portfolio-beta-missing-reason.js', 'js/services/option-chain-error-helpers.js', 'js/services/ai-scan-context.js', 'js/services/apex-parity-compare.js', 'js/services/swing-trend-context.js', 'js/services/apex-parity-backend-fetch.js', 'js/services/swing-chart-cache-evaluate.js', 'js/portfolio/portfolio-unrealized-pnl.js'].sort(),
     'the production footprint is index.html, this layer\'s module, and the module of every '
     + 'layer cut after it');
   eq(git(['show', BASE_SHA + ':index.html']).length, BASE_CHARS,

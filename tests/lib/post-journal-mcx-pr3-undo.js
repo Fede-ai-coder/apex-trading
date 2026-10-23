@@ -178,6 +178,7 @@
 // and SFS families were not measured here.
 const fs = require('fs');
 const path = require('path');
+const PORTFOLIO_UNREALIZED_PNL = require('./portfolio-unrealized-pnl-undo.js');
 const SWING_CHART_CACHE_EVALUATE = require('./swing-chart-cache-evaluate-undo.js');
 const APEX_PARITY_BACKEND_FETCH = require('./apex-parity-backend-fetch-undo.js');
 const SWING_TREND_CONTEXT = require('./swing-trend-context-undo.js');
@@ -248,6 +249,10 @@ const REGIME = require('./mcx-regime-policy-undo.js');
 const JOURNAL = require('./journal-core-undo.js');
 const MCX3 = require('./mcx-pr3-undo.js');
 
+const PORTFOLIO_UNREALIZED_PNL_SOURCE = fs.readFileSync(
+  path.resolve(__dirname, '..', '..', 'js', 'portfolio', 'portfolio-unrealized-pnl.js'),
+  'utf8'
+);
 const SWING_CHART_CACHE_EVALUATE_SOURCE = fs.readFileSync(
   path.resolve(__dirname, '..', '..', 'js', 'services', 'swing-chart-cache-evaluate.js'),
   'utf8'
@@ -525,10 +530,14 @@ function undoMcxPr3AfterJournal(html, mcx3Source) {
   // NEWEST FIRST: the layer cut last peels before anything else touches the
   // document. Which layer that is stays in the chain below rather than in this
   // comment, which named one and went stale the next time a layer shipped.
-  const preSwingChartCacheEvaluate = SWING_CHART_CACHE_EVALUATE.isApplied(html)
-    ? SWING_CHART_CACHE_EVALUATE.undoSwingChartCacheEvaluate(
-      html, SWING_CHART_CACHE_EVALUATE_SOURCE)
+  const prePortfolioUnrealizedPnl = PORTFOLIO_UNREALIZED_PNL.isApplied(html)
+    ? PORTFOLIO_UNREALIZED_PNL.undoPortfolioUnrealizedPnl(
+      html, PORTFOLIO_UNREALIZED_PNL_SOURCE)
     : html;
+  const preSwingChartCacheEvaluate = SWING_CHART_CACHE_EVALUATE.isApplied(prePortfolioUnrealizedPnl)
+    ? SWING_CHART_CACHE_EVALUATE.undoSwingChartCacheEvaluate(
+      prePortfolioUnrealizedPnl, SWING_CHART_CACHE_EVALUATE_SOURCE)
+    : prePortfolioUnrealizedPnl;
   const preApexParityBackendFetch = APEX_PARITY_BACKEND_FETCH.isApplied(preSwingChartCacheEvaluate)
     ? APEX_PARITY_BACKEND_FETCH.undoApexParityBackendFetch(
       preSwingChartCacheEvaluate, APEX_PARITY_BACKEND_FETCH_SOURCE)
