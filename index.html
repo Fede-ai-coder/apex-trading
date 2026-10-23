@@ -23503,9 +23503,24 @@ async function _jSyncJournalFromBackend() {
   }
 }
 
-// The legacy Journal loader must share the confirmed-delete filter. Never let
-// a stale GET re-add an already-deleted trade to the Portfolio.
-jLoadFromBackend = _jSyncJournalFromBackend;
+// Preserve the legacy Journal's own apex_journal_v1 GET/merge. The Portfolio
+// Journal uses apex_trades and has a separate resilient reader. Run both, but
+// after any in-flight legacy GET finishes, filter locally confirmed deletions
+// before the legacy view re-renders. No early/optimistic remote success.
+var _jLegacyLoadFromBackend = jLoadFromBackend;
+jLoadFromBackend = async function() {
+  var legacyOK = await _jLegacyLoadFromBackend();
+  var modernOK = await _jSyncJournalFromBackend();
+  var deletedIds = Object.keys(_jConfirmedDeletedTradeIds);
+  if (deletedIds.length) {
+    var legacyTrades = jLoad();
+    var remaining = legacyTrades.filter(function(t) {
+      return t && !_jConfirmedDeletedTradeIds[String(t.id || t.tradeId)];
+    });
+    if (remaining.length !== legacyTrades.length) jSave(remaining);
+  }
+  return !!(legacyOK || modernOK);
+};
 
 // ═══════════════════════════════════════════════════════════════
 // PRE-TRADE RISK CHECK
