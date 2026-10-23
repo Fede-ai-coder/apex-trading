@@ -623,7 +623,7 @@ section('15. _pfDrawChart reads a one-shot DXLink quote only when no fresh price
   ].join('\n'), sandbox);
 
   const mk = (n, base) => bars(n, base).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
-  const run = async (scanData, pos, quote) => {
+  const run = async (scanData, pos, quote, rth) => {
     const log = { subscribed: [], fetched: [], updates: [] };
     sandbox._pfExpandedPosId = 303;
     sandbox.S = { scanData };
@@ -634,6 +634,7 @@ section('15. _pfDrawChart reads a one-shot DXLink quote only when no fresh price
     sandbox.positionManager = { getById: () => pos, updateLive: (id, d) => log.updates.push({ id, d }) };
     sandbox.subscribeDxlinkQuotes = async (syms) => { log.subscribed.push(syms.join(',')); };
     sandbox.fetchLiveQuote = async (sym) => { log.fetched.push(sym); return quote; };
+    sandbox.isRTHOpen = () => rth !== false;
     await sandbox._pfDrawChart(303, 'ADBE');
     return log;
   };
@@ -652,8 +653,15 @@ section('15. _pfDrawChart reads a one-shot DXLink quote only when no fresh price
   sandbox._pfDrawChart._liveFbAt = {};
   const c = await run([{ ticker: 'ADBE', _priceSource: 'DXLink', price: 300, bid: 299.9 }], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
   ok(c.subscribed.length === 0 && c.fetched.length === 0 && c.updates.length === 0, '15: a DXLink scanner quote → no fallback');
-  const d = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true }, 261.5);
-  ok(d.subscribed.length === 0 && d.fetched.length === 0 && d.updates.length === 0, '15: position already carries a live price → no fallback');
+  const freshAt = new Date().toISOString();
+  const d = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true, underlyingPriceUpdatedAt: freshAt }, 261.5);
+  ok(d.subscribed.length === 0 && d.fetched.length === 0 && d.updates.length === 0, '15: position carries a live price stamped <90s ago → no fallback');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const e = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true, underlyingPriceUpdatedAt: new Date(Date.now() - 5 * 60000).toISOString() }, 261.5);
+  ok(e.fetched.length === 1 && e.updates.length === 1, '15: market open, live-flagged price older than 90s → refreshed');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const f = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5, false);
+  ok(f.subscribed.length === 0 && f.fetched.length === 0 && f.updates.length === 0, '15: market closed → no subscription, no fetch, no after-hours mark');
 }
 
 // ── summary ───────────────────────────────────────────────────────────────────
