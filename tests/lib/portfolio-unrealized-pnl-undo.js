@@ -181,6 +181,12 @@ function isApplied(html) {
 // receive a synthetic historical pass.
 function historicalShippedIndex(html) {
   if (typeof html !== 'string') throw new Error('JOURNAL_DELETE_HISTORY_BAD_INPUT');
+  // Immutable extraction snapshot or the ONE explicitly pinned delete patch:
+  // arbitrary (including mutated) working trees are not accepted as history.
+  if (digest(html) === EXTRACTED_SHA256) return html;
+  if (gitBlobSha(html) !== JOURNAL_RUNTIME_PATCH_BLOB) {
+    throw new Error('JOURNAL_DELETE_HISTORY_UNAPPROVED_SHIPPED_INDEX');
+  }
   return undoApprovedJournalRuntimePatch(html);
 }
 
