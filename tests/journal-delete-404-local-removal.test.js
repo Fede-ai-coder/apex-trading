@@ -105,8 +105,10 @@ function vmCtx(extra) {
   assert(events.includes('remove:T2'),'remove after backend confirmation');
   assert(messages.includes('ok'),'only confirmed delete reports success');
 
-  assert(html.includes('jLoadFromBackend = _jSyncJournalFromBackend;'),
-    'legacy Journal reader shares tombstone-filtered sync');
+  assert(html.includes('var _jLegacyLoadFromBackend = jLoadFromBackend;') &&
+    html.includes('var modernOK = await _jSyncJournalFromBackend();') &&
+    html.includes('if (remaining.length !== legacyTrades.length) jSave(remaining);'),
+    'legacy Journal retains original sync, but filters confirmed-delete tombstones');
   assert(html.includes("_confirmedDeletedOnDisk[String(t.id || t.tradeId)]"),
     'cold start filters previously confirmed deletes');
   assert(html.includes('Object.keys(_confirmedDeletedOnDisk).forEach(function(id) { _srcIds[id] = 1; });'),
