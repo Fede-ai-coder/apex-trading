@@ -155,6 +155,10 @@ function context(overrides) {
   assert.equal(messages.length,1);
   assert.equal(messages[0][1],'warn');
 
+  // Both Journal and Portfolio must use tombstone-aware backend synchronization.
+  assert.match(source, /jLoadFromBackend = _jSyncJournalFromBackend;/,
+    'Journal open uses the same filtered synchronization as Portfolio');
+
   // 5: screenshot's DEL button must retain opaque string trade IDs; never
   // convert "T123_ABCD" to NaN. Route through the already-confirmed deletion
   // path, not positionManager.remove which was fire-and-forget.
