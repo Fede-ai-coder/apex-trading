@@ -120,6 +120,26 @@ function vmCtx(extra) {
     'Portfolio DEL preserves opaque string id');
   assert(!html.includes("onclick=\"deletePosition(+this.dataset.posid)\""));
 
+  // Late legacy GET must not resurrect a confirmed deletion, while
+  // unchanged legacy records remain available for bulk sync.
+  let legacyRows = [{id:'T2'}, {id:'T3'}];
+  const legacyCtx = vmCtx({
+    jLoadFromBackend: async function() {
+      // A GET that began before DELETE completes with a stale T2 row.
+      legacyRows = [{id:'T2'}, {id:'T3'}];
+      return true;
+    },
+    _jSyncJournalFromBackend: async () => true,
+    _jConfirmedDeletedTradeIds: {T2:true},
+    jLoad: () => legacyRows,
+    jSave: rows => { legacyRows = rows; },
+  });
+  vm.runInContext(fn('var _jLegacyLoadFromBackend = jLoadFromBackend;',
+    '// ═══════════════════════════════════════════════════════════════\\n// PRE-TRADE RISK CHECK'), legacyCtx);
+  assert.strictEqual(await legacyCtx.jLoadFromBackend(),true);
+  assert.deepStrictEqual(legacyRows.map(row=>row.id),['T3'],
+    'late legacy GET cannot reinsert a deleted ID');
+
   const p=vmCtx({
     positionManager:{getById: id=>id==='T2'?{ticker:'ADBE'}:null},
     confirm:()=>true,
