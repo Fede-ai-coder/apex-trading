@@ -174,6 +174,16 @@ function isApplied(html) {
   return typeof html === 'string' && count(html, TAG) === 1;
 }
 
+// Historical extraction contracts operate on the pre-runtime-fix snapshot.
+// This does NOT waive the live runtime identity guard: only the exact approved
+// current index Git blob is eligible for the peel, and its original source
+// must also match the known pre-fix blob. Mutated/unapproved documents never
+// receive a synthetic historical pass.
+function historicalShippedIndex(html) {
+  if (typeof html !== 'string') throw new Error('JOURNAL_DELETE_HISTORY_BAD_INPUT');
+  return undoApprovedJournalRuntimePatch(html);
+}
+
 function undoPortfolioUnrealizedPnl(html, moduleSource) {
   if (typeof html !== 'string' || typeof moduleSource !== 'string') {
     throw new Error('PORTFOLIO_UNREALIZED_PNL_UNDO_BAD_INPUT');
@@ -254,5 +264,5 @@ module.exports = {
   RAW_AT, RAW_END, RAW_CHARS, RAW_SHA256,
   MODULE_CHARS, MODULE_UTF8, MODULE_LF, MODULE_SHA256,
   REINSERT_AT,
-  isApplied, undoPortfolioUnrealizedPnl,
+  isApplied, undoPortfolioUnrealizedPnl, historicalShippedIndex,
 };
