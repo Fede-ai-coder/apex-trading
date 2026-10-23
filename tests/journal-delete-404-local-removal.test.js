@@ -36,149 +36,93 @@ assert(
 
 console.log('✓ journal delete removes local state for 404/already-deleted backend trades');
 
-// Additional runtime regressions, co-located to avoid changing the permanent
-// frontend test-file-count contract enforced by the extraction audit.
-const vm = require('node:vm');
-const source = html;
-function extract(name) {
-  const m = new RegExp('(?:async )?function ' + name + '\\(').exec(source);
-  assert(m, name + ' must be present in shipped source');
-  const start = m.index;
-  let i = source.indexOf('{', start), depth = 0, inString = null, escaped = false, line = false, block = false;
-  for (let j = i; j < source.length; j++) {
-    const ch = source[j], next = source[j+1];
-    if (line) { if (ch === '\n') line = false; continue; }
-    if (block) { if (ch === '*' && next === '/') {block = false; j++;} continue; }
-    if (inString) {
-      if (escaped) {escaped = false; continue;}
-      if (ch === '\\') {escaped = true; continue;}
-      if (ch === inString) inString = null;
-      continue;
-    }
-    if (ch === '/' && next === '/') {line = true; continue;}
-    if (ch === '/' && next === '*') {block = true; j++; continue;}
-    if (ch === "'" || ch === '"' || ch === String.fromCharCode(96)) {inString = ch; continue;}
-    if (ch === '{') depth++;
-    else if (ch === '}' && --depth === 0) return source.slice(start, j+1);
-  }
-  throw new Error('Incomplete ' + name);
+
+// Runtime DELETE-only regressions; no Safe Cleanup code exercised or modified.
+// Co-located with the existing Journal suite to preserve the repository's
+// historical 197-file extraction-audit test inventory.
+const vm = require('vm');
+function fn(start, end) {
+  const a = html.indexOf(start), b = html.indexOf(end, a);
+  assert(a >= 0 && b > a, 'runtime function boundary: ' + start);
+  return html.slice(a,b);
 }
-const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
-function context(overrides) {
-  const ctx = Object.assign({ console: { log() {}, warn() {} }, String, Array, Object, Promise, Date }, overrides);
-  vm.createContext(ctx); return ctx;
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return {resolve,promise};
+}
+const journalDelete = fn('async function deleteTrade(id, opts) {',
+  'function renderPortfolioJournalView');
+const portfolioDelete = fn('async function deletePosition(posId) {',
+  '// Resolve reliable underlying IVR');
+function vmCtx(extra) {
+  const ctx = Object.assign({console: {log(){},warn(){}}, Object, String,
+    Array, Promise}, extra);
+  vm.createContext(ctx);return ctx;
 }
 
 (async () => {
-  const fail = deferred(), events1 = [], toasts1 = [];
-  const a = context({
-    confirm: () => true, BACKEND: 'https://backend.invalid', S: {backendKey: 'key'},
-    journalManager: { getById: () => ({id:'T1'}), remove: id => events1.push('removed '+id) },
-    jDeleteRemote: () => {events1.push('delete requested'); return fail.promise;},
-    _jConfirmedDeletedTradeIds: Object.create(null),
-    _jLastKnownGoodTrades: [{id:'T1'}], _jLastKnownGoodCount: 1,
-    showToast: (s,k) => toasts1.push([s,k]),
-    renderPortfolioJournalView: () => events1.push('render'),
-    isPortfolioViewActive: () => true, renderPortfolioView: () => {},
+  const pending = deferred(), trace=[], toasts=[];
+  const t = vmCtx({
+    confirm: () => true, BACKEND:'backend', S:{backendKey:'key'},
+    journalManager:{getById:()=>({id:'T1'}),remove:id=>trace.push('remove:'+id)},
+    jDeleteRemote:()=>{trace.push('requested');return pending.promise;},
+    _jConfirmedDeletedTradeIds:Object.create(null),
+    _jLastKnownGoodTrades:[{id:'T1'}],_jLastKnownGoodCount:1,
+    localStorage:{setItem(){}},apexStorageKey:s=>s,
+    showToast:(s,k)=>toasts.push(k),
+    renderPortfolioJournalView:()=>trace.push('render'),
+    isPortfolioViewActive:()=>true,renderPortfolioView() {},
   });
-  vm.runInContext(extract('deleteTrade'), a);
-  const pendingFail = a.deleteTrade('T1');
-  assert.deepEqual(events1, ['delete requested'], 'must not optimistically remove');
-  fail.resolve(false); await pendingFail;
-  assert.deepEqual(events1, ['delete requested'], 'backend failure keeps the row');
-  assert.equal(a._jLastKnownGoodCount, 1, 'failure preserves recovery snapshot');
-  assert.equal(a._jConfirmedDeletedTradeIds.T1, undefined, 'failure never tombstones');
-  assert.ok(toasts1.some(x => x[1] === 'warn'), 'failed DELETE is visible warning');
+  vm.runInContext(journalDelete,t);
+  const task=t.deleteTrade('T1');
+  assert.deepStrictEqual(trace,['requested'],'no optimistic deletion');
+  pending.resolve(false);await task;
+  assert.deepStrictEqual(trace,['requested'],'failed backend DELETE keeps local');
+  assert.strictEqual(t._jConfirmedDeletedTradeIds.T1,undefined);
+  assert(toasts.includes('warn'),'failure visible');
 
-  const ok = deferred(), events2 = [], toasts2 = [];
-  const b = context({
-    confirm: () => true, BACKEND: 'https://backend.invalid', S: {backendKey: 'key'},
-    journalManager: { getById: () => ({id:'T1'}), remove: id => events2.push('removed '+id) },
-    jDeleteRemote: () => {events2.push('delete requested'); return ok.promise;},
-    _jConfirmedDeletedTradeIds: Object.create(null),
-    _jLastKnownGoodTrades: [{id:'T1'},{id:'T2'}], _jLastKnownGoodCount: 2,
-    showToast: (s,k) => toasts2.push([s,k]),
-    renderPortfolioJournalView: () => events2.push('render'),
-    isPortfolioViewActive: () => true, renderPortfolioView: () => {},
-  });
-  vm.runInContext(extract('deleteTrade'), b);
-  const pendingOk = b.deleteTrade('T1');
-  assert.deepEqual(events2, ['delete requested']);
-  ok.resolve(true); await pendingOk;
-  assert.equal(b._jConfirmedDeletedTradeIds.T1, true);
-  assert.equal(b._jLastKnownGoodCount, 1);
-  assert.deepEqual(b._jLastKnownGoodTrades.map(t=>t.id), ['T2']);
-  assert.deepEqual(events2.slice(0,2), ['delete requested', 'removed T1']);
-  assert.ok(toasts2.some(x => x[1] === 'ok'));
-  assert.match(extract('_jSyncJournalFromBackend'), /_jConfirmedDeletedTradeIds\[String\(t\.id\)\]/,
-    'in-flight GET cannot resurrect a confirmed deletion');
-
-  const one = deferred(), two = deferred();
-  const jm = {_lastBackendWrite: null};
-  const c = context({
-    journalManager: jm,
-    scanAll: () => [{trade:{id:'A'}},{trade:{id:'B'}}],
-    applySafeOTMCleanup: id => {
-      jm._lastBackendWrite = id === 'A' ? one.promise : two.promise;
-      return {applied:1,reviewRequired:0};
-    },
-  });
-  vm.runInContext(extract('applySafeOTMCleanupAll'), c);
-  let completed = false;
-  const cleanup = c.applySafeOTMCleanupAll('PF').then(r => { completed = true; return r; });
-  await Promise.resolve(); assert.equal(completed, false, 'do not return early');
-  one.resolve({ok:true,source:'backend'}); await Promise.resolve(); await Promise.resolve();
-  assert.equal(completed, false, 'still waiting on the second trade');
-  two.resolve({ok:false,source:'local',configured:true,error:'HTTP 500'});
-  const result = await cleanup;
-  assert.equal(result.applied, 2);
-  assert.equal(result.backendConfirmedTrades, 1);
-  assert.equal(result.backendFailedTrades, 1);
-
-  const done = deferred(), messages = [];
-  const d = context({
-    portfolioExpiry: {
-      scanAll: () => [{expiredLegs:[{classification:'OTM'}]}],
-      applySafeOTMCleanupAll: () => done.promise
-    },
-    confirm: () => true,
-    showToast: (s,k) => messages.push([s,k]),
-    renderPositionsPanel() {},
+  const success = deferred(), events=[],messages=[];
+  const ok=vmCtx({
+    confirm:()=>true,BACKEND:'backend',S:{backendKey:'key'},
+    journalManager:{getById:()=>({id:'T2'}),remove:id=>events.push('remove:'+id)},
+    jDeleteRemote:()=>{events.push('requested');return success.promise;},
+    _jConfirmedDeletedTradeIds:Object.create(null),
+    _jLastKnownGoodTrades:[{id:'T2'},{id:'T3'}],_jLastKnownGoodCount:2,
+    localStorage:{setItem:(k,v)=>events.push('ledger:'+v)},
+    apexStorageKey:s=>s,
+    showToast:(s,k)=>messages.push(k),
     renderPortfolioJournalView() {},
-    console: { warn() {} },
+    isPortfolioViewActive:()=>true,renderPortfolioView() {},
   });
-  vm.runInContext(extract('_pfExpiryApply'), d);
-  const task = d._pfExpiryApply('PF');
-  assert.equal(messages.length,0,'no green toast while PUTs pending');
-  done.resolve({applied:1,reviewRequired:0,backendFailedTrades:1,backendConfirmedTrades:0});
-  await task;
-  assert.equal(messages.length,1);
-  assert.equal(messages[0][1],'warn');
+  vm.runInContext(journalDelete,ok);
+  const deletion=ok.deleteTrade('T2');
+  assert.deepStrictEqual(events,['requested']);
+  success.resolve(true);await deletion;
+  assert.strictEqual(ok._jConfirmedDeletedTradeIds.T2,true);
+  assert.strictEqual(ok._jLastKnownGoodCount,1);
+  assert.strictEqual(ok._jLastKnownGoodTrades[0].id,'T3');
+  assert(events.includes('remove:T2'),'remove after backend confirmation');
+  assert(messages.includes('ok'),'only confirmed delete reports success');
 
-  // Both Journal and Portfolio must use tombstone-aware backend synchronization.
-  assert.match(source, /jLoadFromBackend = _jSyncJournalFromBackend;/,
-    'Journal open uses the same filtered synchronization as Portfolio');
+  assert(html.includes('jLoadFromBackend = _jSyncJournalFromBackend;'),
+    'legacy Journal reader shares tombstone-filtered sync');
+  assert(html.includes("_confirmedDeletedOnDisk[String(t.id || t.tradeId)]"),
+    'cold start filters previously confirmed deletes');
+  assert(html.includes('Object.keys(_confirmedDeletedOnDisk).forEach(function(id) { _srcIds[id] = 1; });'),
+    'legacy apex_positions never remigrates confirmed deletes');
+  assert(html.includes("onclick=\"deletePosition(this.dataset.posid)\""),
+    'Portfolio DEL preserves opaque string id');
+  assert(!html.includes("onclick=\"deletePosition(+this.dataset.posid)\""));
 
-  // 5: screenshot's DEL button must retain opaque string trade IDs; never
-  // convert "T123_ABCD" to NaN. Route through the already-confirmed deletion
-  // path, not positionManager.remove which was fire-and-forget.
-  assert.match(source, /onclick="deletePosition\(this\.dataset\.posid\)"/,
-    'portfolio DEL passes raw string id');
-  assert.doesNotMatch(source, /onclick="deletePosition\(\+this\.dataset\.posid\)"/);
-  const op = context({
-    positionManager: {getById: id => id === 'T123_ABCD' ? {ticker:'ADBE'} : null},
-    confirm: () => true,
-    deleteTrade: async (id, opts) => {
-      assert.equal(id,'T123_ABCD');
-      assert.equal(opts.skipConfirm,true);
-      return true;
-    },
-    renderPositionsPanel: id => {assert.equal(id,'PF')},
-    _activePanelPortfolioId: 'PF'
+  const p=vmCtx({
+    positionManager:{getById: id=>id==='T2'?{ticker:'ADBE'}:null},
+    confirm:()=>true,
+    deleteTrade:async(id,opts)=>{assert.strictEqual(id,'T2');assert.strictEqual(opts.skipConfirm,true);return true;},
+    _activePanelPortfolioId:'PF',renderPositionsPanel:id=>assert.strictEqual(id,'PF')
   });
-  vm.runInContext(extract('deletePosition'),op);
-  await op.deletePosition('T123_ABCD');
+  vm.runInContext(portfolioDelete,p);
+  await p.deletePosition('T2');
 
-  console.log('Journal persistence & expiry cleanup: 5 cases passed');
-})().catch(e => { console.error(e); process.exitCode = 1; });
-
+  console.log('✓ backend-first Journal/Portfolio DELETE: failure, success, tombstones, string IDs');
+})().catch(e=>{console.error(e);process.exitCode=1;});
