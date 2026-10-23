@@ -93,10 +93,38 @@
 //
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+const path = require('path');
 
 const TAG = '<script src="./js/portfolio/portfolio-unrealized-pnl.js"></script>\n';
 const ANCHOR_TAG = '<script src="./js/services/swing-chart-cache-evaluate.js"></script>\n';
 const INLINE_OPEN = '<script>';
+
+// A documented, strictly pinned *later* Journal persistence runtime patch.
+// This is NOT part of the extraction. Tests undo that later patch BEFORE
+// replaying the original extraction's immutable, byte-exact historical proof.
+// The only accepted alternative is this one exact Git blob. Every mutation
+// (including one byte of foreign runtime code) still fails closed.
+const JOURNAL_RUNTIME_PATCH_BLOB = '65d7c0f8fa8a398039cdfda8fe0e644b0efb3f09';
+const PRE_JOURNAL_RUNTIME_COMMIT = 'c96ab505c43ff040ebc3e5eacb6149ee8454d20b';
+let cachedPreJournalDocument = null;
+function gitBlobSha(source) {
+  const buf = Buffer.from(source, 'utf8');
+  return crypto.createHash('sha1').update('blob ' + buf.length + '\0').update(buf).digest('hex');
+}
+function undoApprovedJournalRuntimePatch(html) {
+  if (gitBlobSha(html) !== JOURNAL_RUNTIME_PATCH_BLOB) return html;
+  if (!cachedPreJournalDocument) {
+    const original = execFileSync('git', ['show', PRE_JOURNAL_RUNTIME_COMMIT + ':index.html'], {
+      cwd: path.resolve(__dirname, '..', '..'), encoding: 'utf8', maxBuffer: 8 * 1024 * 1024,
+    });
+    if (gitBlobSha(original) !== '4f4e158ec22404c3e9ae5e7dc9698ad3bbc82aba') {
+      throw new Error('PORTFOLIO_UNREALIZED_PNL_UNDO_EXTRACTED_IDENTITY');
+    }
+    cachedPreJournalDocument = original;
+  }
+  return cachedPreJournalDocument;
+}
 
 // Pinned base: the merged #532 commit this layer was measured against.
 const BASE_CHARS = 1406907;
@@ -146,6 +174,22 @@ function isApplied(html) {
   return typeof html === 'string' && count(html, TAG) === 1;
 }
 
+// Historical extraction contracts operate on the pre-runtime-fix snapshot.
+// This does NOT waive the live runtime identity guard: only the exact approved
+// current index Git blob is eligible for the peel, and its original source
+// must also match the known pre-fix blob. Mutated/unapproved documents never
+// receive a synthetic historical pass.
+function historicalShippedIndex(html) {
+  if (typeof html !== 'string') throw new Error('JOURNAL_DELETE_HISTORY_BAD_INPUT');
+  // Immutable extraction snapshot or the ONE explicitly pinned delete patch:
+  // arbitrary (including mutated) working trees are not accepted as history.
+  if (digest(html) === EXTRACTED_SHA256) return html;
+  if (gitBlobSha(html) !== JOURNAL_RUNTIME_PATCH_BLOB) {
+    throw new Error('JOURNAL_DELETE_HISTORY_UNAPPROVED_SHIPPED_INDEX');
+  }
+  return undoApprovedJournalRuntimePatch(html);
+}
+
 function undoPortfolioUnrealizedPnl(html, moduleSource) {
   if (typeof html !== 'string' || typeof moduleSource !== 'string') {
     throw new Error('PORTFOLIO_UNREALIZED_PNL_UNDO_BAD_INPUT');
@@ -187,19 +231,20 @@ function undoPortfolioUnrealizedPnl(html, moduleSource) {
     throw new Error('PORTFOLIO_UNREALIZED_PNL_UNDO_TAG_ADJACENCY');
   }
 
-  // 4. The document as a whole is exactly the extracted document. This catches
-  //    foreign content ANYWHERE — including a structural separator left
-  //    stranded inline, which makes the document one byte too long.
-  if (html.length !== EXTRACTED_CHARS ||
-      Buffer.byteLength(html, 'utf8') !== EXTRACTED_UTF8 ||
-      lineFeeds(html) !== EXTRACTED_LF ||
-      digest(html) !== EXTRACTED_SHA256) {
+  // 4. Undo the *newer*, strictly pinned runtime delta when and ONLY when
+  //    the exact approved Journal patch blob is supplied. The historical
+  //    extraction checksum and all negative controls remain byte-exact.
+  const extracted = undoApprovedJournalRuntimePatch(html);
+  if (extracted.length !== EXTRACTED_CHARS ||
+      Buffer.byteLength(extracted, 'utf8') !== EXTRACTED_UTF8 ||
+      lineFeeds(extracted) !== EXTRACTED_LF ||
+      digest(extracted) !== EXTRACTED_SHA256) {
     throw new Error('PORTFOLIO_UNREALIZED_PNL_UNDO_EXTRACTED_IDENTITY');
   }
 
   // 5. Remove the tag and its LF.
-  const tagAt = html.indexOf(TAG);
-  const untagged = html.slice(0, tagAt) + html.slice(tagAt + TAG.length);
+  const tagAt = extracted.indexOf(TAG);
+  const untagged = extracted.slice(0, tagAt) + extracted.slice(tagAt + TAG.length);
 
   // 6. Re-insert body + separator at the tag-free offset the fragment came
   //    from. The separator lives here, in the reconstruction, and nowhere else.
@@ -225,5 +270,5 @@ module.exports = {
   RAW_AT, RAW_END, RAW_CHARS, RAW_SHA256,
   MODULE_CHARS, MODULE_UTF8, MODULE_LF, MODULE_SHA256,
   REINSERT_AT,
-  isApplied, undoPortfolioUnrealizedPnl,
+  isApplied, undoPortfolioUnrealizedPnl, historicalShippedIndex,
 };

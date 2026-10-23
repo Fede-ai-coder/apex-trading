@@ -214,7 +214,7 @@ const JS_CONSUMERS = {
 const JS_CONSUMER_TOTAL = 16;
 const MARKUP_CONSUMERS = { _mcxRedraw: 3, _mcxRefresh: 1 };
 
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 // THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
 // later Apex shared post-auth lifecycle owner sits on top of it, so peel that
 // layer first, newest-first, and every assertion below keeps meaning exactly

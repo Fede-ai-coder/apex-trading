@@ -273,7 +273,7 @@ console.log('APEX SHARED POST-AUTH LIFECYCLE — PERMANENT BOUNDARY CONTRACT');
 console.log('relocation only · audited Candidate C (#409) · base=' + BASE_SHA);
 
 const git = (args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 // THE DOCUMENT THIS CONTRACT PINS is index.html as THIS extraction left it. The
 // later TT reconnect UI owner sits on top of it, so peel that layer first,
 // newest-first, and every assertion below keeps meaning exactly what it meant

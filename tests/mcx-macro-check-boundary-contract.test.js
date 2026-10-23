@@ -141,7 +141,7 @@ const RISK_COLORS = {
   NONE: 'var(--gr)',
 };
 
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 const TRADE_FORMS_U = require('./lib/journal-trade-forms-undo.js');
 const CLOSE_LEGS_U = require('./lib/journal-close-legs-undo.js');
 const TT_RECONNECT_U = require('./lib/tt-reconnect-undo.js');

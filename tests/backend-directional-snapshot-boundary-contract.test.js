@@ -3301,14 +3301,14 @@ deepEq(BASE_NO_DSB.filter(function (p) {
   // service to be evaluated BEFORE the monolith. Note the exposure is wrapped in
   // try/catch, so a wrong script order would NOT throw: it would silently leave the
   // debug handle undefined. This predicate is what makes that order regression loud.
-  eq(deps.length, 14, 'the real document has exactly 14 cross-script LOAD-TIME dependencies (including Manual Import window exposure)');
+  eq(deps.length, 15, 'the real document has exactly 15 cross-script LOAD-TIME dependencies (including Manual Import window exposure and the jLoadFromBackend tombstone wrapper)');
   deepEq(deps.map(function (d) { return d.name; }).sort(),
     ['_apexCompareCandleArrays', '_apexParityNormCandle', '_apexParityNormCandleArray', '_apexParityNormTime',
      '_isTransientFetchError', '_ttCallWithRetry', 'apexDebugBackendDirectionalPreview',
      'apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot',
      'apexDebugSfsDetailChart', 'apexImportJournalTradesJson',
-     'jAddTrade', 'jDeleteTrade', 'jUpdateTrade'],
-    'the 14 identifiers evaluated at load time from earlier modules');
+     'jAddTrade', 'jDeleteTrade', 'jLoadFromBackend', 'jUpdateTrade'],
+    'the 15 identifiers evaluated at load time from earlier modules');
   deepEq(Array.from(new Set(deps.map(function (d) { return d.consumer; }))),
     ['./js/services/journal-backend-write-through.js', 'INLINE'],
     'cross-script load-time dependencies belong exactly to Journal Write-through and the inline monolith');
@@ -3316,9 +3316,9 @@ deepEq(BASE_NO_DSB.filter(function (p) {
     ['./js/api/backend-client.js', './js/services/apex-parity-compare.js',
      './js/services/backend-directional-snapshot-service.js',
      './js/services/candle-normalization.js', './js/services/journal-core.js',
-     './js/services/journal-manual-import.js', './js/services/sfs-scan-service.js',
-     './js/ui/backend-directional-preview.js'],
-    'those 14 come from exactly 8 provider modules');
+     './js/services/journal-manual-import.js', './js/services/journal-remote-persistence.js',
+     './js/services/sfs-scan-service.js', './js/ui/backend-directional-preview.js'],
+    'those 15 come from exactly 9 provider modules');
   deepEq(deps.filter(function (d) { return d.provider === SERVICE_SRC; })
              .map(function (d) { return d.name; }).sort(),
     ['apexDebugBackendDirectionalSnapshot', 'apexDebugDirectionalBackendSnapshot'],

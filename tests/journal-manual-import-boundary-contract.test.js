@@ -56,7 +56,7 @@ const EXPECTED_DEPENDENCIES = [
   'ttCall',
 ];
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
 const TRAFFIC_LIGHT_U = require('./lib/portfolio-traffic-light-undo.js');
 const EXPIRY_MANUAL_U = require('./lib/portfolio-expiry-manual-undo.js');

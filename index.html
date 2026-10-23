@@ -15565,9 +15565,9 @@ function renderPositionsPanel(portfolioId) {
         '<td style="white-space:nowrap">' +
           '<button data-posid="' + pos.id + '" onclick="showTradeDetails(+this.dataset.posid)" ' +
             'style="background:transparent;border:1px solid var(--pu);border-radius:3px;color:var(--pu);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer;margin-right:4px">DETAILS</button>' +
-          '<button data-posid="' + pos.id + '" onclick="openCloseModal(+this.dataset.posid)" ' +
+          '<button data-posid="' + pos.id + '" onclick="openCloseModal(this.dataset.posid)" ' +
             'style="background:rgba(0,212,138,.1);border:1px solid rgba(0,212,138,.3);border-radius:3px;color:var(--gr);font-family:var(--M);font-size:8px;padding:3px 8px;cursor:pointer;margin-right:4px">CLOSE</button>' +
-          '<button data-posid="' + pos.id + '" onclick="deletePosition(+this.dataset.posid)" ' +
+          '<button data-posid="' + pos.id + '" onclick="deletePosition(this.dataset.posid)" ' +
             'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer">DEL</button>' +
         '</td>' +
       '</tr>' +
@@ -17862,13 +17862,13 @@ async function submitPosition(portfolioId) {
   }
 }
 
-function deletePosition(posId) {
+async function deletePosition(posId) {
   var pos = positionManager.getById(posId);
   if (!pos || !confirm('Delete position ' + (pos ? pos.ticker : '') + ' without archiving to journal?')) return;
-  positionManager.remove(posId);
-  renderPositionsPanel(_activePanelPortfolioId);
-  renderPortfolioView();
-  showToast('Position deleted', 'warn');
+  // All position rows originate in journalManager; route through the SAME
+  // backend-confirmed delete used by Journal (no optimistic local removal).
+  var deleted = await deleteTrade(posId, {skipConfirm:true});
+  if (deleted) renderPositionsPanel(_activePanelPortfolioId);
 }
 
 // Resolve reliable underlying IVR for a portfolio position.
@@ -22344,7 +22344,18 @@ var journalManager = (function() {
   // (= OPEN trades) saved under another env namespace are recovered, never lost.
   try {
     var _load = apexNonDestructiveLoadArray('apex_trades');
-    _trades = (_load.arr || []).map(_migrateTrade);
+    // Durable IDs only after a backend-confirmed DELETE. Recover this ledger
+    // BEFORE applying any migration or cache-fallback rules on page startup.
+    var _confirmedDeletedOnDisk = Object.create(null);
+    try {
+      var _confirmedIds = JSON.parse(localStorage.getItem(apexStorageKey('apex_journal_confirmed_deletes')) || '[]');
+      if (Array.isArray(_confirmedIds)) _confirmedIds.forEach(function(id) {
+        _confirmedDeletedOnDisk[String(id)] = true;
+      });
+    } catch (_ledgerReadErr) {}
+    _trades = (_load.arr || []).filter(function(t) {
+      return t && !_confirmedDeletedOnDisk[String(t.id || t.tradeId)];
+    }).map(_migrateTrade);
     _trades.forEach(function(t) { journalTradeLegExpiryAudit('after initial storage load', t); });
     if (_load.usedFallback) {
       _recoveredFromFallback = true;
@@ -22375,6 +22386,9 @@ var journalManager = (function() {
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
+      // A source position that was explicitly deleted from the backend must not
+      // be re-migrated from untouched legacy apex_positions on every reload.
+      Object.keys(_confirmedDeletedOnDisk).forEach(function(id) { _srcIds[id] = 1; });
       // Anything with a portfolioId not already in the journal is new to migrate.
       var _hasPending = _oldPos.some(function(pos) { return pos.portfolioId && !_srcIds[pos.id]; });
       // Snapshot the legacy source BEFORE copying — once, and only when there is
@@ -23372,6 +23386,16 @@ function _normalizeBackendTradePortfolioId(t) {
 var _jLastKnownGoodTrades = null;   // normalized backend trades from the last OK observation
 var _jLastKnownGoodCount  = 0;      // length of the last-known-good snapshot
 var _journalSyncFailed    = false;  // true after the most recent sync failed transiently
+// Session-local tombstones for DELETEs acknowledged by the backend. A GET that
+// started before a confirmed DELETE must never reintroduce the removed trade.
+var _jConfirmedDeletedTradeIds = (function() {
+  var ids = Object.create(null);
+  try {
+    var stored = JSON.parse(localStorage.getItem(apexStorageKey('apex_journal_confirmed_deletes')) || '[]');
+    if (Array.isArray(stored)) stored.forEach(function(id) { ids[String(id)] = true; });
+  } catch (e) {}
+  return ids;
+})();
 
 // Last backend WRITE (save/update/delete) outcome — read-only diagnostic surfaced by
 // apexDebugPortfolioState(). This is the single source of truth for "did the backend
@@ -23392,8 +23416,14 @@ function _recordJournalBackendSave(info) {
 // legitimately empty backend never erases a known-good snapshot.
 function _jRecordBackendSnapshot(normTrades) {
   if (Array.isArray(normTrades) && normTrades.length) {
-    _jLastKnownGoodTrades = normTrades.slice();
-    _jLastKnownGoodCount  = normTrades.length;
+    var active = normTrades.filter(function(t) {
+      return t && !(typeof _jConfirmedDeletedTradeIds !== 'undefined' &&
+        _jConfirmedDeletedTradeIds[String(t.id)]);
+    });
+    if (active.length) {
+      _jLastKnownGoodTrades = active.slice();
+      _jLastKnownGoodCount  = active.length;
+    }
   }
   _journalSyncFailed = false;
 }
@@ -23443,7 +23473,10 @@ async function _jSyncJournalFromBackend() {
     // reconciliation always sees a populated trade.portfolioId when the backend
     // carries the link under a different key. Non-destructive: fills only when
     // missing, never overwrites.
-    var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId);
+    var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId).filter(function(t) {
+      return t && !(typeof _jConfirmedDeletedTradeIds !== 'undefined' &&
+        _jConfirmedDeletedTradeIds[String(t.id)]);
+    });
     var _withPid = _normTrades.filter(function(t){ return t && t.portfolioId != null && t.portfolioId !== ''; }).length;
     console.log('[JOURNAL-DIAG] backend trades with resolved portfolioId: ' + _withPid + '/' + _normTrades.length);
     var merged = journalManager.loadFromBackend(_normTrades);
@@ -23478,6 +23511,25 @@ async function _jSyncJournalFromBackend() {
     return false;
   }
 }
+
+// Preserve the legacy Journal's own apex_journal_v1 GET/merge. The Portfolio
+// Journal uses apex_trades and has a separate resilient reader. Run both, but
+// after any in-flight legacy GET finishes, filter locally confirmed deletions
+// before the legacy view re-renders. No early/optimistic remote success.
+var _jLegacyLoadFromBackend = jLoadFromBackend;
+jLoadFromBackend = async function() {
+  var legacyOK = await _jLegacyLoadFromBackend();
+  var modernOK = await _jSyncJournalFromBackend();
+  var deletedIds = Object.keys(_jConfirmedDeletedTradeIds);
+  if (deletedIds.length) {
+    var legacyTrades = jLoad();
+    var remaining = legacyTrades.filter(function(t) {
+      return t && !_jConfirmedDeletedTradeIds[String(t.id || t.tradeId)];
+    });
+    if (remaining.length !== legacyTrades.length) jSave(remaining);
+  }
+  return !!(legacyOK || modernOK);
+};
 
 // ═══════════════════════════════════════════════════════════════
 // PRE-TRADE RISK CHECK
@@ -24007,9 +24059,56 @@ async function submitTrade() {
   }
 }
 
-function deleteTrade(id) {
-  if (!confirm('Delete this trade entry?')) return;
+async function deleteTrade(id, opts) {
+  if (!(opts && opts.skipConfirm) && !confirm('Delete this trade entry?')) return false;
+  var sid = String(id);
+  if (!journalManager.getById(id)) {
+    showToast('Trade not found locally; refresh Journal before deleting.', 'warn');
+    return false;
+  }
+  if (!BACKEND || !S.backendKey) {
+    showToast('Cannot confirm backend deletion: backend/API key unavailable. Trade kept.', 'warn');
+    return false;
+  }
+  // Backend-first: never make a trade disappear locally until DELETE is
+  // confirmed (a 404 also means already absent). A failed request must leave
+  // the trade in place, rather than resurrecting it on the next backend sync.
+  var deleted = await jDeleteRemote(sid);
+  if (!deleted) {
+    showToast('Delete NOT confirmed by backend. Trade kept; check connection and retry.', 'warn');
+    return false;
+  }
+  _jConfirmedDeletedTradeIds[sid] = true;
+  try {
+    localStorage.setItem(apexStorageKey('apex_journal_confirmed_deletes'),
+      JSON.stringify(Object.keys(_jConfirmedDeletedTradeIds)));
+  } catch (e) {
+    console.warn('[JOURNAL-SYNC] Could not persist confirmed-delete ledger:', e);
+  }
+  if (Array.isArray(_jLastKnownGoodTrades)) {
+    _jLastKnownGoodTrades = _jLastKnownGoodTrades.filter(function(t) {
+      return String(t.id) !== sid;
+    });
+    _jLastKnownGoodCount = _jLastKnownGoodTrades.length;
+  }
   journalManager.remove(id);
+  // The legacy apex_journal_v1 store can still POST /journal/sync, which would
+  // recreate this backend trade from its obsolete local copy. Scrub only the
+  // ID that was just confirmed deleted; preserve every other legacy record.
+  try {
+    if (typeof jLoad === 'function' && typeof jSave === 'function') {
+      var _legacyTrades = jLoad();
+      if (Array.isArray(_legacyTrades)) {
+        var _legacyKept = _legacyTrades.filter(function(t) {
+          return t && String(t.id || t.tradeId) !== sid;
+        });
+        if (_legacyKept.length !== _legacyTrades.length) jSave(_legacyKept);
+      }
+    }
+  } catch (_legacyDeleteErr) {
+    console.warn('[JOURNAL-SYNC] Could not purge confirmed trade from legacy store:', _legacyDeleteErr);
+  }
+  showToast('Trade deleted from backend.', 'ok');
   renderPortfolioJournalView();
   if (isPortfolioViewActive()) {
     renderPortfolioView();
@@ -24019,6 +24118,7 @@ function deleteTrade(id) {
     _pdD.portfolioRefreshSkipped++;
     _pdD.lastSkipReason = 'journal_delete_not_portfolio_view';
   }
+  return true;
 }
 
 function renderPortfolioJournalView() {

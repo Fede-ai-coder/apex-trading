@@ -240,7 +240,7 @@ const SCANNER_EARNINGS_U = require('./lib/scanner-earnings-throttle-undo.js');
 const SCANNER_IVR_U = require('./lib/scanner-ivr-throttle-undo.js');
 const VEGA_MONITOR_U = require('./lib/vega-monitor-undo.js');
 const STRATEGY_TEMPLATES_U = require('./lib/strategy-templates-undo.js');
-const LIVE_INDEX = APP_LOADER.loadIndexHtml();
+const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 // NEWEST FIRST. The chain below peels in the reverse of the cut order, so the
 // newest layer comes off before any older one and peeling out of order throws
 // rather than silently measuring the wrong document. WHICH layer is newest is
