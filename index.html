@@ -24083,6 +24083,22 @@ async function deleteTrade(id, opts) {
     _jLastKnownGoodCount = _jLastKnownGoodTrades.length;
   }
   journalManager.remove(id);
+  // The legacy apex_journal_v1 store can still POST /journal/sync, which would
+  // recreate this backend trade from its obsolete local copy. Scrub only the
+  // ID that was just confirmed deleted; preserve every other legacy record.
+  try {
+    if (typeof jLoad === 'function' && typeof jSave === 'function') {
+      var _legacyTrades = jLoad();
+      if (Array.isArray(_legacyTrades)) {
+        var _legacyKept = _legacyTrades.filter(function(t) {
+          return t && String(t.id || t.tradeId) !== sid;
+        });
+        if (_legacyKept.length !== _legacyTrades.length) jSave(_legacyKept);
+      }
+    }
+  } catch (_legacyDeleteErr) {
+    console.warn('[JOURNAL-SYNC] Could not purge confirmed trade from legacy store:', _legacyDeleteErr);
+  }
   showToast('Trade deleted from backend.', 'ok');
   renderPortfolioJournalView();
   if (isPortfolioViewActive()) {
