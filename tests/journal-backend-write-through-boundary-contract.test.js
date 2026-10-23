@@ -1210,6 +1210,71 @@ ok(!changed.some((rel) => rel.startsWith('.github/') || rel.startsWith('scripts/
 eq(fs.existsSync(path.join(ROOT, 'tests/temporary-journal-backend-write-through-audit.test.js')), false,
   'temporary audit is removed by the extraction');
 
+// ─────────────────────────────────────────────────────────────────────────────
+section('9. The LIVE document defers the bridge until the inline monolith has defined journalManager');
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THIS SECTION EXISTS. §3 proves the module fails closed when `journalManager`
+// is absent, and §5 proves the bridge works when it is present — but both feed the
+// module a hand-made sandbox. Neither asked the question the browser asks: is
+// `journalManager` defined WHEN THE TAG RUNS? It is declared by the inline monolith,
+// which executes after every non-deferred script, so from the extraction (#400) until
+// this section the module threw `ReferenceError: journalManager is not defined` on
+// every page load, none of its nine journalManager patches was ever installed, and no
+// journalManager write was pushed to the backend as it was made (the login-time
+// migration, a separate path, still uploaded what was already stored locally). The tag
+// now carries `defer`, which runs it after the monolith, still in document order.
+// This section reads the LIVE document, not the reconstruction, because the live tag
+// is the thing that was wrong.
+{
+  const LIVE = APP_LOADER.loadIndexHtml();
+  const DEFERRED_TAG = '<script defer src="./' + MODULE_REL + '"></script>';
+  eq(LIVE.split(DEFERRED_TAG).length - 1, 1, 'the live document carries exactly one DEFERRED tag for the bridge…');
+  eq(LIVE.split(MODULE_TAG).length - 1, 0, '…and no plain, non-deferred one');
+  const tags = APP_LOADER.parseScriptTags(LIVE);
+  const own = tags.filter((t) => t.src === './' + MODULE_REL);
+  eq(own.length, 1, '…which parses as one script tag');
+  ok(/(^|\s)defer(\s|=|$)/i.test(own[0].attrs) && !/(^|\s)async(\s|=|$)/i.test(own[0].attrs) &&
+    !(own[0].type && String(own[0].type).toLowerCase() === 'module'),
+  '…`defer`, neither async nor a module, so it still runs in document order');
+  const deferredTags = tags.filter((t) => t.src && /(^|\s)defer(\s|=|$)/i.test(t.attrs)).map((t) => t.src);
+  eq(deferredTags, ['./' + MODULE_REL], '…and it is the ONLY deferred script in the document');
+
+  // The monolith DECLARES the binding the bridge wraps, and no script before it does.
+  const monolith = tags.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
+  eq(scanTopLevelDeclarations(monolith).filter((d) => d.name === 'journalManager').length, 1,
+    'the inline monolith declares journalManager exactly once, at top level');
+  const localTags = tags.filter((t) => t.src && APP_LOADER.classifySrc(t.src) === 'local');
+  eq(localTags.filter((t) => scanTopLevelDeclarations(fs.readFileSync(path.join(ROOT, t.src.replace(/^\.\//, '')), 'utf8'))
+    .some((d) => d.name === 'journalManager')).map((t) => t.src), [],
+  '…and no local script declares it, so the bridge can only see it once the monolith has run');
+
+  // Browser execution order: non-deferred scripts run as the parser reaches them,
+  // deferred ones after parsing, in document order.
+  const execOrder = (list) => list.filter((t) => !(t.src && /(^|\s)defer(\s|=|$)/i.test(t.attrs)))
+    .concat(list.filter((t) => t.src && /(^|\s)defer(\s|=|$)/i.test(t.attrs)));
+  const ranAfterMonolith = (list) => {
+    const order = execOrder(list);
+    const at = order.findIndex((t) => t.src === './' + MODULE_REL);
+    const monolithAt = order.findIndex((t) => !t.src && t.inline.length > 1000);
+    return at >= 0 && monolithAt >= 0 && at > monolithAt;
+  };
+  ok(ranAfterMonolith(tags), 'in browser execution order the bridge runs AFTER the inline monolith, so journalManager exists');
+  // CONTROL — the same predicate on the document the extraction shipped.
+  const plain = APP_LOADER.parseScriptTags(LIVE.replace(DEFERRED_TAG, MODULE_TAG));
+  ok(!ranAfterMonolith(plain), 'control — with the tag plain again the bridge would run BEFORE the monolith, which is the defect');
+  // Document order is unchanged: still between Journal Remote and Journal Migration.
+  const srcs = localTags.map((t) => t.src);
+  eq(srcs[srcs.indexOf('./' + MODULE_REL) - 1], './js/services/journal-remote-persistence.js',
+    'in document order the bridge still follows Journal Remote…');
+  eq(srcs[srcs.indexOf('./' + MODULE_REL) + 1], './js/services/journal-migration.js', '…and precedes Journal Migration');
+  // Everything the bridge needs at load time other than journalManager is already defined by then.
+  for (const name of ['jAddTrade', 'jUpdateTrade', 'jDeleteTrade']) {
+    const owner = localTags.filter((t) => scanTopLevelDeclarations(fs.readFileSync(path.join(ROOT, t.src.replace(/^\.\//, '')), 'utf8'))
+      .some((d) => d.name === name)).map((t) => t.src);
+    eq(owner, ['./js/services/journal-core.js'], name + ' is declared by Journal Core alone, which loads before the bridge');
+  }
+}
+
 const report = {
   base: {
     commit: BASE_SHA,

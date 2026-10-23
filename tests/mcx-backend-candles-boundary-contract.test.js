@@ -47,7 +47,7 @@ const JOURNAL_TAG = '<script src="./js/services/journal-core.js"></script>';
 const REGIME_TAG = '<script src="./js/services/mcx-regime-policy.js"></script>';
 const JOURNAL_UI_TAG = '<script src="./js/ui/journal-ui.js"></script>';
 const JOURNAL_REMOTE_TAG = '<script src="./js/services/journal-remote-persistence.js"></script>';
-const JOURNAL_WRITE_THROUGH_TAG = '<script src="./js/services/journal-backend-write-through.js"></script>';
+const JOURNAL_WRITE_THROUGH_TAG = '<script defer src="./js/services/journal-backend-write-through.js"></script>';
 const JOURNAL_MIGRATION_TAG = '<script src="./js/services/journal-migration.js"></script>';
 const JOURNAL_MANUAL_IMPORT_TAG = '<script src="./js/services/journal-manual-import.js"></script>';
 const JOURNAL_BACKUP_RESTORE_TAG = '<script src="./js/ui/journal-backup-restore.js"></script>';

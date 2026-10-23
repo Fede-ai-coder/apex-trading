@@ -2927,14 +2927,20 @@ eq(LOCAL_SCRIPTS.length + DECLARED_NON_DSB_SCRIPTS.length, 113,
   ok(inlineAt > lastLocalAt, 'the inline monolith is the LAST application script in the document');
 }
 // No local script carries defer / async / type=module — the DSB module matches,
-// or its declarations would stop being classic-script globals.
+// or its declarations would stop being classic-script globals — EXCEPT the one
+// script that wraps `journalManager`, which the inline monolith defines: it must
+// run after the monolith has executed, so its tag carries `defer`. The exception
+// is pinned by name, and by kind, so a second deferred script fails here.
 {
   const localTags = SCRIPT_TAGS.filter(function (t) { return t.src && APP.classifySrc(t.src) === 'local'; });
   const flagged = localTags
     .filter(function (t) { return /(^|\s)(defer|async)(\s|=|$)/i.test(t.attrs) || (t.type && String(t.type).toLowerCase() === 'module'); })
     .map(function (t) { return t.src; });
-  deepEq(flagged, [], 'NO local script uses defer / async / type=module — all ' + localTags.length +
+  deepEq(flagged, ['./js/services/journal-backend-write-through.js'], 'exactly ONE local script uses defer / async / type=module — the Journal write-through bridge, which wraps the inline `journalManager` — the other ' + (localTags.length - 1) +
      ' are classic, in-order scripts');
+  deepEq(localTags.filter(function (t) { return /(^|\s)defer(\s|=|$)/i.test(t.attrs) && !/(^|\s)async(\s|=|$)/i.test(t.attrs) && !(t.type && String(t.type).toLowerCase() === 'module'); })
+    .map(function (t) { return t.src; }), ['./js/services/journal-backend-write-through.js'],
+     '…and it is `defer`, neither async nor a module, so it still runs in document order, after the inline monolith');
   eq(localTags.length, 26 + DECLARED_NON_DSB_SCRIPTS.length,
      'the document carries 26 local classic scripts (19 + BSS panel + DSB adapter + service + panel + SFS config/state + SFS scan service + SFS UI panel) plus the ' +
      STRESS_COMPANION_SCRIPTS.length + ' Stress companion modules and the ' +
@@ -5317,6 +5323,12 @@ const ORDER_GUARDS = [
   { name: 'no-defer-async-module', fn: function (tags) {
       return tags.every(function (t) {
         if (!t.src || APP.classifySrc(t.src) !== 'local') return true;
+        // The one exception: the Journal write-through bridge wraps the inline
+        // `journalManager`, so it is `defer`red (never async, never a module).
+        if (String(t.src).trim() === './js/services/journal-backend-write-through.js') {
+          return /(^|\s)defer(\s|=|$)/i.test(t.attrs) && !/(^|\s)async(\s|=|$)/i.test(t.attrs) &&
+            !(t.type && String(t.type).toLowerCase() === 'module');
+        }
         if (/(^|\s)(defer|async)(\s|=|$)/i.test(t.attrs)) return false;
         return !(t.type && String(t.type).toLowerCase() === 'module');
       });
