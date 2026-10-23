@@ -15805,6 +15805,42 @@ async function _pfDrawChart(posId, ticker) {
     if (_pfOk4h) console.log('[PORTFOLIO CHART] 4H pipeline matched parity-authoritative backend pipeline symbol=' + ticker);
   }
 
+  // Fallback only: no DXLink scanner quote and the position carries no live price. Open a
+  // one-shot DXLink quote read for this underlying and store the mark on the position, so
+  // both timeframes (and the table) end on the same fresh price. fetchLiveQuote returns
+  // null for a stale or non-DXLink quote, in which case nothing is written or painted.
+  try {
+    var _pfFbRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
+    var _pfFbDx = !!(_pfFbRow && _pfFbRow._priceSource === 'DXLink' && _pfFbRow.price && _pfFbRow.bid != null);
+    var _pfFbPos = positionManager.getById(posId);
+    // At most one attempt per ticker per minute: the open chart is redrawn on every
+    // portfolio auto-refresh, and subscribeDxlinkQuotes already skips symbols that are
+    // subscribed, in flight or cooling down, so no extra subscription is ever stacked.
+    var _pfFbMap = _pfDrawChart._liveFbAt || (_pfDrawChart._liveFbAt = {});
+    var _pfFbNow = Date.now();
+    // Only while the regular session is open (same RTH rule as enrichScanWithLiveQuotes:
+    // never paint an after-hours mark). The position price counts as fresh when it is live
+    // and was stamped within 90 s (the portfolio refresh runs every 60 s).
+    var _pfFbAt = _pfFbPos && _pfFbPos.underlyingPriceUpdatedAt ? Date.parse(_pfFbPos.underlyingPriceUpdatedAt) : NaN;
+    var _pfFbFresh = !!(_pfFbPos && _pfFbPos.underlyingPriceIsLive === true && isFinite(_pfFbAt) && (_pfFbNow - _pfFbAt) < 90000);
+    if (isRTHOpen() && !_pfFbDx && _pfFbPos && !_pfFbFresh &&
+        !(_pfFbMap[ticker] && (_pfFbNow - _pfFbMap[ticker]) < 60000)) {
+      _pfFbMap[ticker] = _pfFbNow;
+      await subscribeDxlinkQuotes([ticker]);
+      var _pfFbPx = await fetchLiveQuote(ticker);
+      if (_pfExpandedPosId !== posId) return;
+      if (_pfFbPx != null && isFinite(_pfFbPx) && _pfFbPx > 0) {
+        positionManager.updateLive(posId, {
+          underlyingPrice: +_pfFbPx, underlyingPriceSource: 'DXLink',
+          underlyingPriceUpdatedAt: new Date().toISOString(), underlyingPriceIsLive: true,
+          underlyingPriceStaleReason: null
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[PORTFOLIO CHART] live quote fallback failed symbol=' + ticker + ' reason=' + ((e && e.message) || e));
+  }
+
   _pfDrawTf(posId, ticker, '1D');
   _pfDrawTf(posId, ticker, '4H');
 }

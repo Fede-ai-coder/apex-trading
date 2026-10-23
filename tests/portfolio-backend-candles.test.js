@@ -614,6 +614,56 @@ section('14. Portfolio charts without a DXLink scanner quote use the position pr
     '14: no position price → candles are left exactly as served (no price invented)');
 }
 
+// ── 15. one-shot DXLink quote fallback when the position has no live price ────
+section('15. _pfDrawChart reads a one-shot DXLink quote only when no fresh price exists');
+{
+  vm.runInContext([
+    extractFn(HTML, '_pfNormalizeChartUnderlyingSymbol'),
+    extractFn(HTML, '_pfDrawChart'),
+  ].join('\n'), sandbox);
+
+  const mk = (n, base) => bars(n, base).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
+  const run = async (scanData, pos, quote, rth) => {
+    const log = { subscribed: [], fetched: [], updates: [] };
+    sandbox._pfExpandedPosId = 303;
+    sandbox.S = { scanData };
+    sandbox.document = { getElementById: (id) => ({ id, textContent: '', innerHTML: '', style: {}, offsetWidth: 320, offsetHeight: 180 }) };
+    sandbox._portfolioFetchBackendCandlesForChart = async () => ({ ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: mk(25, 256), candles4h: mk(25, 270) });
+    sandbox._recordBackendCandleProvenance = () => {};
+    sandbox._pfDrawTf = () => {};
+    sandbox.positionManager = { getById: () => pos, updateLive: (id, d) => log.updates.push({ id, d }) };
+    sandbox.subscribeDxlinkQuotes = async (syms) => { log.subscribed.push(syms.join(',')); };
+    sandbox.fetchLiveQuote = async (sym) => { log.fetched.push(sym); return quote; };
+    sandbox.isRTHOpen = () => rth !== false;
+    await sandbox._pfDrawChart(303, 'ADBE');
+    return log;
+  };
+
+  sandbox._pfDrawChart._liveFbAt = {};
+  const a = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
+  ok(a.subscribed.join() === 'ADBE' && a.fetched.join() === 'ADBE', '15: no DXLink row, price not live → one-shot subscribe + live read for ADBE');
+  ok(a.updates.length === 1 && a.updates[0].id === 303 && a.updates[0].d.underlyingPrice === 261.5 &&
+     a.updates[0].d.underlyingPriceSource === 'DXLink' && a.updates[0].d.underlyingPriceIsLive === true,
+    '15: the fresh mark is stored on the position (same value feeds 1D and 4H)');
+  const a2 = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
+  ok(a2.subscribed.length === 0 && a2.fetched.length === 0, '15: redraw within a minute (auto-refresh) → no new subscribe or fetch');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const b = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, null);
+  ok(b.fetched.length === 1 && b.updates.length === 0, '15: stale/missing quote → nothing is written');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const c = await run([{ ticker: 'ADBE', _priceSource: 'DXLink', price: 300, bid: 299.9 }], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5);
+  ok(c.subscribed.length === 0 && c.fetched.length === 0 && c.updates.length === 0, '15: a DXLink scanner quote → no fallback');
+  const freshAt = new Date().toISOString();
+  const d = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true, underlyingPriceUpdatedAt: freshAt }, 261.5);
+  ok(d.subscribed.length === 0 && d.fetched.length === 0 && d.updates.length === 0, '15: position carries a live price stamped <90s ago → no fallback');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const e = await run([], { underlyingPrice: 250, underlyingPriceIsLive: true, underlyingPriceUpdatedAt: new Date(Date.now() - 5 * 60000).toISOString() }, 261.5);
+  ok(e.fetched.length === 1 && e.updates.length === 1, '15: market open, live-flagged price older than 90s → refreshed');
+  sandbox._pfDrawChart._liveFbAt = {};
+  const f = await run([], { underlyingPrice: 250, underlyingPriceIsLive: false }, 261.5, false);
+  ok(f.subscribed.length === 0 && f.fetched.length === 0 && f.updates.length === 0, '15: market closed → no subscription, no fetch, no after-hours mark');
+}
+
 // ── summary ───────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
