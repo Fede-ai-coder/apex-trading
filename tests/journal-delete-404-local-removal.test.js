@@ -104,6 +104,9 @@ function vmCtx(extra) {
   assert.strictEqual(ok._jLastKnownGoodTrades[0].id,'T3');
   assert(events.includes('remove:T2'),'remove after backend confirmation');
   assert(messages.includes('ok'),'only confirmed delete reports success');
+  assert(html.includes("var _legacyKept = _legacyTrades.filter(function(t) {") &&
+    html.includes("if (_legacyKept.length !== _legacyTrades.length) jSave(_legacyKept);"),
+    'a confirmed delete is removed from the legacy bulk-sync source');
 
   assert(html.includes('var _jLegacyLoadFromBackend = jLoadFromBackend;') &&
     html.includes('var modernOK = await _jSyncJournalFromBackend();') &&
