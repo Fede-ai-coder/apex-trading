@@ -22377,6 +22377,9 @@ var journalManager = (function() {
     if (_oldPos.length) {
       var _srcIds = {};
       _trades.forEach(function(t) { if (t.sourcePositionId) _srcIds[t.sourcePositionId] = 1; });
+      // A source position that was explicitly deleted from the backend must not
+      // be re-migrated from untouched legacy apex_positions on every reload.
+      Object.keys(_confirmedDeletedOnDisk).forEach(function(id) { _srcIds[id] = 1; });
       // Anything with a portfolioId not already in the journal is new to migrate.
       var _hasPending = _oldPos.some(function(pos) { return pos.portfolioId && !_srcIds[pos.id]; });
       // Snapshot the legacy source BEFORE copying — once, and only when there is
