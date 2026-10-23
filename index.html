@@ -15860,6 +15860,16 @@ function _pfDrawTf(posId, ticker, tf) {
   }
 
   candles = _patchLivePrice(candles, ticker);
+  // _patchLivePrice only knows scanner rows with a DXLink quote. A Portfolio underlying
+  // outside the scanner universe (or with no quote) left each timeframe on its own last
+  // stored close, so 1D and 4H disagreed. Fall back to the price the Portfolio table
+  // already resolved for this position — one value, so both charts end on the same close.
+  var _pfScanRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
+  var _pfHasDxQuote = !!(_pfScanRow && _pfScanRow._priceSource === 'DXLink' && _pfScanRow.price && _pfScanRow.bid != null);
+  if (!_pfHasDxQuote && typeof positionManager !== 'undefined' && typeof _portfolioRowUnderlyingPrice === 'function') {
+    var _pfRowPx = _portfolioRowUnderlyingPrice(positionManager.getById(posId));
+    if (_pfRowPx != null) candles = patchLastCandleWithLivePrice(candles, _pfRowPx);
+  }
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
 

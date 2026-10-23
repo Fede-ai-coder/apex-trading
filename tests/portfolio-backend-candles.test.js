@@ -581,6 +581,39 @@ section('13. candle-store nested timeframe response shape maps to QQQ 1D candles
   ok(f.calls.warmup === 0, '13: valid nested QQQ 1D response does not call ensure');
 }
 
+// ── 14. 1D and 4H end on the SAME Portfolio-resolved price ────────────────────
+section('14. Portfolio charts without a DXLink scanner quote use the position price for both timeframes');
+{
+  vm.runInContext([
+    extractFn(HTML, 'patchLastCandleWithLivePrice'),
+    extractFn(HTML, '_portfolioRowUnderlyingPrice'),
+  ].join('\n'), sandbox);
+
+  const mk = (n, base) => bars(n, base).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
+  const run = async (scanData, pos) => {
+    const draw = [];
+    sandbox._pfExpandedPosId = 202;
+    sandbox._pfBackendCandleCache = { symbol: 'ADBE', candles1d: mk(25, 256), candles4h: mk(25, 270), source: 'BACKEND_CANDLE_STORE' };
+    sandbox.S = { scanData };
+    sandbox.positionManager = { getById: (id) => (id === 202 ? pos : null) };
+    sandbox._patchLivePrice = (candles) => candles;
+    sandbox._drawCandleChart = (wrapId, candles) => { draw.push({ wrapId, last: candles[candles.length - 1] }); };
+    sandbox._pfDrawTf(202, 'ADBE', '1D');
+    sandbox._pfDrawTf(202, 'ADBE', '4H');
+    return { d1: draw.find((d) => d.wrapId === 'pf-1d-wrap-202'), d4: draw.find((d) => d.wrapId === 'pf-4h-wrap-202') };
+  };
+
+  const a = await run([], { underlyingPrice: 261.5 });
+  ok(a.d1 && a.d4 && a.d1.last.close === 261.5 && a.d4.last.close === 261.5,
+    '14: no scanner row → both 1D and 4H last close = position underlyingPrice');
+  const b = await run([{ ticker: 'ADBE', _priceSource: 'DXLink', price: 300, bid: 299.9 }], { underlyingPrice: 261.5 });
+  ok(b.d1 && b.d1.last.close !== 261.5 && b.d4.last.close !== 261.5,
+    '14: a DXLink scanner quote keeps priority — the position price is not applied');
+  const c = await run([], null);
+  ok(c.d1 && c.d4 && c.d1.last.close !== 261.5 && c.d4.last.close !== 261.5,
+    '14: no position price → candles are left exactly as served (no price invented)');
+}
+
 // ── summary ───────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
