@@ -23557,6 +23557,12 @@ async function _jSyncJournalFromBackend() {
   }
 }
 
+// Journal UI historically calls jLoadFromBackend(), whose older merge does not
+// know about confirmed-delete tombstones or pending expiry writes. Route that
+// entry point through the same protected, retry-aware sync used by Portfolio.
+// This keeps a late GET from silently resurrecting a deleted trade.
+jLoadFromBackend = _jSyncJournalFromBackend;
+
 // ═══════════════════════════════════════════════════════════════
 // PRE-TRADE RISK CHECK
 // Reuses existing snapshot/Greeks/VIX3M infrastructure.
