@@ -15805,6 +15805,30 @@ async function _pfDrawChart(posId, ticker) {
     if (_pfOk4h) console.log('[PORTFOLIO CHART] 4H pipeline matched parity-authoritative backend pipeline symbol=' + ticker);
   }
 
+  // Fallback only: no DXLink scanner quote and the position carries no live price. Open a
+  // one-shot DXLink quote read for this underlying and store the mark on the position, so
+  // both timeframes (and the table) end on the same fresh price. fetchLiveQuote returns
+  // null for a stale or non-DXLink quote, in which case nothing is written or painted.
+  try {
+    var _pfFbRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
+    var _pfFbDx = !!(_pfFbRow && _pfFbRow._priceSource === 'DXLink' && _pfFbRow.price && _pfFbRow.bid != null);
+    var _pfFbPos = positionManager.getById(posId);
+    if (!_pfFbDx && _pfFbPos && _pfFbPos.underlyingPriceIsLive !== true) {
+      await subscribeDxlinkQuotes([ticker]);
+      var _pfFbPx = await fetchLiveQuote(ticker);
+      if (_pfExpandedPosId !== posId) return;
+      if (_pfFbPx != null && isFinite(_pfFbPx) && _pfFbPx > 0) {
+        positionManager.updateLive(posId, {
+          underlyingPrice: +_pfFbPx, underlyingPriceSource: 'DXLink',
+          underlyingPriceUpdatedAt: new Date().toISOString(), underlyingPriceIsLive: true,
+          underlyingPriceStaleReason: null
+        });
+      }
+    }
+  } catch (e) {
+    console.warn('[PORTFOLIO CHART] live quote fallback failed symbol=' + ticker + ' reason=' + ((e && e.message) || e));
+  }
+
   _pfDrawTf(posId, ticker, '1D');
   _pfDrawTf(posId, ticker, '4H');
 }
