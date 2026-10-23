@@ -23,7 +23,7 @@ assert(
   'remote journal delete treats successful DELETE responses, including 204, as success without requiring JSON'
 );
 
-const deleteStart = html.indexOf('function deleteTrade(id)');
+const deleteStart = html.indexOf('async function deleteTrade(id, opts)');
 const deleteEnd = html.indexOf('function renderPortfolioJournalView', deleteStart);
 const deleteBlock = html.slice(deleteStart, deleteEnd);
 assert(
