@@ -93,7 +93,7 @@ const EXPECTED_FREE_IDENTIFIERS = [
   'normalizeTradeOptionLegAliases',
 ];
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const REMOTE_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-remote-persistence.js'), 'utf8');
 const MIGRATION_MODULE = fs.readFileSync(path.join(ROOT, 'js/services/journal-migration.js'), 'utf8');
