@@ -60,7 +60,7 @@ const EXPECTED_DEPENDENCIES = [
   'ttCall',
 ];
 
-const INDEX = APP_LOADER.loadIndexHtml();
+const INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
 const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
 const U = require('./lib/journal-migration-undo.js');
 const CANDLE_CHART_U = require('./lib/backend-candle-store-chart-undo.js');
