@@ -121,5 +121,25 @@ function context(overrides) {
   assert.equal(messages.length,1);
   assert.equal(messages[0][1],'warn');
 
-  console.log('Journal persistence & expiry cleanup: 4 cases passed');
+  // 5: screenshot's DEL button must retain opaque string trade IDs; never
+  // convert "T123_ABCD" to NaN. Route through the already-confirmed deletion
+  // path, not positionManager.remove which was fire-and-forget.
+  assert.match(source, /onclick="deletePosition\(this\.dataset\.posid\)"/,
+    'portfolio DEL passes raw string id');
+  assert.doesNotMatch(source, /onclick="deletePosition\(\+this\.dataset\.posid\)"/);
+  const op = context({
+    positionManager: {getById: id => id === 'T123_ABCD' ? {ticker:'ADBE'} : null},
+    confirm: () => true,
+    deleteTrade: async (id, opts) => {
+      assert.equal(id,'T123_ABCD');
+      assert.equal(opts.skipConfirm,true);
+      return true;
+    },
+    renderPositionsPanel: id => {assert.equal(id,'PF')},
+    _activePanelPortfolioId: 'PF'
+  });
+  vm.runInContext(extract('deletePosition'),op);
+  await op.deletePosition('T123_ABCD');
+
+  console.log('Journal persistence & expiry cleanup: 5 cases passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });
