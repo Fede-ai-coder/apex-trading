@@ -15565,9 +15565,9 @@ function renderPositionsPanel(portfolioId) {
         '<td style="white-space:nowrap">' +
           '<button data-posid="' + pos.id + '" onclick="showTradeDetails(+this.dataset.posid)" ' +
             'style="background:transparent;border:1px solid var(--pu);border-radius:3px;color:var(--pu);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer;margin-right:4px">DETAILS</button>' +
-          '<button data-posid="' + pos.id + '" onclick="openCloseModal(+this.dataset.posid)" ' +
+          '<button data-posid="' + pos.id + '" onclick="openCloseModal(this.dataset.posid)" ' +
             'style="background:rgba(0,212,138,.1);border:1px solid rgba(0,212,138,.3);border-radius:3px;color:var(--gr);font-family:var(--M);font-size:8px;padding:3px 8px;cursor:pointer;margin-right:4px">CLOSE</button>' +
-          '<button data-posid="' + pos.id + '" onclick="deletePosition(+this.dataset.posid)" ' +
+          '<button data-posid="' + pos.id + '" onclick="deletePosition(this.dataset.posid)" ' +
             'style="background:transparent;border:1px solid var(--b0);border-radius:3px;color:var(--tx3);font-family:var(--M);font-size:8px;padding:3px 7px;cursor:pointer">DEL</button>' +
         '</td>' +
       '</tr>' +
@@ -17862,13 +17862,13 @@ async function submitPosition(portfolioId) {
   }
 }
 
-function deletePosition(posId) {
+async function deletePosition(posId) {
   var pos = positionManager.getById(posId);
   if (!pos || !confirm('Delete position ' + (pos ? pos.ticker : '') + ' without archiving to journal?')) return;
-  positionManager.remove(posId);
-  renderPositionsPanel(_activePanelPortfolioId);
-  renderPortfolioView();
-  showToast('Position deleted', 'warn');
+  // All position rows originate in journalManager; route through the SAME
+  // backend-confirmed delete used by Journal (no optimistic local removal).
+  var deleted = await deleteTrade(posId, {skipConfirm:true});
+  if (deleted) renderPositionsPanel(_activePanelPortfolioId);
 }
 
 // Resolve reliable underlying IVR for a portfolio position.
@@ -24085,16 +24085,16 @@ async function submitTrade() {
   }
 }
 
-async function deleteTrade(id) {
-  if (!confirm('Delete this trade entry?')) return;
+async function deleteTrade(id, opts) {
+  if (!(opts && opts.skipConfirm) && !confirm('Delete this trade entry?')) return false;
   var sid = String(id);
   if (!journalManager.getById(id)) {
     showToast('Trade not found locally; refresh Journal before deleting.', 'warn');
-    return;
+    return false;
   }
   if (!BACKEND || !S.backendKey) {
     showToast('Cannot confirm backend deletion: backend/API key unavailable. Trade kept.', 'warn');
-    return;
+    return false;
   }
   // Backend-first: never make a trade disappear locally until DELETE is
   // confirmed (a 404 also means already absent). A failed request must leave
@@ -24102,7 +24102,7 @@ async function deleteTrade(id) {
   var deleted = await jDeleteRemote(sid);
   if (!deleted) {
     showToast('Delete NOT confirmed by backend. Trade kept; check connection and retry.', 'warn');
-    return;
+    return false;
   }
   _jConfirmedDeletedTradeIds[sid] = true;
   try {
@@ -24128,6 +24128,7 @@ async function deleteTrade(id) {
     _pdD.portfolioRefreshSkipped++;
     _pdD.lastSkipReason = 'journal_delete_not_portfolio_view';
   }
+  return true;
 }
 
 function renderPortfolioJournalView() {
