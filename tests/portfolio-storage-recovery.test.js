@@ -272,5 +272,39 @@ const J = (a) => JSON.stringify(a);
   console.log('✓ 8 legacy apex_positions migration: source preserved, backup kept, idempotent; tombstones respected');
 })();
 
+// ── 9. Real cold-start journal hydration with durable confirmed-delete ledger ──
+(function() {
+  const startMark = "var _load = apexNonDestructiveLoadArray('apex_trades');";
+  const endMark = "} catch(e) { _trades = []; }";
+  const a = HTML.indexOf(startMark), b = HTML.indexOf(endMark, a);
+  assert(a > 0 && b > a, '9: real journal startup hydration block found');
+  if (!(a > 0 && b > a)) return;
+
+  const realLoad = HTML.slice(a,b);
+  function loadOnce(ledger) {
+    const seed = {
+      apex_trades: J([{id:'T1',ticker:'ADBE'},{id:'T2',ticker:'SPY'}]),
+      apex_journal_confirmed_deletes: ledger,
+    };
+    const ctx = makeCtx('app.example.com', seed);
+    ctx._trades = [];
+    ctx._migrateTrade = (t) => t;
+    ctx.journalTradeLegExpiryAudit = () => {};
+    vm.runInContext("function runLoad(){try {\n" + realLoad +
+      "\n} catch(e) { _trades = []; } }", ctx);
+    ctx.runLoad();
+    return ctx._trades;
+  }
+  const first = loadOnce('[]');
+  assert(first.length === 2, '9: empty ledger preserves both existing trades at cold start');
+  const filtered = loadOnce('["T2"]');
+  assert(filtered.length === 1 && filtered[0].id === 'T1',
+    '9: only remotely confirmed T2 excluded from cold-start hydration');
+  const corrupted = loadOnce('{broken');
+  assert(corrupted.length === 2,
+    '9: corrupt optional ledger does not wipe unrelated local positions');
+  console.log('✓ 9 real cold-start loader keeps data, filters confirmed IDs, tolerates corrupt ledger');
+})();
+
 console.log('\n' + (failed ? ('FAILED ' + failed + ' / ' + (passed + failed)) : ('ALL PASS (' + passed + ' assertions)')));
 process.exit(failed ? 1 : 0);
