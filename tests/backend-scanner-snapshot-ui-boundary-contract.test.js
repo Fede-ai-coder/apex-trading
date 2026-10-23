@@ -3733,7 +3733,14 @@ section('29. script order');
   eq(local.length, 26 + DECLARED_BEYOND.length, 'no undeclared local application script exists');
   local.forEach(function (t) {
     const attrs = String(t.attrs || '');
-    ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
+    // The Journal write-through bridge wraps `journalManager`, which the inline
+    // monolith defines, so it is the ONE script that must be deferred (it then runs
+    // after the monolith, still in document order). Every other script stays classic.
+    if (t.src === './js/services/journal-backend-write-through.js') {
+      ok(/\bdefer\b/i.test(attrs), (t.src || '') + ' IS deferred: it wraps the inline journalManager, so it must run after the monolith');
+    } else {
+      ok(!/\bdefer\b/i.test(attrs), (t.src || '') + ' is NOT deferred');
+    }
     ok(!/\basync\b/i.test(attrs), (t.src || '') + ' is NOT async');
     ok(!/type\s*=\s*["']module["']/i.test(attrs), (t.src || '') + ' is a CLASSIC script, not a module');
   });

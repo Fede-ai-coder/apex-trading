@@ -169,7 +169,7 @@ const journalTag = '<script src="./js/services/journal-core.js"></script>';
 const regimeTag = '<script src="./' + REGIME_REL + '"></script>';
 const journalUiTag = '<script src="./' + JOURNAL_UI_REL + '"></script>';
 const journalRemoteTag = '<script src="./' + JOURNAL_REMOTE_REL + '"></script>';
-const journalWriteThroughTag = '<script src="./' + JOURNAL_WRITE_THROUGH_REL + '"></script>';
+const journalWriteThroughTag = '<script defer src="./' + JOURNAL_WRITE_THROUGH_REL + '"></script>';
 const journalMigrationTag = '<script src="./' + JOURNAL_MIGRATION_REL + '"></script>';
 const journalManualImportTag = '<script src="./' + JOURNAL_MANUAL_IMPORT_REL + '"></script>';
 ok((INDEX.split(mcx1Tag).length - 1) === 1, 'exactly one MCX-1 script tag exists');
@@ -217,7 +217,7 @@ const journalRemoteAt = INDEX.indexOf(journalRemoteTag);
 const afterJournalRemoteAt = INDEX.indexOf('<script', journalRemoteAt + journalRemoteTag.length);
 const afterJournalRemoteEnd = afterJournalRemoteAt >= 0 ? INDEX.indexOf('>', afterJournalRemoteAt) : -1;
 const afterJournalRemoteTag = afterJournalRemoteEnd >= 0 ? INDEX.slice(afterJournalRemoteAt, afterJournalRemoteEnd + 1) : '';
-ok(journalRemoteAt > journalUiAt && afterJournalRemoteTag === '<script src="./' + JOURNAL_WRITE_THROUGH_REL + '">',
+ok(journalRemoteAt > journalUiAt && afterJournalRemoteTag === '<script defer src="./' + JOURNAL_WRITE_THROUGH_REL + '">',
   'Journal Remote loads immediately before Journal Write-through');
 const journalWriteThroughAt = INDEX.indexOf(journalWriteThroughTag);
 const afterJournalWriteThroughAt = INDEX.indexOf('<script', journalWriteThroughAt + journalWriteThroughTag.length);
