@@ -23117,15 +23117,39 @@ var portfolioExpiry = (function() {
     return {applied: applied, reviewRequired: reviewRequired};
   }
 
-  function applySafeOTMCleanupAll(portfolioId) {
+  async function applySafeOTMCleanupAll(portfolioId) {
     var results = scanAll(portfolioId);
     var totalApplied = 0, totalReview = 0;
+    var writes = [];
     results.forEach(function(r) {
       var res = applySafeOTMCleanup(r.trade.id);
       totalApplied += res.applied;
       totalReview  += res.reviewRequired;
+      // journalManager.update() dispatches a backend PUT through its terminal
+      // write-through wrapper, which stores this operation's promise. Capture
+      // EACH trade's promise before the next trade overwrites the slot.
+      if (res.applied) {
+        writes.push({
+          tradeId: r.trade.id,
+          promise: journalManager._lastBackendWrite
+        });
+      }
     });
-    return {applied: totalApplied, reviewRequired: totalReview};
+    var confirmed = 0, failed = 0;
+    for (var i = 0; i < writes.length; i++) {
+      var item = writes[i], outcome = null;
+      try { outcome = item.promise ? await item.promise : null; }
+      catch (e) { outcome = {ok:false, error:(e && e.message) || String(e)}; }
+      if (outcome && outcome.ok && outcome.source === 'backend') {
+        confirmed++;
+      } else {
+        failed++;
+        console.warn('[PortfolioExpiry] backend cleanup PUT not confirmed for trade', String(item.tradeId),
+          outcome && (outcome.error || outcome.status || outcome.source) || 'no_backend_confirmation');
+      }
+    }
+    return {applied: totalApplied, reviewRequired: totalReview,
+      backendConfirmedTrades: confirmed, backendFailedTrades: failed};
   }
 
   // Manual resolution for ITM/UNKNOWN expired legs. Does NOT fabricate any
@@ -23290,7 +23314,7 @@ var portfolioExpiry = (function() {
 })();
 
 // UI handlers for the Portfolio expired-legs banner.
-function _pfExpiryApply(portfolioId) {
+async function _pfExpiryApply(portfolioId) {
   var scan = portfolioExpiry.scanAll(portfolioId);
   if (!scan.length) { renderPositionsPanel(portfolioId); return; }
   var otm = 0, rev = 0;
@@ -23304,10 +23328,20 @@ function _pfExpiryApply(portfolioId) {
   if (!confirm('Apply safe cleanup for ' + otm + ' OTM expired leg(s)?\n' +
                (rev ? rev + ' leg(s) with ITM/uncertain classification will be left for manual review.\n' : '') +
                'This records an EXPIRATION event in the Trading Journal and marks the leg(s) EXPIRED_OTM.')) return;
-  var res = portfolioExpiry.applySafeOTMCleanupAll(portfolioId);
-  showToast('Expiry cleanup: ' + res.applied + ' applied' +
-            (res.reviewRequired ? ', ' + res.reviewRequired + ' need review' : ''),
-            res.applied ? 'ok' : 'warn');
+  try {
+    var res = await portfolioExpiry.applySafeOTMCleanupAll(portfolioId);
+    if (res.backendFailedTrades) {
+      showToast('Expiry cleanup locally applied, but ' + res.backendFailedTrades +
+        ' trade(s) NOT confirmed by backend. Changes may return after reload; check connection.', 'warn');
+    } else {
+      showToast('Expiry cleanup: ' + res.applied + ' leg(s) saved to backend' +
+                (res.reviewRequired ? ', ' + res.reviewRequired + ' need manual review' : ''),
+                res.applied ? 'ok' : 'warn');
+    }
+  } catch (e) {
+    console.warn('[PortfolioExpiry] cleanup failed:', e);
+    showToast('Expiry cleanup failed: backend persistence not confirmed. Check Journal before retry.', 'warn');
+  }
   renderPositionsPanel(portfolioId);
   if (typeof renderPortfolioJournalView === 'function') renderPortfolioJournalView();
 }
@@ -23372,6 +23406,9 @@ function _normalizeBackendTradePortfolioId(t) {
 var _jLastKnownGoodTrades = null;   // normalized backend trades from the last OK observation
 var _jLastKnownGoodCount  = 0;      // length of the last-known-good snapshot
 var _journalSyncFailed    = false;  // true after the most recent sync failed transiently
+// Session-local tombstones for DELETEs acknowledged by the backend. A GET that
+// started before a confirmed DELETE must never reintroduce the removed trade.
+var _jConfirmedDeletedTradeIds = Object.create(null);
 
 // Last backend WRITE (save/update/delete) outcome — read-only diagnostic surfaced by
 // apexDebugPortfolioState(). This is the single source of truth for "did the backend
@@ -23392,8 +23429,13 @@ function _recordJournalBackendSave(info) {
 // legitimately empty backend never erases a known-good snapshot.
 function _jRecordBackendSnapshot(normTrades) {
   if (Array.isArray(normTrades) && normTrades.length) {
-    _jLastKnownGoodTrades = normTrades.slice();
-    _jLastKnownGoodCount  = normTrades.length;
+    var active = normTrades.filter(function(t) {
+      return t && !_jConfirmedDeletedTradeIds[String(t.id)];
+    });
+    if (active.length) {
+      _jLastKnownGoodTrades = active.slice();
+      _jLastKnownGoodCount  = active.length;
+    }
   }
   _journalSyncFailed = false;
 }
@@ -23443,7 +23485,9 @@ async function _jSyncJournalFromBackend() {
     // reconciliation always sees a populated trade.portfolioId when the backend
     // carries the link under a different key. Non-destructive: fills only when
     // missing, never overwrites.
-    var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId);
+    var _normTrades = r.trades.map(_normalizeBackendTradePortfolioId).filter(function(t) {
+      return t && !_jConfirmedDeletedTradeIds[String(t.id)];
+    });
     var _withPid = _normTrades.filter(function(t){ return t && t.portfolioId != null && t.portfolioId !== ''; }).length;
     console.log('[JOURNAL-DIAG] backend trades with resolved portfolioId: ' + _withPid + '/' + _normTrades.length);
     var merged = journalManager.loadFromBackend(_normTrades);
@@ -24007,9 +24051,34 @@ async function submitTrade() {
   }
 }
 
-function deleteTrade(id) {
+async function deleteTrade(id) {
   if (!confirm('Delete this trade entry?')) return;
+  var sid = String(id);
+  if (!journalManager.getById(id)) {
+    showToast('Trade not found locally; refresh Journal before deleting.', 'warn');
+    return;
+  }
+  if (!BACKEND || !S.backendKey) {
+    showToast('Cannot confirm backend deletion: backend/API key unavailable. Trade kept.', 'warn');
+    return;
+  }
+  // Backend-first: never make a trade disappear locally until DELETE is
+  // confirmed (a 404 also means already absent). A failed request must leave
+  // the trade in place, rather than resurrecting it on the next backend sync.
+  var deleted = await jDeleteRemote(sid);
+  if (!deleted) {
+    showToast('Delete NOT confirmed by backend. Trade kept; check connection and retry.', 'warn');
+    return;
+  }
+  _jConfirmedDeletedTradeIds[sid] = true;
+  if (Array.isArray(_jLastKnownGoodTrades)) {
+    _jLastKnownGoodTrades = _jLastKnownGoodTrades.filter(function(t) {
+      return String(t.id) !== sid;
+    });
+    _jLastKnownGoodCount = _jLastKnownGoodTrades.length;
+  }
   journalManager.remove(id);
+  showToast('Trade deleted from backend.', 'ok');
   renderPortfolioJournalView();
   if (isPortfolioViewActive()) {
     renderPortfolioView();
