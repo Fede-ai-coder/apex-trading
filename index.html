@@ -4724,6 +4724,13 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     };
     _chartBindInteractions(wrap);
 
+    // Sub-panels under the chart (RSI, RS…) must show the SAME [start,end) window the user
+    // panned/zoomed to, so the caller can hand over a callback. It runs after every draw of
+    // this wrap — first draw, live redraw, pan, zoom, reset — because zoom/pan redraw through
+    // the stashed opts. It runs after the chart and its interaction state are complete, so if it
+    // throws, the enclosing catch below only loses the callback — the chart stays drawn.
+    if (typeof opts.onView === 'function') opts.onView(vs, ve);
+
   } catch(e) { /* chart render is non-fatal */ }
 }
 
@@ -16003,17 +16010,7 @@ function _pfDrawTf(posId, ticker, tf) {
   var src     = (_backendCandlesUsed ? (_pfBackendCandleCache.source || 'BACKEND_CANDLE_STORE') : getCandleDataSource(ticker, tf)) + _pfStaleBarNote(candles, is1d);
   var viewLen = Math.min(75, candles.length);
 
-  // ── Candle chart ───────────────────────────────────────────────
-  _drawCandleChart(wrapId, candles, ind, {
-    showSMA8: true, lastSma8: ind.lastSma8,
-    showBB:   true, showKC:   true,
-    source: src,    rsi: ind.lastRsi,
-  });
-
-  // ── RSI(14) panel ──────────────────────────────────────────────
-  _mcxDrawRsi(rsiId, ind.rsi, viewLen);
-
-  // ── RS vs SPY panel ────────────────────────────────────────────
+  // ── RS vs SPY series (resolved first: the sub-panels are drawn from the chart's view) ──
   // Flag ON: prefer the backend SPY series fetched in _pfDrawChart so the RS
   // panel renders without a frontend SPY Candle subscription.  Falls back to the
   // existing buffer read (no new subscription) — _pfDrawRsPanel shows a neutral
@@ -16023,7 +16020,25 @@ function _pfDrawTf(posId, ticker, tf) {
     spyCandles = is1d ? _pfBackendSpyCache.candles1d : _pfBackendSpyCache.candles4h;
   }
   if (!spyCandles) spyCandles = is1d ? getDailyCandles('SPY') : getFourHourCandles('SPY');
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+
+  // ── Candle chart + RSI(14) + RS panels ─────────────────────────
+  // The RSI and RS panels draw the window the candle chart is showing: _drawCandleChart reports
+  // it through onView after EVERY draw (first, live redraw, pan, zoom, reset), so the panels
+  // scroll and zoom with the candles instead of staying on the trailing bars. If the chart
+  // could not draw (too few candles / no container) they fall back to the default window.
+  var panelsDrawn = false;
+  var drawPanels = function(vs, ve) {
+    panelsDrawn = true;
+    _pfDrawRsiPanel(rsiId, ind.rsi, vs, ve);
+    _pfDrawRsPanel(rsId, candles, spyCandles, ve - vs, ve);
+  };
+  _drawCandleChart(wrapId, candles, ind, {
+    showSMA8: true, lastSma8: ind.lastSma8,
+    showBB:   true, showKC:   true,
+    source: src,    rsi: ind.lastRsi,
+    onView: drawPanels,
+  });
+  if (!panelsDrawn) drawPanels(candles.length - viewLen, candles.length);
 
   // ── Squeeze bar + label ────────────────────────────────────────
   var sqz = ind.lastSqueeze;
@@ -16049,8 +16064,71 @@ function _pfDrawTf(posId, ticker, tf) {
   _pfUpdateAlignment(posId, ticker);
 }
 
+// RSI(14) sub-panel of the Portfolio charts: draws the window [vs, ve) of the full RSI series on
+// the SAME x grid as the candle chart above it (same left/right margins, same empty "future"
+// slots), so each RSI point sits under its candle and the line pans/zooms with it. The shared
+// _mcxDrawRsi (extracted module) can only show the trailing N points, hence this one.
+function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve) {
+  var wrap = document.getElementById(rsiWrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!rsiSeries || !(ve > vs)) return;
+  var view = rsiSeries.slice(vs, ve);
+  var lastVal = null;
+  for (var i = view.length - 1; i >= 0; i--) { if (view[i] != null) { lastVal = view[i]; break; } }
+
+  var cv = document.createElement('canvas');
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 56);
+  var ctx = hd.ctx;
+
+  var W = hd.width, H = hd.height;
+  var PAD = {top:14, right:64, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+  var nv = view.length;
+  var yMin = 0, yMax = 100;
+
+  ctx.fillStyle = '#0e0e18';
+  ctx.fillRect(0, 0, W, H);
+
+  function xOf(i){ return PAD.left + (i / _chartXSpan(nv)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  // Reference lines at 40 (red-tinted) and 60 (green-tinted)
+  [[60,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [40,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
+    ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = r[2]; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(r[0], W - 2, yOf(r[0]) + 3);
+  });
+
+  // RSI line — segment color based on midpoint value
+  ctx.lineWidth = 1.5; ctx.setLineDash([]);
+  var started = false, px = null, py = null, pv = null;
+  view.forEach(function(v, i){
+    if (v == null) { started = false; px = null; py = null; pv = null; return; }
+    var x = xOf(i), y = yOf(v);
+    if (!started) { started = true; px = x; py = y; pv = v; return; }
+    var mid = (pv + v) / 2;
+    ctx.strokeStyle = mid > 60 ? 'rgba(0,212,138,.9)' : mid < 40 ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+    px = x; py = y; pv = v;
+  });
+
+  // Label (value at the right edge of the window)
+  var lc = lastVal != null ? (lastVal > 60 ? '#00d48a' : lastVal < 40 ? '#e8445a' : '#7c6fff') : '#6e6e8a';
+  ctx.font = '9px monospace'; ctx.fillStyle = lc; ctx.textAlign = 'left';
+  ctx.fillText('RSI(14): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+}
+
 // RS vs SPY panel — rolling 20-day excess return rendered as a color-coded line.
-function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
+// viewEnd (optional): draw the window [viewEnd - viewLen, viewEnd) of the candle array instead of
+// the trailing viewLen, placed on the same x grid as the candle chart above (same right margin
+// and the same empty "future" slots), so the line scrolls and zooms together with the candles.
+function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen, viewEnd) {
   var wrap = document.getElementById(wrapId);
   if (!wrap) return;
   wrap.innerHTML = '';
@@ -16071,7 +16149,16 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
     rsArr[i] = (sRet - pRet) * 100;
   }
 
-  var view = rsArr.slice(-viewLen);
+  var windowed = viewEnd != null;
+  var view;
+  if (windowed) {
+    // rsArr[i] belongs to candle index (nc - len + i); a candle outside that shared range has no
+    // RS, and rsArr[<0] / rsArr[>=len] is undefined, which every use below treats as "no value".
+    view = [];
+    for (var wi = viewEnd - viewLen; wi < viewEnd; wi++) view.push(rsArr[wi - (nc - len)]);
+  } else {
+    view = rsArr.slice(-viewLen);
+  }
   var lastVal = null;
   for (var j = view.length - 1; j >= 0; j--) { if (view[j] != null) { lastVal = view[j]; break; } }
   var rsRising = null;
@@ -16088,7 +16175,7 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
   var ctx = hd.ctx;
 
   var W = hd.width, H = hd.height;
-  var PAD = {top:14, right:30, bottom:4, left:10};
+  var PAD = {top:14, right:windowed ? 64 : 30, bottom:4, left:10};
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
   var nv = view.length;
@@ -16105,7 +16192,7 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen) {
   yMin -= sp2 * 0.1;
   yMax += sp2 * 0.1;
 
-  function xOf(i){ return PAD.left + (i / (nv - 1 || 1)) * plotW; }
+  function xOf(i){ return PAD.left + (windowed ? i / _chartXSpan(nv) : (i / (nv - 1 || 1))) * plotW; }
   function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
 
   // Zero reference line

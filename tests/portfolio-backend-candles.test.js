@@ -544,7 +544,7 @@ section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan
   sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(25).fill(55), lastSqueeze: false, squeeze: new Array(25).fill(false) });
   sandbox.getCandleDataSource = () => 'FRONTEND_DXLINK_BUFFER';
   sandbox._drawCandleChart = (wrapId, candles, ind, opts) => { calls.draw.push({ wrapId, candles, opts }); };
-  sandbox._mcxDrawRsi = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {};
   sandbox._pfDrawRsPanel = () => {};
   sandbox._pfUpdateAlignment = () => {};
   sandbox.prepareHiDPICanvas = () => ({ ctx: {}, width: 320, height: 180 });
@@ -808,7 +808,7 @@ section('14. Portfolio charts end on one session-proven price; the position pric
   sandbox._portfolioFetchBackendCandlesForChart = async () => ({ ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: c1, candles4h: c4 });
   sandbox._recordBackendCandleProvenance = () => {};
   sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(25).fill(55), lastSqueeze: false, squeeze: new Array(25).fill(false) });
-  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
   sandbox.getCandleDataSource = () => 'FRONTEND'; sandbox.positionManager = { getById: () => ({ underlyingPrice: 235.98 }) };
   sandbox._drawCandleChart = () => {};
   await sandbox._pfDrawChart(202, 'IBM');
@@ -829,6 +829,234 @@ section('14. Portfolio charts end on one session-proven price; the position pric
     && rec.d1.session === staleD && rec.d1.close === 235.98 && rec.h4.session === D && rec.newestSession === D && rec.derivedDailyBars === 73,
     '14: the diagnostic line reports the resolved price, its session, each series\' last bar and the (ignored) position price');
 }
+
+// ── 15. RSI / RS sub-panels follow the candle chart's window ───────────────────
+section('15. _pfDrawTf hands the chart window to the RSI and RS panels');
+{
+  const mk = (n, base) => bars(n, base).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v, source: 'BACKEND_CANDLE_STORE' }));
+  const c1 = mk(120, 256), c4 = mk(120, 270), spy = mk(120, 500);
+  const rsi = new Array(120).fill(55);
+  const prep = () => {
+    const calls = { rsi: [], rs: [], chart: null };
+    sandbox._pfExpandedPosId = 303;
+    sandbox._pfBackendCandleCache = { symbol: 'ADBE', candles1d: c1, candles4h: c4, source: 'BACKEND_CANDLE_STORE' };
+    sandbox._pfBackendSpyCache = { candles1d: spy, candles4h: spy, source: 'BACKEND_CANDLE_STORE' };
+    sandbox.S = { scanData: [] };
+    sandbox.positionManager = { getById: () => null };
+    sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi, lastSqueeze: false, squeeze: new Array(120).fill(false) });
+    sandbox.getCandleDataSource = () => 'FRONTEND';
+    sandbox._pfDrawRsiPanel = (id, series, vs, ve) => { calls.rsi.push({ id, series, vs, ve }); };
+    sandbox._pfDrawRsPanel = (id, candles, spyC, viewLen, viewEnd) => { calls.rs.push({ id, n: candles.length, spyN: spyC && spyC.length, viewLen, viewEnd }); };
+    sandbox._pfUpdateAlignment = () => {};
+    return calls;
+  };
+
+  let calls = prep();
+  sandbox._drawCandleChart = (wrapId, candles, ind, opts) => { calls.chart = { wrapId, opts }; opts.onView(45, 120); };
+  sandbox._pfDrawTf(303, 'ADBE', '1D');
+  ok(calls.chart && typeof calls.chart.opts.onView === 'function', '15: the candle chart receives an onView callback');
+  ok(calls.rsi.length === 1 && calls.rsi[0].id === 'pf-1d-rsi-303' && calls.rsi[0].vs === 45 && calls.rsi[0].ve === 120 && calls.rsi[0].series === rsi,
+    '15: the reported window is passed to the RSI panel (with the full RSI series)');
+  ok(calls.rs.length === 1 && calls.rs[0].id === 'pf-1d-rs-303' && calls.rs[0].viewLen === 75 && calls.rs[0].viewEnd === 120 && calls.rs[0].spyN === 120,
+    '15: ... and to the RS panel as (length, end) with the SPY series already resolved');
+  ok(calls.rsi.length === 1 && calls.rs.length === 1, '15: no extra default-window draw when the chart reported its window (no flash of the wrong window)');
+  calls.chart.opts.onView(10, 60);
+  ok(calls.rsi.length === 2 && calls.rsi[1].vs === 10 && calls.rsi[1].ve === 60 && calls.rs[1].viewLen === 50 && calls.rs[1].viewEnd === 60,
+    '15: a later pan / zoom (the chart calling onView again) redraws both panels on the new window');
+
+  calls = prep();
+  sandbox._drawCandleChart = (wrapId, candles, ind, opts) => { calls.chart = { wrapId, opts }; };   // chart could not draw: never reports a window
+  sandbox._pfDrawTf(303, 'ADBE', '4H');
+  ok(calls.rsi.length === 1 && calls.rsi[0].id === 'pf-4h-rsi-303' && calls.rsi[0].vs === 45 && calls.rsi[0].ve === 120 && calls.rs[0].viewLen === 75 && calls.rs[0].viewEnd === 120,
+    '15: if the chart reports nothing, the panels fall back to the default trailing window');
+}
+
+// ── 16. RSI / RS panels draw the candle chart's own window (real functions, recording canvas) ─
+// Folded into this suite on purpose: the repository pins its test-file inventory, so a new
+// file would change it. Everything below runs in its own vm context.
+section('16. RSI and RS panels follow the chart window (pan / zoom / reset)');
+await (async () => {
+  const near = (a, b, e) => Math.abs(a - b) <= (e == null ? 1e-6 : e);
+// ── a recording canvas ──────────────────────────────────────────────────────────
+const W = 800, H = 120;
+function makeCtx(log) {
+  return new Proxy({}, {
+    get(t, k) {
+      if (k === 'measureText') return (s) => ({ width: String(s).length * 5 });
+      if (k in t) return t[k];
+      return (...a) => { log.push([k, a]); };
+    },
+    set(t, k, v) { t[k] = v; return true; },
+  });
+}
+function makeEnv() {
+  const log = [];
+  const wraps = {};
+  const mkWrap = (id) => {
+    const w = {
+      id, innerHTML: '', style: {}, children: [], isConnected: true, offsetWidth: W, offsetHeight: H,
+      appendChild(c) { this.children.push(c); c.isConnected = true; return c; },
+      getBoundingClientRect: () => ({ width: W, height: H, left: 0, top: 0 }),
+      addEventListener() {},
+    };
+    Object.defineProperty(w, 'innerHTML', { get() { return ''; }, set(v) { w.children = []; } });
+    return w;
+  };
+  const sandbox = {
+    console, Math, Date, JSON, Array, Object, Number, String, isFinite, parseFloat, requestAnimationFrame: (f) => f(),
+    document: {
+      getElementById: (id) => (wraps[id] = wraps[id] || mkWrap(id)),
+      createElement: () => ({ style: {}, getContext: () => makeCtx(log), getBoundingClientRect: () => ({ width: W, height: H }), isConnected: true }),
+    },
+    getComputedStyle: () => ({ position: 'relative' }),
+    window: { devicePixelRatio: 1, addEventListener() {} },
+    prepareHiDPICanvas: (cv) => ({ ctx: cv.getContext('2d'), width: W, height: H, dpr: 1 }),
+    S: {},
+  };
+  sandbox.window.window = sandbox.window;
+  vm.createContext(sandbox);
+  return { sandbox, log, wraps };
+}
+
+const FNS = ['_chartPad2', '_chartXSpan', '_chartViewKey', '_chartResolveView', '_chartRedraw', '_chartClearHover', '_chartBindInteractions',
+  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel'];
+function load(env) {
+  const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;';
+  vm.runInContext(consts + '\n' + FNS.map((n) => { try { return extractFn(HTML, n); } catch (e) { return ''; } }).join('\n'), env.sandbox);
+}
+
+// 120 daily candles + a 120-point RSI/ind shape the chart can draw.
+function series(n) {
+  const candles = [], rsi = [];
+  for (let i = 0; i < n; i++) {
+    const c = 100 + Math.sin(i / 7) * 5 + i * 0.1;
+    candles.push({ time: Date.UTC(2026, 0, 2) + i * 86400000, open: c - 0.3, high: c + 1, low: c - 1, close: c, volume: 1000 });
+    rsi.push(i < 14 ? null : 50 + 30 * Math.sin(i / 9));
+  }
+  const ind = { sma8: new Array(n).fill(100), sma20: new Array(n).fill(100), sma30: new Array(n).fill(100), rsi, lastRsi: rsi[n - 1], lastSma8: 100,
+    bb: { upper: new Array(n).fill(110), lower: new Array(n).fill(90) }, kc: { upper: new Array(n).fill(108), lower: new Array(n).fill(92) }, squeeze: new Array(n).fill(false), lastSqueeze: false };
+  return { candles, ind, rsi };
+}
+
+// Line segments recorded by a panel draw: moveTo/lineTo pairs in call order.
+function segments(log, from) {
+  const segs = [];
+  let cur = null;
+  for (let k = from; k < log.length; k++) {
+    const [name, a] = log[k];
+    if (name === 'moveTo') cur = a;
+    else if (name === 'lineTo' && cur) { segs.push([cur[0], cur[1], a[0], a[1]]); cur = null; }
+  }
+  return segs;
+}
+// Data line only: drop the two dashed reference lines (horizontal, from PAD.left to the right margin).
+const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
+
+  // ── 1. _drawCandleChart reports its window ───────────────────────────────────
+  section('16.1 _drawCandleChart reports the window it drew');
+  {
+    const env = makeEnv(); load(env);
+    const { candles, ind } = series(120);
+    const seen = [];
+    const opts = { showSMA8: true, showBB: true, showKC: true, source: 'X', rsi: ind.lastRsi, onView: (vs, ve) => seen.push([vs, ve]) };
+    env.sandbox._drawCandleChart('pf-1d-wrap-1', candles, ind, opts);
+    ok(JSON.stringify(seen) === JSON.stringify([[45, 120]]), '1: first draw reports the default trailing window (75 bars)');
+    const wrap = env.sandbox.document.getElementById('pf-1d-wrap-1');
+    ok(wrap.__chart && wrap.__chart.opts === opts, '1: the opts (with onView) are stashed for zoom / pan redraws');
+    wrap.__chartView.start = 10; wrap.__chartView.end = 60; wrap.__chartView.anchored = false;
+    env.sandbox._chartRedraw(wrap);
+    ok(JSON.stringify(seen[1]) === JSON.stringify([10, 60]), '1: after a pan / zoom redraw it reports the window the user is looking at');
+    wrap.__chartView = null; env.sandbox._chartRedraw(wrap);
+    ok(JSON.stringify(seen[2]) === JSON.stringify([45, 120]), '1: reset returns to the default window');
+    wrap.__chartView = { key: wrap.__chartView.key, start: 0, end: 120, anchored: true };
+    env.sandbox._chartRedraw(wrap);
+    ok(JSON.stringify(seen[3]) === JSON.stringify([0, 120]), '1: full zoom-out reports the whole series');
+    const bad = { onView: () => { throw new Error('boom'); } };
+    env.sandbox._drawCandleChart('pf-1d-wrap-2', candles, ind, bad);
+    ok(!!env.sandbox.document.getElementById('pf-1d-wrap-2').__chart, '1: a throwing callback does not break the chart (it is still drawn and interactive)');
+    const before = seen.length;
+    env.sandbox._drawCandleChart('pf-1d-wrap-3', candles, ind, { source: 'Y' });
+    ok(seen.length === before, '1: charts without onView are unaffected');
+    env.sandbox._drawCandleChart('pf-1d-wrap-4', candles.slice(0, 3), ind, opts);
+    ok(seen.length === before, '1: a chart that cannot draw (too few candles) does not report a window');
+  }
+
+  // ── 2. RSI panel draws exactly the window, on the candle grid ─────────────────
+  section('16.2 RSI panel follows the window');
+  {
+    const env = makeEnv(); load(env);
+    const { rsi } = series(120);
+    const plotW = W - 10 - 64, plotH = H - 14 - 4;
+    const yOf = (v) => 14 + (1 - v / 100) * plotH;
+    const run = (vs, ve) => { const start = env.log.length; env.sandbox._pfDrawRsiPanel('rsi-1', rsi, vs, ve); return dataSegs(segments(env.log, start)); };
+
+    let segs = run(45, 120);
+    const nv = 75, span = nv - 1 + 4;
+    ok(segs.length === 74, '2: default window draws 74 segments for 75 points');
+    ok(near(segs[0][0], 10) && near(segs[0][1], yOf(rsi[45])), '2: first point = first bar of the window, at the left margin');
+    ok(near(segs[segs.length - 1][2], 10 + (nv - 1) / span * plotW) && near(segs[segs.length - 1][3], yOf(rsi[119])), '2: last point sits on the candle grid (leaves the 4 "future" slots free), value = last RSI');
+    ok(segs[segs.length - 1][2] < W - 64, '2: the line stops before the price-axis margin, like the candles');
+
+    segs = run(10, 60);
+    ok(near(segs[0][1], yOf(rsi[14])) || segs[0][1] !== yOf(rsi[45]), '2: panned window shows other data');
+    // window [10,60): RSI is null before index 14, so the first drawn point is index 14 at x for slot 4
+    ok(near(segs[0][0], 10 + 4 / (50 - 1 + 4) * plotW) && near(segs[0][1], yOf(rsi[14])), '2: leading nulls are skipped and the first value keeps its candle slot');
+    ok(near(segs[segs.length - 1][3], yOf(rsi[59])), '2: window end = RSI at index 59');
+
+    segs = run(0, 120);
+    ok(segs.length === 120 - 14 - 1, '2: full zoom-out draws every valid pair of the series');
+    const lbl = env.log.filter((c) => c[0] === 'fillText' && /RSI\(14\)/.test(c[1][0])).pop();
+    ok(lbl && lbl[1][0] === 'RSI(14): ' + rsi[119].toFixed(1), '2: label shows the value at the right edge of the window');
+    const segsA = run(30, 90), segsB = run(31, 91);
+    ok(Math.abs(segsA[0][1] - segsB[0][1]) > 1e-9, '2: shifting the window by one bar changes the drawn line');
+    const s0 = env.log.length; env.sandbox._pfDrawRsiPanel('rsi-1', rsi, 50, 50); env.sandbox._pfDrawRsiPanel('rsi-1', null, 0, 10);
+    ok(env.log.length === s0, '2: empty window / missing series draw nothing');
+    ok(env.sandbox._pfDrawRsiPanel('missing-id-ok', rsi, 0, 10) === undefined, '2: a panel container that exists but has no layout does not throw');
+  }
+
+  // ── 3. RS panel: window mode and legacy mode ──────────────────────────────────
+  section('16.3 RS panel: window mode aligned, legacy mode untouched');
+  {
+    const env = makeEnv(); load(env);
+    const nc = 120, ns = 100;
+    const mk = (n, f) => Array.from({ length: n }, (_, i) => ({ time: i, close: f(i) }));
+    const cand = mk(nc, (i) => 100 + i * 0.5 + Math.sin(i) * 2);
+    const spy = mk(ns, (i) => 400 + i * 0.3);
+    const rsFull = (ci) => { const len = ns, off = nc - len; const i = ci - off; if (i < 20) return null;
+      const sRet = (cand[ci].close - cand[ci - 20].close) / cand[ci - 20].close, pRet = (spy[i].close - spy[i - 20].close) / spy[i - 20].close; return (sRet - pRet) * 100; };
+    const run = (a, b, viewLen, viewEnd) => { const start = env.log.length; env.sandbox._pfDrawRsPanel('rs-1', a, b, viewLen, viewEnd); return segments(env.log, start); };
+
+    // window mode: [60,120) of the candle array, every point has RS (ci >= 20 + 20)
+    let segs = run(cand, spy, 60).filter((s) => !(s[1] === s[3] && s[0] === 10)); // legacy: trailing 60, no viewEnd
+    const legacyLastX = segs[segs.length - 1][2];
+    ok(segs.length === 59, '3: legacy call draws exactly the trailing viewLen points (60 → 59 segments)');
+    ok(near(legacyLastX, 10 + (W - 10 - 30), 1e-6), '3: legacy 4-argument call keeps the old layout (last point on the right edge of a 30px margin)');
+    segs = run(cand, spy, 60, 120).filter((s) => !(s[1] === s[3] && s[0] === 10));
+    const plotW = W - 10 - 64, nv = 60;
+    ok(near(segs[segs.length - 1][2], 10 + (nv - 1) / (nv - 1 + 4) * plotW), '3: window mode puts the last point on the candle grid with the 64px margin');
+    // pan to [20,80): first RS value (ci = 20 + (nc-len)=40) appears at slot 20 of the window? window start 20 -> ci 20..79; RS exists from ci=40
+    segs = run(cand, spy, 60, 80).filter((s) => !(s[1] === s[3] && s[0] === 10));
+    ok(segs.length === 39, '3: a panned window draws only the part of RS that exists inside it (ci >= 40) — 40 points → 39 segments (got ' + segs.length + ')');
+    const nv2 = 60;
+    ok(near(segs[0][0], 10 + 20 / (nv2 - 1 + 4) * plotW), '3: the first RS point sits under the candle of the same index (null RS before it)');
+    const lbl = env.log.filter((c) => c[0] === 'fillText' && /RS vs SPY/.test(c[1][0])).pop();
+    const expLast = rsFull(79);
+    ok(lbl && lbl[1][0] === 'RS vs SPY: ' + (expLast >= 0 ? '+' : '') + expLast.toFixed(1) + '%', '3: label = RS at the right edge of the window (got ' + (lbl && lbl[1][0]) + ')');
+    const s0 = env.log.length; env.sandbox._pfDrawRsPanel('rs-1', cand.slice(0, 10), spy, 5, 10);
+    ok(env.log.length === s0, '3: too little data still shows the neutral message, no drawing');
+  }
+
+  // ── 4. static wiring of _pfDrawTf ──────────────────────────────────────────────
+  section('16.4 _pfDrawTf wiring');
+  {
+    const body = extractFn(HTML, '_pfDrawTf');
+    ok(/onView: drawPanels,/.test(body), '4: _pfDrawTf passes onView to the candle chart');
+    ok(/_pfDrawRsiPanel\(rsiId, ind\.rsi, vs, ve\);/.test(body) && /_pfDrawRsPanel\(rsId, candles, spyCandles, ve - vs, ve\);/.test(body), '4: the callback redraws both panels with the reported window');
+    ok(/if \(!panelsDrawn\) drawPanels\(candles\.length - viewLen, candles\.length\);/.test(body), '4: fallback draws the default window when the chart did not report one');
+    ok(!/_mcxDrawRsi\(/.test(body), '4: the trailing-only shared RSI drawer is no longer used by the Portfolio charts');
+    ok(body.indexOf('var spyCandles = null;') < body.indexOf('_drawCandleChart(wrapId'), '4: SPY series is resolved before the chart is drawn (the callback needs it)');
+  }
+})();
 
 // ── summary ───────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
