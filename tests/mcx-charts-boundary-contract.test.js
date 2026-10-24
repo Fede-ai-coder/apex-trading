@@ -206,12 +206,15 @@ const EXPECTED_EFFECTS = {
 };
 
 const JS_CONSUMERS = {
-  _mcxOnCandleTick: 2, _mcxDrawRsi: 3, _regimeRefresh: 6, _mcxStopPolls: 2,
+  _mcxOnCandleTick: 2, _mcxDrawRsi: 2, _regimeRefresh: 6, _mcxStopPolls: 2,
   _mcxRenderCharts: 1, _mcxStopAutoRefresh: 1, _mcxInit: 1,
 };
-// 16, not 18: the two _regimeRefresh references that left with the portfolio
-// data-fetch block (#421). Counted against the module, not adjusted to fit.
-const JS_CONSUMER_TOTAL = 16;
+// _mcxDrawRsi is 2, not 3: the Portfolio charts drew their RSI panel with it on the trailing
+// window only and now use _pfDrawRsiPanel (index.html), which follows the chart's pan / zoom.
+// 15, not 16 and not 18: that one reference, and before it the two _regimeRefresh references
+// that left with the portfolio data-fetch block (#421). Counted against the module, not
+// adjusted to fit.
+const JS_CONSUMER_TOTAL = 15;
 const MARKUP_CONSUMERS = { _mcxRedraw: 3, _mcxRefresh: 1 };
 
 const LIVE_INDEX = require('./lib/portfolio-unrealized-pnl-undo.js').historicalShippedIndex(APP_LOADER.loadIndexHtml());
@@ -1158,7 +1161,7 @@ section('8. Exact JavaScript and inline-markup consumers');
 eq(jsConsumers(INLINE_PART.code), JS_CONSUMERS,
   'the inline monolith consumes exactly seven module owners, with the pinned reference counts');
 eq(Object.values(jsConsumers(INLINE_PART.code)).reduce((a, b) => a + b, 0), JS_CONSUMER_TOTAL,
-  'sixteen inline-JS references in total');
+  'fifteen inline-JS references in total');
 eq(markupConsumers(MARKUP), MARKUP_CONSUMERS,
   'inline markup consumes exactly _mcxRedraw (3) and _mcxRefresh (1)');
 Object.keys(JS_CONSUMERS).concat(Object.keys(MARKUP_CONSUMERS)).forEach((name) => {
@@ -1183,8 +1186,9 @@ const BASE_INLINE_WITHOUT_MOVED = BASE_INLINE
   .replace(SLICE.movedTail, '');
 // The base-side check runs against the #407-era monolith, which still holds the
 // portfolio data-fetch block, so _regimeRefresh is still referenced eight times
-// there. The live count is two lower; both are measured, neither is adjusted.
-const JS_CONSUMERS_AT_BASE = Object.assign({}, JS_CONSUMERS, { _regimeRefresh: 8 });
+// there, and _mcxDrawRsi is still called three times (the Portfolio charts used it then). The
+// live counts are two and one lower; all are measured, none is adjusted.
+const JS_CONSUMERS_AT_BASE = Object.assign({}, JS_CONSUMERS, { _regimeRefresh: 8, _mcxDrawRsi: 3 });
 eq(jsConsumers(BASE_INLINE_WITHOUT_MOVED), JS_CONSUMERS_AT_BASE,
   'removing only the three moved fragments from the base monolith leaves the consumers of that era');
 eq(identifierCountMasked(maskLiterals(GLUE), '_mcxRenderCharts'), 1,
