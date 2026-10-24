@@ -148,7 +148,7 @@ const FNS = [
   '_etMinutes', '_etDateStr', 'getUsEquityMarketSession', '_swingExpectedNewestSessionDate',
   '_backendCandleStoreChartNormTime', '_swingCandleTimeMs', 'patchLastCandleWithLivePrice',
   'resolveLatestDisplayPrice', '_swingRowPriceObservedAt', '_swingResolveRenderPrice',
-  '_portfolioRowUnderlyingPrice', '_pfBarSession', '_pfResolveChartPrice', '_pfAlignedCandles',
+  '_portfolioRowUnderlyingPrice', '_pfBarSession', '_pfResolveChartPrice', '_pfDeriveDailyFromFourH', '_pfAlignedCandles',
   '_pfStaleBarNote', '_pfLogChartPrice',
 ];
 vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
@@ -604,6 +604,20 @@ section('14. Portfolio charts end on one session-proven price; the position pric
     }
     return out;
   };
+  // RTH-style 4H bars: two per calendar day (09:30 and 13:30 EDT = 13:30Z / 17:30Z) over [fromDate, toDate];
+  // open = the day's index + 0.0 / close = + 0.5, last bar's close = lastClose.
+  const rth4h = (fromDate, toDate, lastClose) => {
+    const out = []; let n = 0;
+    for (let ms = day(fromDate); ms <= day(toDate); ms += 86400000) {
+      [[13, 30], [17, 30]].forEach((hm, k) => {
+        const base = 240 + n * 0.01;
+        out.push({ time: ms + (hm[0] * 60 + hm[1]) * 60000, open: base, high: base + 2 + k, low: base - 2 - k, close: base + 0.5 * (k + 1), volume: 100 + k, source: 'BACKEND_CANDLE_STORE' });
+        n++;
+      });
+    }
+    out[out.length - 1].close = lastClose;
+    return out;
+  };
   const d1 = (lastDate, lastClose) => series(25, day(lastDate), 86400000, 240, lastClose);          // 1D bars are stamped at 00:00Z of their date
   const h4 = (lastDate, lastClose) => series(25, day(lastDate, 17, 30), 4 * 3600000, 240, lastClose); // 17:30Z = 13:30 ET, inside session `lastDate`
 
@@ -622,19 +636,62 @@ section('14. Portfolio charts end on one session-proven price; the position pric
   // The real IBM case (2026-10-24): 1D store stuck on 12 Aug @ 235.98, 4H current @ 253.58, and the
   // portfolio refresh handing back the stale 235.98 as the "underlying price".
   const staleD = shift(D, -73);
-  const c1 = d1(staleD, 235.98), c4 = h4(D, 253.58);
-  const lastBefore4 = JSON.stringify(c4[c4.length - 1]), lastBefore1 = JSON.stringify(c1[c1.length - 1]);
+  const c1 = d1(staleD, 235.98), c4 = rth4h(shift(D, -140), D, 253.58);
+  const lastBefore4 = JSON.stringify(c4[c4.length - 1]);
   const a = run(c1, c4, [], { underlyingPrice: 235.98, underlyingPriceSource: 'BACKEND_PORTFOLIO_REFRESH' });
-  ok(a.d4 && a.d4.last.close === 253.58 && JSON.stringify(a.d4.last) === lastBefore4,
+  ok(a.d4 && a.d4.last.close === 253.58 && JSON.stringify(a.d4.last) === lastBefore4 && a.d4.candles === c4,
     '14: IBM — the current 4H bar is NOT overwritten by the position price (no fabricated -7% candle)');
-  ok(a.d1 && JSON.stringify(a.d1.last) === lastBefore1,
-    '14: IBM — the stale 1D series is drawn exactly as served');
-  ok(a.d1 && a.d1.candles === c1 && a.d4 && a.d4.candles === c4,
-    '14: IBM — neither series was rebuilt (same arrays handed to the chart)');
-  ok(a.d1 && a.d1.source === 'BACKEND_CANDLE_STORE · last bar ' + staleD + ' (stale)',
-    '14: IBM — the 1D badge names the stale last bar (got ' + (a.d1 && a.d1.source) + ')');
+  ok(a.d1 && a.d1.last.close === 253.58 && a.d4.last.close === 253.58,
+    '14: IBM — the 1D chart now ends on the same current close as the 4H');
+  ok(a.d1 && a.d1.candles.length === c1.length + 73 && a.d1.candles.slice(0, c1.length).every((x, i) => x === c1[i]),
+    '14: IBM — the 73 missing sessions are appended and every served 1D bar is kept as is');
+  const dl = a.d1 && a.d1.candles[a.d1.candles.length - 1];
+  const lastDay4 = c4.slice(-2);
+  ok(dl && dl.derived === true && dl.source === 'DERIVED_FROM_4H' && dl.time === day(D)
+    && dl.open === lastDay4[0].open && dl.close === 253.58 && dl.high === Math.max(lastDay4[0].high, lastDay4[1].high)
+    && dl.low === Math.min(lastDay4[0].low, lastDay4[1].low) && dl.volume === lastDay4[0].volume + lastDay4[1].volume,
+    '14: IBM — the newest derived 1D bar is that session\'s 4H bars: first open, last close, highest high, lowest low, summed volume');
+  ok(a.d1 && a.d1.source === 'BACKEND_CANDLE_STORE · 73 daily bar(s) derived from 4H',
+    '14: IBM — the 1D badge says how many bars were derived and no longer calls the series stale (got ' + (a.d1 && a.d1.source) + ')');
   ok(a.d4 && a.d4.source === 'BACKEND_CANDLE_STORE',
-    '14: IBM — the current 4H series carries no stale note (got ' + (a.d4 && a.d4.source) + ')');
+    '14: IBM — the 4H badge is plain (got ' + (a.d4 && a.d4.source) + ')');
+
+  ok(c1.length === 25 && c1[24].close === 235.98 && c1.every((x) => !x.derived), '14: the served 1D array itself is never modified');
+  // The 4H series does not reach back to the 1D series' last session → nothing is derived (a session could be missing).
+  const shortH4 = rth4h(shift(D, -30), D, 253.58);
+  const noCover = run(c1, shortH4, [], null);
+  ok(noCover.d1.candles === c1 && noCover.d1.last.close === 235.98 && noCover.d1.source === 'BACKEND_CANDLE_STORE · last bar ' + staleD + ' (stale)',
+    '14: 4H not reaching the last 1D session → 1D left exactly as served and named stale (got ' + noCover.d1.source + ')');
+  // A bad bar inside the gap leaves the series as served.
+  const badH4 = rth4h(shift(D, -140), D, 253.58); badH4[badH4.length - 5].high = 'x';
+  ok(run(c1, badH4, [], null).d1.candles === c1, '14: a non-numeric 4H bar inside the gap → nothing derived');
+  const badTime = rth4h(shift(D, -140), D, 253.58); badTime[badTime.length - 5].time = 'garbage';
+  ok(run(c1, badTime, [], null).d1.candles === c1, '14: an unparseable 4H time → nothing derived');
+  // Each OHLC field must be numeric, wherever in the gap the bad bar sits.
+  ['open', 'close', 'low', 'high'].forEach((k) => {
+    const bad = rth4h(shift(D, -140), D, 253.58); bad[bad.length - 7][k] = 'x'; bad[bad.length - 8][k] = 'x';   // both bars of one session
+    ok(run(c1, bad, [], null).d1.candles === c1, '14: a non-numeric 4H ' + k + ' inside the gap → nothing derived');
+  });
+  // Direct calls: identity when nothing is derived, unparseable last 1D bar, missing volume, order independence, coverage edge.
+  const dd = sandbox._pfDeriveDailyFromFourH;
+  const cur = d1(D, 252);
+  ok(dd(cur, rth4h(shift(D, -20), D, 253.58)) === cur, '14: no 4H session after the last 1D session → the very same array is returned');
+  ok(dd(null, c4) === null && dd(cur, null) === cur && dd([], c4).length === 0 && dd(cur, []) === cur, '14: missing or empty inputs are returned as they came');
+  const garbageLast = c1.slice(0, 24).concat([Object.assign({}, c1[24], { time: 'garbage' })]);
+  ok(dd(garbageLast, c4) === garbageLast, '14: a last 1D bar with no readable date → nothing derived');
+  const noVol = rth4h(shift(D, -140), D, 253.58).map((x) => { const y = Object.assign({}, x); delete y.volume; return y; });
+  ok(dd(c1, noVol)[25].volume === 0, '14: 4H bars without volume give a derived volume of 0, not NaN');
+  const shuffled = c4.slice().reverse();
+  const fromShuffled = dd(c1, shuffled), fromSorted = dd(c1, c4);
+  ok(fromShuffled.length === fromSorted.length && JSON.stringify(fromShuffled) === JSON.stringify(fromSorted),
+    '14: the derived bars do not depend on the order the 4H bars arrive in');
+  const edge = dd(c1, rth4h(staleD, D, 253.58));
+  ok(edge.length === c1.length + 73, '14: a 4H series starting on the last 1D session itself already covers the gap');
+  ok(dd(c1, rth4h(shift(staleD, 1), D, 253.58)) === c1, '14: a 4H series starting the day after the last 1D session does not (a session could be missing)');
+  // Only sessions AFTER the last 1D bar are derived (the last served session is never rebuilt).
+  const oneBehind = run(d1(shift(D, -1), 250), rth4h(shift(D, -20), D, 253.58), [], null);
+  ok(oneBehind.d1.candles.length === 26 && oneBehind.d1.candles[24].close === 250 && oneBehind.d1.candles[25].derived === true
+    && oneBehind.d1.last.close === 253.58, '14: 1D one session behind → exactly one bar derived, the served last bar untouched');
 
   // Both series current: the OLDER-stamped 1D bar of the same session ends on the newest close (1D/4H parity).
   const b = run(d1(D, 252), h4(D, 253.58), [], { underlyingPrice: 261.5 });
@@ -769,7 +826,7 @@ section('14. Portfolio charts end on one session-proven price; the position pric
   const line = logs.find((l) => l.indexOf('[PORTFOLIO CHART] price symbol=IBM') === 0);
   const rec = line && JSON.parse(line.slice(line.indexOf('{')));
   ok(rec && rec.price === 253.58 && rec.source === 'backend 4H' && rec.session === D && rec.positionPrice === 235.98
-    && rec.d1.session === staleD && rec.d1.close === 235.98 && rec.h4.session === D && rec.newestSession === D,
+    && rec.d1.session === staleD && rec.d1.close === 235.98 && rec.h4.session === D && rec.newestSession === D && rec.derivedDailyBars === 73,
     '14: the diagnostic line reports the resolved price, its session, each series\' last bar and the (ignored) position price');
 }
 

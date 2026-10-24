@@ -15826,9 +15826,11 @@ function _pfLogChartPrice(posId, ticker) {
     var pr = _pfResolveChartPrice(ticker, d, h, Date.now());
     var row = (typeof positionManager !== 'undefined' && typeof _portfolioRowUnderlyingPrice === 'function')
       ? _portfolioRowUnderlyingPrice(positionManager.getById(posId)) : null;
+    var derivedDaily = _pfDeriveDailyFromFourH(d, h);
     var lastOf = function(arr, is1d) { var l = arr.length ? arr[arr.length - 1] : null; return l ? { session: _pfBarSession(l, is1d), close: parseFloat(l.close != null ? l.close : l.c) } : null; };
     console.log('[PORTFOLIO CHART] price symbol=' + ticker, JSON.stringify({
       price: pr.price, source: pr.source, session: pr.sessionDate, d1: lastOf(d, true), h4: lastOf(h, false),
+      derivedDailyBars: derivedDaily.length - d.length,
       positionPrice: row, newestSession: _swingExpectedNewestSessionDate(Date.now())
     }));
   } catch (e) {}
@@ -15873,6 +15875,47 @@ function _pfResolveChartPrice(ticker, daily, fourH, nowMs) {
               : { price: null, source: null, sessionDate: null };
 }
 
+// Daily bars the backend 1D store is missing, rebuilt from the REAL 4H bars of those sessions:
+// open of the session's first 4H bar, close of its last, highest high, lowest low, summed volume.
+// Used when the 1D series ends before the newest session (IBM 2026-10-24: 1D ended 12 Aug while
+// the 4H series reached 23 Oct), so both charts show current prices and agree. Fail-closed:
+//   • only when the 4H series reaches back to the 1D series' own last session — otherwise a
+//     session between them could be absent and the result would silently skip it;
+//   • any unparseable 4H time or non-finite OHLC in the gap leaves the series exactly as served;
+//   • served bars are never touched; derived bars are appended, stamped at 00:00Z of their
+//     session like the backend's own 1D bars, and flagged { derived: true }.
+// The 4H series is the RTH one, so a session's 4H bars are its regular-hours bars.
+function _pfDeriveDailyFromFourH(daily, fourH) {
+  if (!daily || !daily.length || !fourH || !fourH.length) return daily;
+  var lastSess = _pfBarSession(daily[daily.length - 1], true);
+  if (!lastSess) return daily;
+  var bySess = {}, order = [], earliest = null, i, ms, ses;
+  for (i = 0; i < fourH.length; i++) {
+    ms = _swingCandleTimeMs(fourH[i]);
+    ses = ms == null ? null : _etDateStr(ms);
+    if (!ses) return daily;
+    if (earliest === null || ses < earliest) earliest = ses;
+    if (ses <= lastSess) continue;
+    if (!bySess[ses]) { bySess[ses] = []; order.push(ses); }
+    bySess[ses].push({ bar: fourH[i], ms: ms });
+  }
+  if (!order.length || earliest > lastSess) return daily;
+  order.sort();
+  var out = daily.slice();
+  for (i = 0; i < order.length; i++) {
+    var g = bySess[order[i]].sort(function(a, b) { return a.ms - b.ms; });
+    var o = parseFloat(g[0].bar.open), c = parseFloat(g[g.length - 1].bar.close), hi = -Infinity, lo = Infinity, vol = 0;
+    g.forEach(function(x) {
+      hi = Math.max(hi, parseFloat(x.bar.high)); lo = Math.min(lo, parseFloat(x.bar.low));
+      vol += parseFloat(x.bar.volume) || 0;
+    });
+    if (!isFinite(o) || !isFinite(c) || !isFinite(hi) || !isFinite(lo)) return daily;
+    out.push({ time: Date.parse(order[i] + 'T00:00:00Z'), open: o, high: hi, low: lo, close: c, volume: vol,
+      source: 'DERIVED_FROM_4H', derived: true });
+  }
+  return out;
+}
+
 // `own` is the series being drawn; the other timeframe is read from the same sources.
 function _pfAlignedCandles(ticker, tf, own) {
   if (!own || !own.length) return own;
@@ -15885,18 +15928,22 @@ function _pfAlignedCandles(ticker, tf, own) {
   } else {
     other = is1d ? getFourHourCandles(ticker) : getDailyCandles(ticker);
   }
+  if (is1d) own = _pfDeriveDailyFromFourH(own, other);
   var px = _pfResolveChartPrice(ticker, is1d ? own : other, is1d ? other : own, Date.now());
   if (px.price == null || px.sessionDate == null) return own;
   if (_pfBarSession(own[own.length - 1], is1d) !== px.sessionDate) return own;
   return patchLastCandleWithLivePrice(own, px.price);
 }
 
-// ' · last bar YYYY-MM-DD (stale)' when the series' final bar is older than the newest trading
-// session that can exist now; '' otherwise. An unknown date on either side compares false.
+// Badge suffix: ' · N daily bar(s) derived from 4H' when bars were rebuilt (_pfDeriveDailyFromFourH),
+// and ' · last bar YYYY-MM-DD (stale)' when the final bar is still older than the newest trading
+// session that can exist now. An unknown date on either side compares false.
 function _pfStaleBarNote(candles, is1d) {
   var sess = (candles && candles.length) ? _pfBarSession(candles[candles.length - 1], is1d) : null;
   var newest = _swingExpectedNewestSessionDate(Date.now());
-  return (sess < newest) ? ' · last bar ' + sess + ' (stale)' : '';
+  var derived = (candles || []).filter(function(c) { return c && c.derived === true; }).length;
+  return (derived ? ' · ' + derived + ' daily bar(s) derived from 4H' : '') +
+    ((sess < newest) ? ' · last bar ' + sess + ' (stale)' : '');
 }
 
 // Draw a single timeframe section (1D or 4H): candles + RSI + RS + squeeze.
