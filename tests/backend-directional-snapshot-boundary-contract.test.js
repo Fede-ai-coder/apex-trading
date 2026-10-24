@@ -1291,11 +1291,14 @@ eq(A.fnNames.length, 46, 'the CORRECTED DSB manifest contains 46 functions, not 
     DXLINK_GREEKS_RELOCATED_ABOVE + STRATEGY_TEMPLATES_RELOCATED_ABOVE + SCANNER_IVR_RELOCATED_ABOVE +
     SCANNER_EARNINGS_RELOCATED_ABOVE + SCANNER_DXLINK_PRICES_RELOCATED_ABOVE +
     SCANNER_STOCK_SCORING_RELOCATED_ABOVE + PORTFOLIO_REGIME_BADGE_HTML_RELOCATED_ABOVE;
-  const RLPD_PRE_MCX = 242549, DRP_PRE_MCX = 203132;
+  // RLPD_PRE_MCX 242549 -> 242955 (+406): getDailyCandles / getFourHourCandles gained their last-resort
+  // read of the Portfolio's backend SPY benchmark, which sits ABOVE resolveLatestDisplayPrice and BELOW
+  // _dssResolvePrice, so only the first pin moves and the gap between them grows by the same 406.
+  const RLPD_PRE_MCX = 242955, DRP_PRE_MCX = 203132;
   eq(rlpd.start - PRECEDING_TOTAL, RLPD_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of resolveLatestDisplayPrice INSIDE the monolith');
   eq(drp.start - PRECEDING_TOTAL, DRP_PRE_MCX - RELOCATED_ABOVE, 'measured declaration offset of _dssResolvePrice INSIDE the monolith');
   eq(rlpd.start - drp.start, RLPD_PRE_MCX - DRP_PRE_MCX,
-     'the gap between the two declarations is unchanged — nothing was inserted between them');
+     'the gap between the two declarations equals the rebased baseline gap (RLPD_PRE_MCX - DRP_PRE_MCX)');
   // The relocation really happened: none of the MCX owner's declarations is left
   // in the monolith. Without this the subtraction above could mask a plain edit.
   {
