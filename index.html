@@ -4069,6 +4069,8 @@ function getDailyCandles(symbol) {
       return {time:t, open:c.o||c.c, high:c.h||c.c, low:c.l||c.c, close:c.c, volume:c.v||0, source:'Railway/YF'};
     });
   }
+  // Priority 3: the Portfolio's backend SPY benchmark (only ever SPY, only when it was read)
+  if (symbol === 'SPY' && typeof _pfSpyBenchmarkSeries === 'function') return _pfSpyBenchmarkSeries('1D');
   return null;
 }
 
@@ -4082,7 +4084,10 @@ function getFourHourCandles(symbol) {
   }
   // Priority 2: DXLink native {=4h} (calendar-aligned, not RTH — fallback only)
   var buf = (_candleBuffer[symbol] || {})['4H'];
-  if (!buf || buf.length < 20) return null;
+  if (!buf || buf.length < 20) {
+    // Last resort: the Portfolio's backend SPY benchmark (only ever SPY, only when it was read)
+    return (symbol === 'SPY' && typeof _pfSpyBenchmarkSeries === 'function') ? _pfSpyBenchmarkSeries('4H') : null;
+  }
   return buf.map(function(c){
     return {time:c.t, open:c.o, high:c.h, low:c.l, close:c.c, volume:c.v, source:'DXLink'};
   });
@@ -15020,7 +15025,28 @@ var _pfDeltaLongThreshold  =  10;  // delta >  this → LONG_DELTA  (easy to cha
 var _pfDeltaShortThreshold = -10;  // delta <  this → SHORT_DELTA
 var _pfAlignmentCache      = {};   // posId → computed state; populated by _pfComputeRowState
 var _pfBackendCandleCache  = null; // { symbol, candles1d, candles4h } | null — FF_BACKEND_CANDLES_PORTFOLIO_CHARTS
-var _pfBackendSpyCache     = null; // { candles1d, candles4h, source } | null — backend SPY for RS panel (FF_BACKEND_CANDLES_PORTFOLIO_CHARTS)
+var _pfBackendSpyCache     = null; // { candles1d, candles4h, source, at } | null — backend SPY for RS panel (FF_BACKEND_CANDLES_PORTFOLIO_CHARTS)
+// The SPY benchmark is read from the backend ONCE per TTL (not once per chart open) and shared by the
+// RS panel and the directional-alignment RS. A failed read is not retried for _PF_SPY_RETRY_MS.
+var _PF_SPY_BENCHMARK_TTL_MS = 10 * 60 * 1000;
+var _PF_SPY_RETRY_MS         = 60 * 1000;
+var _pfSpyLastAttemptAt      = 0;
+function _pfSpyBenchmarkNeeded(ticker, nowMs) {
+  if (String(ticker || '').toUpperCase() === 'SPY') return false;          // the SPY chart reads SPY itself
+  var now = nowMs != null ? nowMs : Date.now();
+  var c = _pfBackendSpyCache;
+  var fresh = !!(c && c.candles1d && c.candles1d.length >= 20 && (c.at == null || now - c.at < _PF_SPY_BENCHMARK_TTL_MS));
+  if (fresh) return false;
+  return now - _pfSpyLastAttemptAt >= _PF_SPY_RETRY_MS;
+}
+// The cached backend SPY series for a timeframe, or null. Last-resort source of getDailyCandles('SPY') /
+// getFourHourCandles('SPY') when no frontend buffer exists (backend-read mode opens no Candle
+// subscriptions), so every RS-vs-SPY computation sees the same benchmark.
+function _pfSpyBenchmarkSeries(tf) {
+  var c = _pfBackendSpyCache;
+  var arr = c && (tf === '1D' ? c.candles1d : c.candles4h);
+  return (arr && arr.length >= 20) ? arr : null;
+}
 
 // Normalize Portfolio expanded-chart input to the active underlying ticker.
 // The inline chart must use the row's underlying (e.g. QQQ), never an option
@@ -15771,10 +15797,10 @@ async function _pfDrawChart(posId, ticker) {
 
   if (ffBackendCandlesPortfolioCharts()) {
     _pfBackendCandleCache = null;
-    // Fetch only the active underlying for the expanded row.  SPY benchmark
-    // candles remain separate and are read only from existing SPY caches/buffers
-    // for the RS panel; do not fan out a QQQ chart open into SPY backend reads.
+    // Fetch the active underlying for the expanded row, plus the SPY benchmark when the shared
+    // cache is missing or older than _PF_SPY_BENCHMARK_TTL_MS (RS vs SPY needs it on 1D and 4H).
     var _pfSyms = [ticker];
+    if (_pfSpyBenchmarkNeeded(ticker)) { _pfSyms.push('SPY'); _pfSpyLastAttemptAt = Date.now(); }
     await Promise.all(_pfSyms.map(async function(_sym) {
       try {
         var _bpc = await _portfolioFetchBackendCandlesForChart(_sym);
@@ -15783,7 +15809,7 @@ async function _pfDrawChart(posId, ticker) {
             _pfBackendCandleCache = { symbol: ticker, candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
           }
           if (_sym === 'SPY') {
-            _pfBackendSpyCache = { candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source };
+            _pfBackendSpyCache = { candles1d: _bpc.candles1d, candles4h: _bpc.candles4h, source: _bpc.source, at: Date.now() };
           }
           _recordBackendCandleProvenance('portfolio_chart', _sym,
             _bpc.candles1d ? _bpc.candles1d.length : 0, _bpc.candles4h ? _bpc.candles4h.length : 0, _bpc.diag4h);
@@ -22481,6 +22507,24 @@ var _LEG_TERMINAL_STATUSES = {
 };
 function legIsTerminal(leg) { return !!_LEG_TERMINAL_STATUSES[legStatusOf(leg)]; }
 
+// Strategy key of a list of journal legs, or null when it cannot be named: no legs, or any leg that is
+// not a CALL / PUT with a usable strike, expiry and quantity (stock legs have no template here).
+// Delegates to _jxiInferStrategy, which returns CUSTOM for a structure it does not recognise.
+function _journalStrategyFromLegs(legs) {
+  if (!Array.isArray(legs) || !legs.length || typeof _jxiInferStrategy !== 'function') return null;
+  var norm = [];
+  for (var i = 0; i < legs.length; i++) {
+    var l = legs[i] || {};
+    var type = String(l.type || '').toUpperCase();
+    var side = String(l.side || '').toUpperCase();
+    var strike = parseFloat(l.strike), qty = Math.abs(parseFloat(l.qty));
+    var expiry = l.expiry || l.expiration || null;
+    if ((type !== 'CALL' && type !== 'PUT') || (side !== 'LONG' && side !== 'SHORT') || !isFinite(strike) || !expiry || !(qty > 0)) return null;
+    norm.push({ type: type, side: side, strike: strike, expiry: expiry, qty: qty });
+  }
+  return _jxiInferStrategy(norm);
+}
+
 var journalManager = (function() {
   var _KEY = apexStorageKey('apex_trades');
   var _trades = [];
@@ -22547,6 +22591,10 @@ var journalManager = (function() {
         }
       }
     }
+    // A trade can come back with no strategy at all: the backend stored strategyType NULL for every
+    // trade the app saved until it learned the app's field names. Name the structure from its legs
+    // (the same rule the Excel import proposes) instead of showing a blank STRATEGY column.
+    if (!t.strategy) t.strategy = _journalStrategyFromLegs(t.legs) || t.strategy;
     // Trade-level lifecycle snapshots (set once, never overwritten)
     if (!t.originalStrategy) t.originalStrategy = t.strategy || '';
     if (!t.currentStrategy)  t.currentStrategy  = t.strategy || '';

@@ -150,8 +150,14 @@ const FNS = [
   'resolveLatestDisplayPrice', '_swingRowPriceObservedAt', '_swingResolveRenderPrice',
   '_portfolioRowUnderlyingPrice', '_pfBarSession', '_pfResolveChartPrice', '_pfDeriveDailyFromFourH', '_pfAlignedCandles',
   '_pfStaleBarNote', '_pfLogChartPrice',
+  // SPY benchmark cache policy (read once per TTL, shared by the RS panel and the alignment RS).
+  '_pfSpyBenchmarkNeeded', '_pfSpyBenchmarkSeries',
 ];
-vm.runInContext(FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
+// The three constants the benchmark helpers read: copied from the source text, not retyped.
+const SPY_CONSTS = ['_PF_SPY_BENCHMARK_TTL_MS', '_PF_SPY_RETRY_MS', '_pfSpyLastAttemptAt']
+  .map((n) => { const m = HTML.match(new RegExp('^var ' + n + '\\s*=[^;]*;', 'm')); if (!m) throw new Error('constant not found: ' + n); return m[0]; })
+  .join('\n');
+vm.runInContext(SPY_CONSTS + '\n' + FNS.map((n) => extractFn(HTML, n)).join('\n'), sandbox);
 
 // ── test harness ──────────────────────────────────────────────────────────────
 let pass = 0, fail = 0;
@@ -1057,6 +1063,155 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     ok(body.indexOf('var spyCandles = null;') < body.indexOf('_drawCandleChart(wrapId'), '4: SPY series is resolved before the chart is drawn (the callback needs it)');
   }
 })();
+
+// ── 17. RS vs SPY: the benchmark is read once per TTL and reaches every RS consumer ──
+// The Technical Analysis block showed `RS --` on 1D and 4H because backend-read mode opens no SPY
+// Candle subscription, so getDailyCandles('SPY') / getFourHourCandles('SPY') were both null.
+section('17. SPY benchmark: fetched once per TTL, shared by the RS panel and the alignment RS');
+{
+  const TTL = sandbox._PF_SPY_BENCHMARK_TTL_MS, RETRY = sandbox._PF_SPY_RETRY_MS;
+  const T0 = 1_800_000_000_000;
+  const spyBars = (n) => bars(n, 500).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }));
+  const setSpy = (c) => { sandbox._pfBackendSpyCache = c; };
+  const need = (t, now) => sandbox._pfSpyBenchmarkNeeded(t, now);
+
+  ok(TTL === 600000 && RETRY === 60000, '17: TTL is 10 minutes and the failed-read retry is 1 minute');
+
+  sandbox._pfSpyLastAttemptAt = 0;
+  setSpy(null);
+  ok(need('TSLA', T0) === true, '17: no cache -> the benchmark is needed');
+  ok(need('SPY', T0) === false && need('spy', T0) === false, '17: the SPY chart itself never asks for the benchmark (any case)');
+  setSpy({ candles1d: spyBars(25), candles4h: null, source: 'x', at: T0 });
+  ok(need('TSLA', T0 + TTL - 1) === false, '17: a cache younger than the TTL is reused');
+  ok(need('TSLA', T0 + TTL) === true, '17: a cache exactly TTL old is refreshed');
+  setSpy({ candles1d: spyBars(19), candles4h: null, source: 'x', at: T0 });
+  ok(need('TSLA', T0) === true, '17: a cache with fewer than 20 daily bars does not count as a benchmark');
+  setSpy({ candles1d: spyBars(20), candles4h: null, source: 'x', at: T0 });
+  ok(need('TSLA', T0) === false, '17: 20 daily bars is enough (boundary)');
+  setSpy({ candles1d: spyBars(25), candles4h: null, source: 'x' });
+  ok(need('TSLA', T0 + 10 * TTL) === false, '17: a cache with no timestamp (older callers) is never refreshed by age');
+  setSpy(null);
+  sandbox._pfSpyLastAttemptAt = T0;
+  ok(need('TSLA', T0 + RETRY - 1) === false, '17: a failed read is not retried inside the retry window');
+  ok(need('TSLA', T0 + RETRY) === true, '17: ... and is retried once the window has passed');
+  sandbox._pfSpyLastAttemptAt = 1;
+  ok(need('TSLA') === true, '17: `now` defaults to the real clock when omitted (retry window long past)');
+
+  // series accessor
+  setSpy({ candles1d: spyBars(30), candles4h: spyBars(21), source: 'x', at: T0 });
+  ok(sandbox._pfSpyBenchmarkSeries('1D').length === 30 && sandbox._pfSpyBenchmarkSeries('4H').length === 21, '17: series accessor maps 1D / 4H to the matching candles');
+  setSpy({ candles1d: spyBars(30), candles4h: spyBars(19), source: 'x', at: T0 });
+  ok(sandbox._pfSpyBenchmarkSeries('4H') === null, '17: a short 4H series is reported as absent');
+  setSpy({ candles1d: spyBars(30), candles4h: null, source: 'x', at: T0 });
+  ok(sandbox._pfSpyBenchmarkSeries('4H') === null, '17: a missing 4H series is reported as absent');
+  setSpy(null);
+  ok(sandbox._pfSpyBenchmarkSeries('1D') === null, '17: no cache -> null');
+
+  // _pfDrawChart: one SPY read per TTL, written with its timestamp
+  vm.runInContext([extractFn(HTML, '_pfNormalizeChartUnderlyingSymbol'), extractFn(HTML, '_pfDrawChart'), extractFn(HTML, '_pfDrawTf')].join('\n'), sandbox);
+  const fetched = [];
+  const tsla1d = bars(40, 200).map((c) => ({ time: c.t, open: c.o, high: c.h, low: c.l, close: c.c, volume: c.v }));
+  const spy1d = spyBars(40), spy4h = spyBars(40);
+  sandbox._pfExpandedPosId = 301;
+  sandbox.S = { scanData: [] };
+  sandbox.document = { getElementById: (id) => ({ id, textContent: '', innerHTML: '', style: {}, offsetWidth: 320, offsetHeight: 180 }) };
+  sandbox._portfolioFetchBackendCandlesForChart = async (sym) => {
+    fetched.push(sym);
+    if (sym === 'SPY') return { ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: spy1d, candles4h: spy4h };
+    return { ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: tsla1d, candles4h: null };
+  };
+  sandbox._recordBackendCandleProvenance = () => {};
+  sandbox.getDailyCandles = () => []; sandbox.getFourHourCandles = () => [];
+  sandbox._patchLivePrice = (c) => c;
+  sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(40).fill(55), lastSqueeze: false, squeeze: new Array(40).fill(false) });
+  sandbox.getCandleDataSource = () => 'X';
+  sandbox._drawCandleChart = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
+  sandbox.prepareHiDPICanvas = () => ({ ctx: {}, width: 320, height: 180 });
+
+  setSpy(null); sandbox._pfSpyLastAttemptAt = 0;
+  const before = Date.now();
+  await sandbox._pfDrawChart(301, 'tsla');
+  ok(fetched.slice().sort().join(',') === 'SPY,TSLA', '17: opening TSLA with no benchmark reads TSLA and SPY (got ' + fetched.join(',') + ')');
+  ok(sandbox._pfBackendSpyCache && sandbox._pfBackendSpyCache.candles1d === spy1d && sandbox._pfBackendSpyCache.candles4h === spy4h, '17: the SPY read lands in the shared benchmark cache (1D and 4H)');
+  ok(sandbox._pfBackendSpyCache && sandbox._pfBackendSpyCache.at >= before && sandbox._pfBackendSpyCache.at <= Date.now(), '17: ... stamped with the time it was read');
+  ok(sandbox._pfBackendCandleCache && sandbox._pfBackendCandleCache.symbol === 'TSLA' && sandbox._pfBackendCandleCache.candles1d === tsla1d, '17: the active chart keeps TSLA candles, never SPY');
+
+  fetched.length = 0;
+  await sandbox._pfDrawChart(301, 'tsla');
+  ok(fetched.join(',') === 'TSLA', '17: a second open inside the TTL reads TSLA only (got ' + fetched.join(',') + ')');
+
+  fetched.length = 0; setSpy(null); sandbox._pfSpyLastAttemptAt = 0;
+  await sandbox._pfDrawChart(301, 'spy');
+  ok(fetched.join(',') === 'SPY', '17: the SPY chart reads SPY exactly once (got ' + fetched.join(',') + ')');
+
+  // a failed SPY read is remembered: the next open does not retry inside the window
+  fetched.length = 0; setSpy(null); sandbox._pfSpyLastAttemptAt = 0;
+  sandbox._portfolioFetchBackendCandlesForChart = async (sym) => { fetched.push(sym); return sym === 'SPY' ? { ok: false, fallbackReason: 'http_500' } : { ok: true, source: 'S', candles1d: tsla1d, candles4h: null }; };
+  await sandbox._pfDrawChart(301, 'tsla');
+  const afterFail = fetched.slice(); fetched.length = 0;
+  await sandbox._pfDrawChart(301, 'tsla');
+  ok(afterFail.indexOf('SPY') >= 0 && sandbox._pfBackendSpyCache === null, '17: a failed SPY read leaves no benchmark cache');
+  ok(fetched.join(',') === 'TSLA', '17: ... and the next open does not hammer the backend again (got ' + fetched.join(',') + ')');
+}
+
+// ── 17b. getDailyCandles / getFourHourCandles('SPY') fall back to the cache; RS is then computed ──
+section('17b. alignment RS vs SPY is populated from the benchmark cache (1D and 4H)');
+{
+  const env = { _candleBuffer: {}, S: { scanData: [] }, _buildRth4hCandles: () => null, console, Math, Date, isFinite, parseFloat, Number, Array, Object, String };
+  const ctx = vm.createContext(env);
+  const modSrc = fs.readFileSync(path.join(__dirname, '..', 'js', 'portfolio', 'portfolio-traffic-light.js'), 'utf8');
+  vm.runInContext([SPY_CONSTS, ...['_pfSpyBenchmarkSeries', 'getDailyCandles', 'getFourHourCandles', 'smA', 'calcRSIWilder'].map((n) => extractFn(HTML, n)), extractFn(modSrc, 'computePortfolioDirectionalBias')].join('\n'), ctx);
+  const mk = (n, base, step) => { const o = []; for (let i = 0; i < n; i++) o.push({ time: 1_700_000_000_000 + i * 86400000, open: base + i * step, high: base + i * step + 1, low: base + i * step - 1, close: base + i * step, volume: 1 }); return o; };
+  const tsla = mk(60, 100, 1);      // +20 closes ago: strongly up
+  const spy = mk(60, 500, 0.1);     // gently up
+
+  vm.runInContext('var _pfBackendSpyCache = null;', ctx);
+  ok(ctx.getDailyCandles('SPY') === null && ctx.getFourHourCandles('SPY') === null, '17b: with no buffer and no cache SPY is unavailable (the old behaviour)');
+  const none = ctx.computePortfolioDirectionalBias('TSLA', tsla, tsla);
+  ok(none.inputs1D.rs === undefined && none.inputs4H.rs === undefined, '17b: ... which is exactly the `RS --` the Technical Analysis block showed');
+
+  env._pfBackendSpyCache = { candles1d: spy, candles4h: spy, source: 'x', at: Date.now() };
+  vm.runInContext('_pfBackendSpyCache = this._pfBackendSpyCache;', ctx);
+  ok(ctx.getDailyCandles('SPY') === spy && ctx.getFourHourCandles('SPY') === spy, '17b: with the benchmark cached both timeframes resolve to it');
+  ok(ctx.getDailyCandles('TSLA') === null && ctx.getFourHourCandles('TSLA') === null, '17b: the cache is only ever SPY: another symbol never gets it');
+  const res = ctx.computePortfolioDirectionalBias('TSLA', tsla, tsla);
+  const expRs = (tsla[59].close - tsla[39].close) / tsla[39].close - (spy[59].close - spy[39].close) / spy[39].close;
+  ok(res.inputs1D.rs !== undefined && Math.abs(res.inputs1D.rs - expRs) < 1e-12, '17b: 1D RS = 20-bar stock return minus SPY return (' + res.inputs1D.rs + ')');
+  ok(res.inputs4H.rs !== undefined && Math.abs(res.inputs4H.rs - expRs) < 1e-12, '17b: 4H RS is populated too');
+
+  // a real frontend buffer still wins over the cache
+  env._candleBuffer = { SPY: { '1D': spy.map((c) => ({ t: c.time, o: c.open, h: c.high, l: c.low, c: c.close, v: c.volume })) } };
+  ok(ctx.getDailyCandles('SPY')[0].source === 'DXLink', '17b: a live DXLink buffer is preferred over the cached backend series');
+}
+
+// ── 17c. strategy named from legs when the trade has none ──────────────────────
+section('17c. a trade with no strategy is named from its legs');
+{
+  const env = { console, Math, Date, isFinite, parseFloat, Number, Array, Object, String };
+  const ctx = vm.createContext(env);
+  vm.runInContext(['_jxiInferStrategy', '_journalStrategyFromLegs'].map((n) => extractFn(HTML, n)).join('\n'), ctx);
+  const f = ctx._journalStrategyFromLegs;
+  const L = (type, side, strike, extra) => Object.assign({ type, side, strike, expiry: '2026-12-18', qty: 1 }, extra || {});
+  ok(f([L('CALL', 'SHORT', 250)]) === ctx._jxiInferStrategy([{ type: 'CALL', side: 'SHORT', strike: 250, expiry: '2026-12-18', qty: 1 }]), '17c: a single leg is handed to the same inference the Excel import uses');
+  const sc = f([L('CALL', 'SHORT', 250), L('PUT', 'SHORT', 200)]);
+  ok(sc && sc !== 'CUSTOM' && /STRANGLE/i.test(sc), '17c: short call + short put at two strikes -> a strangle (got ' + sc + ')');
+  ok(f([L('CALL', 'short', '250', { qty: -1 })]) !== null, '17c: lower-case side, string strike and negative quantity are normalised');
+  ok(f([L('CALL', 'SHORT', 250, { expiry: undefined, expiration: '2026-12-18' })]) !== null, '17c: `expiration` is accepted as the expiry');
+  ok(f(null) === null && f(undefined) === null && f([]) === null && f('x') === null, '17c: no legs -> null');
+  ok(f([L('STOCK', 'LONG', 0)]) === null, '17c: a stock leg cannot be named -> null');
+  ok(f([L('CALL', 'SHORT', 250), L('STOCK', 'LONG', 0)]) === null, '17c: ... and neither can a mixed list');
+  ok(f([L('CALL', 'FLAT', 250)]) === null, '17c: an unknown side -> null');
+  ok(f([L('CALL', 'SHORT', 'abc')]) === null, '17c: a non-numeric strike -> null');
+  ok(f([L('CALL', 'SHORT', 250, { expiry: null })]) === null, '17c: a missing expiry -> null');
+  ok(f([L('CALL', 'SHORT', 250, { qty: 0 })]) === null, '17c: a zero quantity -> null');
+  ok(f([null]) === null, '17c: a null leg -> null');
+
+  // wiring: _migrateTrade names the strategy only when it is missing
+  const body = extractFn(HTML, '_migrateTrade');
+  ok(/if \(!t\.strategy\) t\.strategy = _journalStrategyFromLegs\(t\.legs\) \|\| t\.strategy;/.test(body), '17c: _migrateTrade infers only when strategy is empty and keeps it otherwise');
+  ok(body.indexOf('_journalStrategyFromLegs') < body.indexOf('t.originalStrategy = t.strategy'), '17c: ... before the original-strategy snapshot copies it');
+}
 
 // ── summary ───────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
