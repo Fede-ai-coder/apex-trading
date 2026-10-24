@@ -4724,6 +4724,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
       candles: candles, ind: ind, wrapId: wrapId,
       resetBtn: resetBtn,
       rsiView: ind.rsi ? ind.rsi.slice(vs, ve) : null,
+      vs: vs, ve: ve,
       PAD: PAD, W: W, H: H, plotW: plotW, plotH: plotH,
       minP: minP, maxP: maxP, nv: nv, xSpan: xSpan, intraday: intraday,
     };
@@ -4735,8 +4736,45 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     // the stashed opts. It runs after the chart and its interaction state are complete, so if it
     // throws, the enclosing catch below only loses the callback — the chart stays drawn.
     if (typeof opts.onView === 'function') opts.onView(vs, ve);
+    _chartSyncLinkedRsi(wrapId, ind.rsi);
 
   } catch(e) { /* chart render is non-fatal */ }
+}
+
+// Candle wraps whose RSI panel sits under them by id convention: [candle wrap prefix, RSI wrap prefix].
+// These charts draw their RSI with the shared trailing-window _mcxDrawRsi right after _drawCandleChart
+// returns, and two of the callers (MCX, SFS) live in byte-pinned modules that cannot be edited, so the
+// chart finds the panel by id instead of being handed a callback. The Portfolio passes onView and is
+// deliberately not in this list.
+var _CHART_RSI_LINKS = [
+  ['schart-big-wrap-', 'schart-rsi-'],   // scanner inline chart
+  ['rs-big-wrap-',     'rs-rsi-'],       // RS charts
+  ['sfs-big-wrap-',    'sfs-rsi-'],      // SFS detail
+  ['mcx-wrap-',        'mcx-rsi-']       // MCX
+];
+function _chartLinkedRsiId(wrapId) {
+  var id = String(wrapId || '');
+  for (var i = 0; i < _CHART_RSI_LINKS.length; i++) {
+    var l = _CHART_RSI_LINKS[i];
+    if (id.indexOf(l[0]) === 0) return l[1] + id.slice(l[0].length);
+  }
+  return null;
+}
+// Redraw the linked RSI panel on the window the chart is showing. The callers above overwrite the panel
+// with their trailing window synchronously after _drawCandleChart returns, so this runs as a microtask:
+// after that caller has finished, before the next paint. A draw that was replaced meanwhile (newer draw,
+// or the chart cleared to a "no data" message) is skipped; the newer draw schedules its own.
+function _chartSyncLinkedRsi(wrapId, rsiSeries) {
+  var rsiId = _chartLinkedRsiId(wrapId);
+  if (!rsiId || !rsiSeries) return;
+  var w0 = document.getElementById(wrapId);
+  var chart0 = w0 && w0.__chart;
+  Promise.resolve().then(function() {
+    var w = document.getElementById(wrapId);
+    var c = w && w.__chart;
+    if (c !== chart0) return;
+    _pfDrawRsiPanel(rsiId, rsiSeries, c.vs, c.ve);
+  });
 }
 
 // Current symbol tracked for the large detail view
