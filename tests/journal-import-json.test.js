@@ -490,6 +490,94 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   xassert(t.legs[1].brokerPositionId === '1001' && t.legs[1].entryPrice === 1.2 && t.legs[1].qty === 2 && t.legs[1].side === 'SHORT', 'payload: broker id, opening price, quantity, side kept on the leg');
   xassert(/Posizioni\.xlsx/.test(t.notes) && !('entrySnapshot' in t) && !('preTradeCheck' in t), 'payload: notes name the file; no entry snapshot is fabricated');
 
+  // ── re-import: what changed in legs the Journal already holds ─────────────
+  xassert(J(P.closedIds) === J({ '1004': true }), 'parse: the id of an option row the file lists as not open is reported (closedIds), nothing else is');
+  xassert(J(Object.keys(P.errorIds).sort()) === J(['1001', '1005', '1006', '1007', '1008', '1010', '1011', '1012']), 'parse: the id of every unreadable option row is reported (errorIds)');
+  xassert(J(R('_jxiParseRows([])').closedIds) === '{}' && J(R('_jxiParseRows(null)').errorIds) === '{}', 'parse: empty input still returns both id maps');
+  const jl = (o) => Object.assign({ type: 'PUT', side: 'SHORT', qty: 2, strike: 50, expiry: '2026-11-20', entryPrice: 1.2, brokerPositionId: '1001' }, o || {});
+  const jt = (legs, o) => Object.assign({ id: 77, ticker: 'ACME', status: 'OPEN', legs: legs }, o || {});
+  const plan = (trades, parsed) => R('_jxiPlanSync(' + J(parsed || P) + ',' + J(trades) + ')');
+  let syncP = plan([jt([jl(), jl({ side: 'LONG', strike: 45, entryPrice: 0.4, brokerPositionId: '1002' })])]);
+  xassert(syncP.changed.length === 0 && syncP.conflict.length === 0 && syncP.gone.length === 0 && syncP.matched === 2, 'sync: an identical Journal copy proposes nothing');
+  syncP = plan([jt([jl({ qty: 1, entryPrice: 1 })])]);
+  xassert(syncP.changed.length === 1 && syncP.changed[0].qty === 1 && syncP.changed[0].qtyNew === 2 && syncP.changed[0].entryPrice === 1 && syncP.changed[0].priceNew === 1.2
+    && syncP.changed[0].tradeId === 77 && syncP.changed[0].idx === 0 && syncP.changed[0].key === '77|0' && syncP.changed[0].brokerPositionId === '1001' && syncP.changed[0].ticker === 'ACME', 'sync: a different quantity and price is proposed as an update with both values');
+  xassert(plan([jt([jl({ qty: 3 })])]).changed.length === 1 && plan([jt([jl({ entryPrice: 1.5 })])]).changed.length === 1, 'sync: quantity alone, or price alone, is enough');
+  xassert(plan([jt([jl({ entryPrice: 1.20001 })])]).changed.length === 0 && plan([jt([jl({ entryPrice: 1.2001 })])]).changed.length === 1, 'sync: prices are compared to four decimals');
+  const aliasP = plan([jt([jl({ expiry: undefined, expiration: '2026-11-20' })])]);
+  xassert(aliasP.changed.length === 0 && aliasP.conflict.length === 0 && aliasP.matched === 1, 'sync: a leg that only carries the "expiration" alias still matches (no conflict)');
+  xassert(plan([jt([jl({ strike: '50' })])]).changed.length === 0 && plan([jt([jl({ qty: '2' })])]).changed.length === 0, 'sync: numbers stored as text compare as numbers');
+  syncP = plan([jt([jl({ strike: 46 })])]);
+  xassert(syncP.changed.length === 0 && syncP.conflict.length === 1 && syncP.conflict[0].fileLabel === 'SHORT 2× PUT 50 2026-11-20' && syncP.matched === 1, 'sync: same id but a different strike is a conflict, described, never an update');
+  ['type', 'side', 'expiry'].forEach(k => {
+    const alt = { type: 'CALL', side: 'LONG', expiry: '2026-12-18' }[k];
+    xassert(plan([jt([jl({ [k]: alt })])]).conflict.length === 1, 'sync: a different ' + k + ' is a conflict');
+  });
+  syncP = plan([jt([jl({ brokerPositionId: '1004', qty: 1 })])]);
+  xassert(syncP.gone.length === 1 && syncP.gone[0].reason === 'closed' && syncP.matched === 0, 'sync: a leg the file lists as not open is proposed for closing, even when nothing else matches');
+  syncP = plan([jt([jl(), jl({ brokerPositionId: '9999', strike: 60 })])]);
+  xassert(syncP.gone.length === 1 && syncP.gone[0].reason === 'absent' && syncP.gone[0].brokerPositionId === '9999' && syncP.gone[0].idx === 1 && syncP.gone[0].strike === 60, 'sync: a leg absent from the file is proposed for closing when the file matches the Journal');
+  syncP = plan([jt([jl({ brokerPositionId: '9999' })])]);
+  xassert(syncP.gone.length === 0, 'sync: a file that shares no leg with the Journal never proposes closing "absent" legs (wrong account / wrong file)');
+  syncP = plan([jt([jl({ brokerPositionId: '9999' }), jl({ brokerPositionId: '1004' })])]);
+  xassert(syncP.gone.length === 1 && syncP.gone[0].reason === 'closed', 'sync: ... but a leg the file itself lists as closed is still reported');
+  syncP = plan([jt([jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 }), jl({ brokerPositionId: '1005' })])]);
+  xassert(syncP.gone.length === 0 && syncP.changed.length === 0 && syncP.conflict.length === 0, 'sync: a leg whose file row is unreadable is left alone (neither updated nor closed)');
+  syncP = plan([jt([jl({ qty: 1 })], { status: 'CLOSED' }), jt([jl({ brokerPositionId: '9999' })], { status: 'CLOSED', id: 78 })]);
+  xassert(syncP.changed.length === 0 && syncP.gone.length === 0 && syncP.matched === 0, 'sync: closed trades are never touched');
+  syncP = plan([jt([jl({ qty: 1, legStatus: 'CLOSED' }), jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4, legStatus: 'EXPIRED_OTM' })])]);
+  xassert(syncP.changed.length === 0 && syncP.gone.length === 0 && syncP.matched === 0, 'sync: legs that are no longer open in the Journal are never touched');
+  syncP = plan([jt([jl({ qty: 1 }), jl({ brokerPositionId: undefined, strike: 77 }), null], { status: 'PARTIAL' })]);
+  xassert(syncP.changed.length === 1 && syncP.changed[0].idx === 0 && syncP.gone.length === 0, 'sync: PARTIAL trades count; legs without a broker id and empty slots are skipped');
+  syncP = plan([jt([jl({ qty: 1 })], { id: 5 }), jt([jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.9 })], { id: 6 })]);
+  xassert(syncP.changed.map(c => c.key).join() === '5|0,6|0', 'sync: updates from several trades each carry their own trade id');
+  xassert(R('_jxiPlanSync({ legs: [], closedIds: {}, errorIds: {} }, null)').matched === 0 && R('_jxiPlanSync(' + J(P) + ', [null, {}])').matched === 0, 'sync: no trades, empty slots → nothing');
+
+  // ── applying accepted changes ────────────────────────────────────────────
+  const cT = jt([jl({ qty: 1, entryPrice: 1 }), jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 })]);
+  const cPlan = plan([cT]);
+  const frozenT = J(cT);
+  const newLegs = R('_jxiLegsWithChanges(' + frozenT + ',' + J(cPlan.changed) + ')');
+  ctx.__trade = cT; ctx.__chg = cPlan.changed;
+  vm.runInContext('_jxiLegsWithChanges(__trade, __chg)', ctx);
+  xassert(J(cT) === frozenT, 'apply: the trade passed in is not mutated');
+  xassert(newLegs[0].qty === 2 && newLegs[0].entryPrice === 1.2 && newLegs[0].strike === 50 && newLegs[0].brokerPositionId === '1001', 'apply: quantity and opening price of the changed leg are replaced, the rest of the leg is kept');
+  xassert(J(newLegs[1]) === J(cT.legs[1]), 'apply: other legs are copied unchanged');
+  xassert(R('_jxiLegsWithChanges(' + frozenT + ',' + J([Object.assign({}, cPlan.changed[0], { brokerPositionId: 'zzz' })]) + ')')[0].qty === 1, 'apply: a change whose leg id no longer matches is ignored');
+  xassert(R('_jxiLegsWithChanges(' + frozenT + ',' + J([Object.assign({}, cPlan.changed[0], { idx: 9 })]) + ')').length === 2, 'apply: a change pointing past the last leg is ignored');
+  xassert(R('_jxiLegsWithChanges({}, [])').length === 0, 'apply: a trade without legs gives an empty list');
+  const note = R('_jxiChangeNote(' + J(cPlan.changed) + ',"Posizioni.xlsx")');
+  xassert(note === 'Excel sync (Posizioni.xlsx): SHORT PUT 50 2026-11-20 — qty 1 → 2, open price 1 → 1.2', 'apply: the note names the file, the contract and both values (got ' + note + ')');
+  xassert(R('_jxiChangeNote(' + J(cPlan.changed) + ')').indexOf('Excel sync: ') === 0, 'apply: no file name, no parentheses');
+  xassert(/; /.test(R('_jxiChangeNote(' + J([cPlan.changed[0], cPlan.changed[0]]) + ')')), 'apply: several changes are separated');
+  const cpCtx = vm.createContext({ Number, String, isFinite });
+  vm.runInContext(extractFn(HTML, '_jxiClosePriceOf'), cpCtx);
+  [['""', null], ['null', null], ['undefined', null], ['" "', null], ['"0"', 0], ['0', 0], ['"0,35"', 0.35], ['" 1.5 "', 1.5], ['"-1"', null], ['"abc"', null], ['"Infinity"', null]].forEach(c =>
+    xassert(vm.runInContext('_jxiClosePriceOf(' + c[0] + ')', cpCtx) === c[1], 'close price: ' + c[0] + ' → ' + c[1]));
+
+  xassert(R('_jxiUnchangedCount([1,2,3,4], { changed: [1], conflict: [1] })') === 2 && R('_jxiUnchangedCount([], { changed: [1], conflict: [] })') === 0, 'count: unchanged = repeated legs minus changed minus conflicting, never negative');
+  xassert(R('_jxiNothingToShow([], { changed: [], gone: [] })') === true && R('_jxiNothingToShow([1], { changed: [], gone: [] })') === false
+    && R('_jxiNothingToShow([], { changed: [1], gone: [] })') === false && R('_jxiNothingToShow([], { changed: [], gone: [1] })') === false, 'empty: only a file with no new leg, no change and no leg to close is "nothing to import"');
+
+  // ── opening the preview wires the plan in ──
+  const octx = vm.createContext({ console, Date, Math, JSON, Object, Array, String, Number, parseFloat, isFinite,
+    journalManager: { getAll: () => octx.__trades }, showToast() {}, _jxiRender() {} });
+  octx.__trades = [jt([jl({ qty: 1 }), jl({ brokerPositionId: '9999', strike: 60 })])];
+  vm.runInContext(sym + '\n' + helpers + '\n' + extractFn(HTML, '_jxiOpen'), octx);
+  octx.__parsed = P;
+  vm.runInContext('_jxiOpen("f.xlsx", __parsed)', octx);
+  const os = JSON.parse(vm.runInContext('JSON.stringify(_jxiState)', octx));
+  xassert(os.sync.changed.length === 1 && os.sync.gone.length === 1 && os.sync.matched === 1 && os.applyChange && J(os.closePrice) === '{}', 'open: the preview state carries the plan, empty choices');
+  xassert(/^\d{4}-\d\d-\d\d$/.test(os.closeDate) && os.closeDate === new Date().toISOString().substring(0, 10), 'open: the close date defaults to today');
+  xassert(os.legs.map(l => l.brokerPositionId).join() === '1002,1009' && os.dup.length === 1 && os.dup[0].brokerPositionId === '1001', 'open: new and already-present legs are still split as before');
+
+  // ── the label of the apply button ────────────────────────────────────────
+  const lctx = vm.createContext({ Math });
+  vm.runInContext(extractFn(HTML, '_jxiGoLabel'), lctx);
+  const lab = (a, u, c) => vm.runInContext('_jxiGoLabel({ adds: new Array(' + a + '), upd: new Array(' + u + '), closes: new Array(' + c + ') })', lctx);
+  xassert(lab(0, 0, 0) === 'Nothing to apply' && lab(2, 0, 0) === 'Apply: 2 new trade(s)' && lab(0, 3, 0) === 'Apply: 3 update(s)' && lab(0, 0, 1) === 'Apply: 1 close(s)'
+    && lab(2, 3, 1) === 'Apply: 2 new trade(s), 3 update(s), 1 close(s)', 'label: only the non-empty parts, in the order new / update / close');
+
   // ── static guards on the UI / save code ──────────────────────────────────
   const save = extractFn(HTML, 'journalImportExcelSave');
   xassert(save.indexOf('journalManager.add(') >= 0 && save.indexOf('_awaitJournalBackendWrite(') >= 0, 'save: goes through journalManager.add and awaits the backend outcome');
@@ -507,12 +595,14 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   const sctx = vm.createContext({ console, Date, Math, JSON, Object, Array, String, Number, parseFloat, isFinite, Promise, setTimeout,
     document: { getElementById: (id) => dom[id] || null },
     portfolioManager: { getAll: () => sctx.__pfs },
-    journalManager: { getAll: () => [], add: (p) => { const tr = Object.assign({ id: Date.now() }, p); adds.push(tr); return tr; }, _lastBackendWrite: null },
+    journalManager: { getAll: () => [], getById: (id) => sctx.__trades.find(t => String(t.id) === String(id)) || null,
+      addAdjustment: (id, a) => { sctx.__log.push(['adj', id, a]); }, update: (id, d) => { sctx.__log.push(['update', id, d]); sctx.__trades.find(t => String(t.id) === String(id)).legs = d.legs; },
+      closeLegs: (id, lc) => { sctx.__log.push(['closeLegs', id, lc]); }, add: (p) => { const tr = Object.assign({ id: Date.now() }, p); adds.push(tr); return tr; }, _lastBackendWrite: null },
     normalizeOptionLegSymbolAliases: (tk, l) => Object.assign(l, { optionSymbol: l.streamerSymbol }),
     _awaitJournalBackendWrite: async () => ({ ok: true }), showToast: (m, k) => toasts.push([m, k]),
     renderPortfolioJournalView() {}, isPortfolioViewActive: () => false, renderPortfolioView() {}, S: {},
     STRATEGY_TEMPLATES: {}, escHtml: (x) => String(x) });
-  vm.runInContext(sym + '\n' + helpers + '\n' + extractFn(HTML, '_jxiGroups') + '\n' + extractFn(HTML, '_jxiClose') + '\n' + save, sctx);
+  vm.runInContext(sym + '\n' + helpers + '\n' + extractFn(HTML, '_jxiGroups') + '\n' + extractFn(HTML, '_jxiClose') + '\n' + extractFn(HTML, '_jxiActions') + '\n' + extractFn(HTML, '_jxiClosePriceOf') + '\n' + save, sctx);
   sctx.__pfs = [{ id: 'pf-1', name: 'Alpha' }, { id: 'pf-2', name: 'Beta' }];
   // ── regrouping in the preview ──
   let renders = 0;
@@ -538,7 +628,7 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   const many = [];
   for (let i = 0; i < 6; i++) many.push({ row: i + 2, ticker: 'T' + i, type: 'PUT', side: 'SHORT', qty: 1, strike: 10 + i, expiry: '2026-11-20', entryPrice: 1, openDate: '2026-10-12', openedTs: 1000 + i * 1000, brokerPositionId: 'b' + i });
   sctx.__many = many;
-  vm.runInContext('_jxiState = { file: "f.xlsx", legs: __many, gid: [1,2,3,4,5,6], dup: [], ignored: [], errors: [], include: { 3: false }, strategy: { 2: "CUSTOM" }, mode: "leg", busy: false };', sctx);
+  vm.runInContext('_jxiState = { file: "f.xlsx", sync: { changed: [], gone: [], conflict: [] }, applyChange: {}, closePrice: {}, closeDate: "2026-10-20",  legs: __many, gid: [1,2,3,4,5,6], dup: [], ignored: [], errors: [], include: { 3: false }, strategy: { 2: "CUSTOM" }, mode: "leg", busy: false };', sctx);
   dom.jxiPortfolio.value = '';
   vm.runInContext('journalImportExcelSave()', sctx).then(() => {
     xassert(adds.length === 0 && /Choose a portfolio/.test(dom.jxiProgress.textContent), 'save: with two portfolios and none chosen nothing is saved');
@@ -553,9 +643,85 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
     xassert(vm.runInContext('_jxiState', sctx) === null, 'save: the preview is closed afterwards');
     // one portfolio only → it is used without being chosen
     sctx.__pfs = [{ id: 'pf-9', name: 'Only' }]; dom.jxiPortfolio.value = ''; adds.length = 0;
-    vm.runInContext('_jxiState = { file: "g.xlsx", legs: __many.slice(0, 2), gid: [1, 2], dup: [], ignored: [], errors: [], include: {}, strategy: {}, mode: "leg", busy: false };', sctx);
+    vm.runInContext('_jxiState = { file: "g.xlsx", sync: { changed: [], gone: [], conflict: [] }, applyChange: {}, closePrice: {}, closeDate: "2026-10-20",  legs: __many.slice(0, 2), gid: [1, 2], dup: [], ignored: [], errors: [], include: {}, strategy: {}, mode: "leg", busy: false };', sctx);
     return vm.runInContext('journalImportExcelSave()', sctx).then(() => {
       xassert(adds.length === 2 && adds.every(x => x.portfolioId === 'pf-9'), 'save: with a single portfolio it is used by default');
+    });
+  }).then(() => {
+    // ── save: updates and closes of legs the Journal already holds ──
+    const fresh = () => [jt([jl({ qty: 1, entryPrice: 1 }), jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 })]),
+      jt([jl({ brokerPositionId: '1004', strike: 40 }), jl({ brokerPositionId: '9999', strike: 60 })], { id: 78 })];
+    const startSync = (over) => {
+      sctx.__trades = fresh(); sctx.__log = []; adds.length = 0; toasts.length = 0; dom.jxiProgress.textContent = '';
+      const sy = JSON.parse(vm.runInContext('JSON.stringify(_jxiPlanSync(' + J(P) + ', ' + J(sctx.__trades) + '))', sctx));
+      sctx.__st = Object.assign({ file: 'new.xlsx', legs: [], gid: [], dup: [], ignored: [], errors: [], include: {}, strategy: {}, mode: 'time', busy: false,
+        sync: sy, applyChange: {}, closePrice: {}, closeDate: '2026-10-20' }, over || {});
+      vm.runInContext('_jxiState = __st;', sctx);
+      return sy;
+    };
+    sctx.__pfs = [{ id: 'pf-1', name: 'Alpha' }, { id: 'pf-2', name: 'Beta' }];
+    dom.jxiPortfolio.value = '';   // two portfolios, none chosen: updates and closes must not need one
+    const sy0 = startSync();
+    xassert(sy0.changed.length === 1 && sy0.gone.length === 2, 'save-sync: fixture — one changed leg, two legs proposed for closing');
+    return vm.runInContext('journalImportExcelSave()', sctx).then(() => {
+      xassert(sctx.__log.length === 2 && sctx.__log[0][0] === 'adj' && sctx.__log[1][0] === 'update', 'save-sync: a change is noted on the trade first, then the legs are updated (and nothing else happens: no price typed, no close)');
+      xassert(sctx.__log[0][1] === 77 && sctx.__log[0][2].type === 'NOTE' && /^Excel sync \(new\.xlsx\): SHORT PUT 50 2026-11-20 — qty 1 → 2, open price 1 → 1\.2$/.test(sctx.__log[0][2].notes), 'save-sync: the note carries the real before / after values');
+      const ul = sctx.__log[1][2].legs;
+      xassert(sctx.__log[1][1] === 77 && ul[0].qty === 2 && ul[0].entryPrice === 1.2 && ul[1].qty === 2 && ul[1].entryPrice === 0.4, 'save-sync: the updated legs are saved through journalManager.update');
+      xassert(adds.length === 0 && toasts.length === 1 && toasts[0][0] === 'Updated 1 leg(s) — 1 confirmed by the backend' && toasts[0][1] === 'ok', 'save-sync: one summary toast, counted from what really happened (got ' + toasts.map(t => t[0]) + ')');
+      startSync({ applyChange: { 0: false } });
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.length === 0 && /Nothing selected/.test(dom.jxiProgress.textContent), 'save-sync: an unticked change is not applied');
+      startSync({ closePrice: { 0: '0,35', 1: '' } });
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      const kinds = sctx.__log.map(x => x[0]).join();
+      xassert(kinds === 'adj,update,closeLegs', 'save-sync: updates come before closes (leg indexes stay valid) (got ' + kinds + ')');
+      const cl = sctx.__log[2];
+      xassert(cl[1] === 78 && J(cl[2]) === J([{ idx: 0, closeDate: '2026-10-20', closePrice: 0.35 }]), 'save-sync: only the leg with a typed price is closed, at that price, on the chosen date (the empty one stays open)');
+      xassert(/Updated 1 leg\(s\), closed 1 leg\(s\)/.test(toasts[0][0]), 'save-sync: the toast counts both');
+      startSync({ closePrice: { 1: '0' } });
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      const cl = sctx.__log.filter(x => x[0] === 'closeLegs');
+      xassert(cl.length === 1 && J(cl[0][2]) === J([{ idx: 1, closeDate: '2026-10-20', closePrice: 0 }]), 'save-sync: a closing price of 0 (expired worthless) is a price, not "empty"');
+      startSync({ closePrice: { 0: '0.35', 1: '0.5' }, applyChange: { 0: false } });
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      const cl = sctx.__log.filter(x => x[0] === 'closeLegs');
+      xassert(cl.length === 1 && cl[0][2].length === 2 && /Closed 2 leg\(s\)/.test(toasts[0][0]), 'save-sync: two legs of the same trade are closed in one call and counted as two');
+      startSync({ closePrice: { 0: '1' }, closeDate: '' });
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.filter(x => x[0] === 'closeLegs')[0][2][0].closeDate === new Date().toISOString().substring(0, 10), 'save-sync: an emptied close date falls back to today');
+      startSync();
+      sctx.__trades[0].legs.push(jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.9 }));
+      sctx.__st.sync = JSON.parse(vm.runInContext('JSON.stringify(_jxiPlanSync(' + J(P) + ', ' + J(sctx.__trades) + '))', sctx));
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__st.sync.changed.length === 2 && /Updated 2 leg\(s\)/.test(toasts[0][0]) && sctx.__log.filter(x => x[0] === 'update').length === 1, 'save-sync: two changed legs of one trade are one update and are counted as two');
+      startSync();
+      sctx.__trades[0].legs[0].brokerPositionId = 'changed-meanwhile';
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.length === 0 && toasts.length === 1 && toasts[0][1] === 'warn' && /FAILED: ACME: leg changed in the Journal meanwhile/.test(toasts[0][0]), 'save-sync: a leg that is no longer the one planned is not touched and is reported');
+      startSync({ closePrice: { 0: '1' } });
+      sctx.__trades[1].legs[0].legStatus = 'CLOSED';
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.filter(x => x[0] === 'closeLegs').length === 0 && /FAILED/.test(toasts[0][0]), 'save-sync: a leg closed in the meantime is not closed again');
+      startSync({ legs: [many[0]], gid: [1], closePrice: { 0: '0.2' } });
+      dom.jxiPortfolio.value = 'pf-2';
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.map(x => x[0]).join() === 'adj,update,closeLegs' && adds.length === 1 && adds[0].portfolioId === 'pf-2', 'save-sync: updates, closes and new trades can be applied in a single run');
+      xassert(/^Imported 1 trade\(s\) into Beta, updated 1 leg\(s\), closed 1 leg\(s\)/.test(toasts[0][0]), 'save-sync: one toast for all three (got ' + toasts[0][0] + ')');
+      startSync({ legs: [many[0]], gid: [1] });
+      dom.jxiPortfolio.value = '';
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(adds.length === 0 && /Choose a portfolio/.test(dom.jxiProgress.textContent) && sctx.__log.length === 0, 'save-sync: new trades still need a portfolio — and nothing is applied before that is settled');
     });
   }).then(() => {
     vm.runInContext('_jxiState = { busy: true };', sctx);
