@@ -338,6 +338,236 @@ function makeCtx(opts) {
   console.log('✓ static guards: non-destructive, read-only, no auto-call sites');
 })();
 
+// ══════════════════════════════════════════════════════════════════════════
+// EXCEL POSITIONS IMPORT (journal header "IMPORT EXCEL") — pure helpers + save loop.
+// Co-located with the Journal import suite so the repository's 197-file test
+// inventory stays unchanged. The Excel reader itself (SheetJS) is a CDN script and is
+// not run here: the helpers take the array-of-arrays it produces.
+// ══════════════════════════════════════════════════════════════════════════
+// Counted apart from the original suite on purpose: tests/journal-manual-import-boundary-contract.test.js
+// pins this file's ORIGINAL result line, "ALL PASSED (63 assertions)", and that line must keep
+// meaning exactly the original behaviour. The Excel assertions report on their own line below.
+let xPassed = 0, xFailed = 0;
+function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console.error('  ✗ [excel import] ' + msg); } }
+(function() {
+  const a = HTML.indexOf('// JXI-BEGIN'), b = HTML.indexOf('// JXI-END');
+  xassert(a > 0 && b > a, 'the Excel import helper block is delimited');
+  const helpers = HTML.slice(a, b);
+  const sym = extractFn(HTML, 'buildCompactOptionDxlinkSymbol');
+  const ctx = vm.createContext({ console, Date, Math, JSON, Object, Array, String, Number, parseFloat, isFinite });
+  vm.runInContext(sym + '\n' + helpers, ctx);
+  const R = (code) => JSON.parse(JSON.stringify(vm.runInContext(code, ctx)));
+
+  // ── number / date / ticker parsing ───────────────────────────────────────
+  xassert(R('_jxiNum(10.3)') === 10.3 && R('_jxiNum("10.3")') === 10.3, 'num: plain decimal, number or text');
+  xassert(R('_jxiNum("305,00")') === 305 && R('_jxiNum("237,50")') === 237.5, 'num: Italian decimal comma');
+  xassert(R('_jxiNum("1.080,00")') === 1080, 'num: Italian thousands dot + decimal comma');
+  xassert(R('_jxiNum("1,080.50")') === 1080.5, 'num: English thousands comma + decimal dot');
+  xassert(R('_jxiNum("-1")') === -1 && R('_jxiNum("66 USD")') === 66, 'num: sign kept, currency text stripped');
+  xassert(R('_jxiNum("")') === null && R('_jxiNum("–")') === null && R('_jxiNum(null)') === null, 'num: empty / dash / null → null');
+  xassert(R('_jxiDateTime("15-gen-2027").date') === '2027-01-15', 'date: Italian month abbreviation');
+  xassert(R('_jxiDateTime("22-ott-2026 17:02:39").date') === '2026-10-22', 'date: date part of a date-time');
+  xassert(R('_jxiDateTime("22-ott-2026 17:02:39").ts - _jxiDateTime("22-ott-2026 17:01:39").ts') === 60, 'date: time of day is kept (seconds)');
+  ['20-set-2026', '20-sep-2026', '2026-09-20', '20/09/2026'].forEach(v =>
+    xassert(R('_jxiDateTime(' + J(v) + ').date') === '2026-09-20', 'date: ' + v));
+  xassert(R('_jxiDateTime(46325).date') === '2026-10-30', 'date: Excel serial number');
+  xassert(R('_jxiDateTime("31-feb-2026")') === null && R('_jxiDateTime("hello")') === null && R('_jxiDateTime(null)') === null, 'date: impossible / non-dates → null');
+  xassert(J(R('_jxiParseOptionTicker("ADBE/15F27C305:xcbf")')) === J({ root: 'ADBE', expiry: '2027-01-15', type: 'CALL', strike: 305 }), 'ticker: call, January code F');
+  xassert(J(R('_jxiParseOptionTicker("ADBE/20X26P237.5:xcbf")')) === J({ root: 'ADBE', expiry: '2026-11-20', type: 'PUT', strike: 237.5 }), 'ticker: put with a decimal strike, November code X');
+  xassert(R('_jxiParseOptionTicker("MU/20X26C1080:xcbf").strike') === 1080, 'ticker: four-digit strike');
+  xassert(R('_jxiParseOptionTicker("SPY/18Z26C812:xcbf").expiry') === '2026-12-18' && R('_jxiParseOptionTicker("SPY/19G27P570:xcbf").expiry') === '2027-02-19', 'ticker: Z = Dec, G = Feb');
+  ['VWRL:xmil', 'ITALY-1.65-01DEC30', 'ADBE/15A27C305', 'ADBE/32F27C305', 'ADBE/15F27C0', '', null].forEach(v =>
+    xassert(R('_jxiParseOptionTicker(' + J(v) + ')') === null, 'ticker: not an option → null (' + v + ')'));
+
+  // ── a synthetic export in the broker's shape (header names are what the real file uses) ──
+  const HDR = ['Strumenti', 'Long/Short', 'Call/Put', 'Quantità', 'Scadenza', 'Data/ora apertura', 'Prezzo di apertura', 'Ticker', 'Stato', 'Prezzo di esercizio', 'Tipo attività', 'Id posizione'];
+  const leg = (o) => [o.name || 'Acme Corp. Nov2026 50 P', o.ls, o.cp, o.q, o.exp || '20-nov-2026', o.at || '12-ott-2026 17:13:02', o.px, o.tk, o.st === undefined ? 'Apertura' : o.st, o.k === undefined ? '50,00' : o.k, o.kind === undefined ? 'Opzione su azione' : o.kind, o.id];
+  const ROWS = [
+    HDR,
+    ['Acme Corp. (3)', null, null, null, null, null, null, null, null, null, null, null],     // group header row
+    leg({ ls: 'Short', cp: 'Put', q: -2, px: 1.2, tk: 'ACME/20X26P50:xcbf', id: '1001' }),
+    leg({ ls: 'Long', cp: 'Put', q: 2, px: 0.4, tk: 'ACME/20X26P45:xcbf', k: '45,00', at: '12-ott-2026 17:13:40', id: '1002' }),
+    leg({ ls: 'Short', cp: 'Call', q: -1, px: 0.8, tk: 'ACME-WARRANT-2027', id: '1003' }),   // not a parseable option ticker → ignored as not an option
+    ['Gov Bond 2030', 'Long', '', 6000, '01-dic-2030', '26-ago-2024 15:36:08', 91.49, 'ITALY-1.65-01DEC30', 'Apertura', '–', 'Obbligazione', '2000'],
+    leg({ ls: 'Short', cp: 'Put', q: -1, px: 1.0, tk: 'ACME/20X26P40:xcbf', k: '40,00', st: 'Chiuso', id: '1004' }),                 // closed → ignored
+    leg({ ls: 'Short', cp: 'Put', q: -1, px: 1.0, tk: 'ACME/20X26P55:xcbf', k: '60,00', id: '1005' }),                                // strike disagrees with the ticker
+    leg({ ls: 'Short', cp: 'Put', q: 1, px: 1.0, tk: 'ACME/20X26P56:xcbf', k: '56,00', id: '1006' }),                                 // Short with a positive quantity
+    leg({ ls: 'Long', cp: 'Call', q: 1, px: 'abc', tk: 'ACME/20X26C70:xcbf', k: '70,00', id: '1007' }),                               // unreadable price
+    leg({ ls: 'Long', cp: 'Call', q: 1, px: 2, tk: 'ACME/20X26C71:xcbf', k: '71,00', exp: '21-nov-2026', id: '1008' }),               // expiry disagrees with the ticker
+    leg({ ls: 'Long', cp: 'Call', q: 1, px: 2, tk: 'ACME/20X26C72:xcbf', k: '72,00', id: '1001' }),                                   // repeated position id
+    [],
+    leg({ ls: 'Long', cp: 'Call', q: 3, px: 1.5, tk: 'ZZZ/15F27C1080:xcbf', k: '1.080,00', exp: '15-gen-2027', id: '1009' }),   // Italian thousands separator in the strike column
+    leg({ ls: 'Short', cp: 'Call', q: -1, px: 1, tk: 'ACME/20X26P51:xcbf', k: '51,00', id: '1010' }),                                // Call/Put column disagrees with the ticker
+    leg({ ls: 'Long', cp: 'Put', q: 1, px: -0.5, tk: 'ACME/20X26P52:xcbf', k: '52,00', id: '1011' }),                                // negative opening price
+    leg({ ls: 'Long', cp: 'Put', q: 0, px: 1, tk: 'ACME/20X26P53:xcbf', k: '53,00', id: '1012' }),                                   // zero quantity
+    leg({ ls: 'Long', cp: 'Put', q: 1, px: 1, tk: 'ACME/20X26P54:xcbf', k: '54,00', kind: 'Exchange Traded Fund (ETF)', id: '1013' }), // option-looking ticker on a non-option asset
+  ];
+  const P = R('_jxiParseRows(' + J(ROWS) + ')');
+  xassert(P.missing.length === 0, 'parse: every required column found by its header');
+  xassert(P.legs.length === 3 && P.legs.map(l => l.brokerPositionId).join() === '1001,1002,1009', 'parse: the three valid open option legs are read');
+  xassert(P.legs[2].strike === 1080 && P.legs[2].expiry === '2027-01-15' && P.legs[2].qty === 3, 'parse: "1.080,00" in the strike column reads as 1080 and agrees with the ticker');
+  const l0 = P.legs[0];
+  xassert(J([l0.ticker, l0.type, l0.side, l0.qty, l0.strike, l0.expiry, l0.entryPrice, l0.openDate]) === J(['ACME', 'PUT', 'SHORT', 2, 50, '2026-11-20', 1.2, '2026-10-12']),
+    'parse: symbol, call/put, side, |quantity|, strike, expiry, opening price, opening date');
+  xassert(P.ignored.map(r => r.row).join() === '5,6,7,18', 'parse: unparseable ticker, bond, closed leg and a non-option asset type are ignored, not imported');
+  xassert(/not an option/.test(P.ignored[1].reason) && /not open/.test(P.ignored[2].reason), 'parse: ignored rows say why');
+  const errRows = P.errors.map(e => e.row).join();
+  xassert(errRows === '8,9,10,11,12,15,16,17', 'parse: strike / Call-Put / expiry mismatch, sign mismatch, bad / negative price, zero quantity and a repeated id are errors, nothing is guessed (got ' + errRows + ')');
+  xassert(P.errors.every(e => e.problems.length >= 1), 'parse: each error row names its problem');
+  xassert(P.legs.every(l => l.row !== 2) && P.ignored.every(r => r.row !== 2) && P.errors.every(r => r.row !== 2), 'parse: the underlying group header row (row 2) is skipped silently');
+  const missing = R('_jxiParseRows([["Strumenti","Ticker"],["x","y"]])').missing;
+  xassert(missing.indexOf('price') >= 0 && missing.indexOf('opened') >= 0, 'parse: a file without the needed columns reports which are missing');
+  xassert(R('_jxiParseRows(null)').legs.length === 0 && R('_jxiParseRows([])').missing.length > 0, 'parse: empty input is harmless');
+  const tie = R('_jxiParseRows(' + J([HDR.filter(h => h !== 'Prezzo di apertura'), HDR.filter(h => h !== 'Quantità')]) + ')').missing;
+  xassert(J(tie) === J(['price']), 'parse: with no complete header the closest one (first of equals) decides which columns are reported missing');
+  const twice = R('_jxiParseRows(' + J([HDR, ROWS[2], HDR, ROWS[3]]) + ')');
+  xassert(twice.legs.length === 2 && twice.ignored.length === 1, 'parse: the FIRST complete header row is the header; a repeated header further down is just an ignored row');
+  const shuffled = [HDR.slice().reverse()].concat(ROWS.slice(1).map(r => r.slice().reverse()));
+  xassert(R('_jxiParseRows(' + J(shuffled) + ')').legs.length === 3, 'parse: column ORDER does not matter, only the headers');
+
+  // ── grouping ─────────────────────────────────────────────────────────────
+  const mk = (tk, ts, extra) => Object.assign({ ticker: tk, openedTs: ts, type: 'PUT', side: 'SHORT', qty: 1, strike: 50, expiry: '2026-11-20', entryPrice: 1 }, extra || {});
+  const gl = [mk('A', 1000), mk('B', 1000), mk('A', 1060), mk('A', 5000), mk('B', 1500)];
+  xassert(J(R('_jxiAssignGroups(' + J(gl) + ',"time")')) === J([1, 2, 1, 3, 4]), 'group time: same underlying within 90s joins, a later one does not');
+  xassert(J(R('_jxiAssignGroups(' + J([mk('A', 1000), mk('A', 1090)]) + ',"time")')) === J([1, 1]) && J(R('_jxiAssignGroups(' + J([mk('A', 1000), mk('A', 1091)]) + ',"time")')) === J([1, 2]),
+    'group time: the window is 90 seconds, inclusive');
+  xassert(J(R('_jxiAssignGroups(' + J(gl) + ',"ticker")')) === J([1, 2, 1, 1, 2]), 'group ticker: every leg of an underlying together');
+  xassert(J(R('_jxiAssignGroups(' + J(gl) + ',"leg")')) === J([1, 2, 3, 4, 5]), 'group leg: one trade per leg');
+  xassert(J(R('_jxiAssignGroups(' + J([mk('A', 5000), mk('A', 1000), mk('A', 1050)]) + ',"time")')) === J([1, 2, 2]), 'group time: file order does not matter, opening time does');
+
+  // ── strategy inference (every key must exist as a STRATEGY_TEMPLATES key) ──
+  const S = (legs) => R('_jxiInferStrategy(' + J(legs) + ')');
+  const L = (type, side, strike, qty, exp) => ({ type, side, strike, qty: qty || 1, expiry: exp || '2026-11-20' });
+  xassert(S([L('PUT', 'SHORT', 50)]) === 'SHORT_PUT' && S([L('PUT', 'LONG', 50)]) === 'LONG_PUT', 'infer: single puts');
+  xassert(S([L('CALL', 'SHORT', 50)]) === 'SHORT_CALL' && S([L('CALL', 'LONG', 50)]) === 'LONG_CALL', 'infer: single calls');
+  xassert(S([L('PUT', 'LONG', 45), L('PUT', 'SHORT', 50)]) === 'BULL_PUT_SPREAD', 'infer: long lower put + short higher put = bull put spread');
+  xassert(S([L('PUT', 'SHORT', 45), L('PUT', 'LONG', 50)]) === 'BEAR_PUT_SPREAD', 'infer: short lower put + long higher put = bear put spread');
+  xassert(S([L('CALL', 'LONG', 50), L('CALL', 'SHORT', 55)]) === 'BULL_CALL_SPREAD', 'infer: bull call spread');
+  xassert(S([L('CALL', 'SHORT', 50), L('CALL', 'LONG', 55)]) === 'BEAR_CALL_SPREAD', 'infer: bear call spread');
+  xassert(S([L('PUT', 'SHORT', 45), L('CALL', 'SHORT', 55)]) === 'SHORT_STRANGLE', 'infer: short strangle');
+  xassert(S([L('PUT', 'SHORT', 50), L('CALL', 'SHORT', 50)]) === 'SHORT_STRADDLE', 'infer: short straddle');
+  xassert(S([L('PUT', 'LONG', 45), L('CALL', 'LONG', 55)]) === 'LONG_STRANGLE', 'infer: long strangle');
+  xassert(S([L('PUT', 'LONG', 40), L('PUT', 'SHORT', 45), L('CALL', 'SHORT', 55), L('CALL', 'LONG', 60)]) === 'IRON_CONDOR', 'infer: iron condor');
+  xassert(S([L('PUT', 'LONG', 40), L('PUT', 'SHORT', 58), L('CALL', 'SHORT', 55), L('CALL', 'LONG', 60)]) === 'CUSTOM', 'infer: a short put ABOVE the short call is not an iron condor');
+  xassert(S([L('PUT', 'LONG', 40), L('PUT', 'SHORT', 45), L('CALL', 'SHORT', 55), L('CALL', 'SHORT', 60)]) === 'CUSTOM', 'infer: two short calls are not an iron condor');
+  xassert(S([L('PUT', 'LONG', 55), L('CALL', 'LONG', 45)]) === 'CUSTOM' && S([L('PUT', 'SHORT', 55), L('CALL', 'SHORT', 45)]) === 'CUSTOM', 'infer: a put struck above the call is neither a long nor a short strangle');
+  xassert(S([L('PUT', 'SHORT', 40), L('PUT', 'LONG', 45), L('CALL', 'SHORT', 55), L('CALL', 'LONG', 60)]) === 'CUSTOM', 'infer: puts the wrong way round is NOT an iron condor');
+  xassert(S([L('CALL', 'LONG', 40, 1, '2027-06-18'), L('CALL', 'SHORT', 55, 1, '2026-11-20')]) === 'PMCC', 'infer: long far call + short near higher call = PMCC');
+  xassert(S([L('PUT', 'LONG', 60, 1, '2027-06-18'), L('PUT', 'SHORT', 45, 1, '2026-11-20')]) === 'PMCP', 'infer: long far put + short near lower put = PMCP');
+  xassert(S([L('PUT', 'SHORT', 45, 2), L('PUT', 'LONG', 50, 1)]) === 'SHORT_PUT_RATIO_SPREAD', 'infer: 2 short lower puts / 1 long higher put');
+  xassert(S([L('PUT', 'SHORT', 685, 3), L('PUT', 'LONG', 640, 5)]) === 'CUSTOM', 'infer: 3 vs 5 is not a ratio spread → CUSTOM');
+  xassert(S([L('CALL', 'SHORT', 50, 1, '2026-11-20'), L('PUT', 'SHORT', 45, 1, '2027-02-19')]) === 'CUSTOM', 'infer: different expiries → CUSTOM');
+  xassert(S([]) === 'CUSTOM', 'infer: nothing → CUSTOM');
+  const STRAT = fs.readFileSync(path.join(__dirname, '..', 'js', 'config', 'strategy-templates.js'), 'utf8');
+  ['SHORT_PUT', 'LONG_PUT', 'SHORT_CALL', 'LONG_CALL', 'BULL_PUT_SPREAD', 'BEAR_PUT_SPREAD', 'BULL_CALL_SPREAD', 'BEAR_CALL_SPREAD', 'SHORT_STRANGLE',
+    'SHORT_STRADDLE', 'LONG_STRANGLE', 'IRON_CONDOR', 'PMCC', 'PMCP', 'SHORT_PUT_RATIO_SPREAD', 'LONG_PUT_RATIO_SPREAD', 'SHORT_CALL_RATIO_SPREAD',
+    'LONG_CALL_RATIO_SPREAD', 'CUSTOM'].forEach(k => xassert(new RegExp('\\n  ' + k + ':').test(STRAT), 'infer: ' + k + ' is a real strategy template'));
+
+  // ── what the Journal already holds ───────────────────────────────────────
+  const existing = R('_jxiExistingIndex(' + J([
+    { ticker: 'ACME', status: 'OPEN', legs: [{ type: 'PUT', side: 'SHORT', qty: 2, strike: 50, expiry: '2026-11-20', entryPrice: 1.2 }, { type: 'PUT', side: 'LONG', qty: 1, strike: 45, expiry: '2026-11-20', entryPrice: 0.4, brokerPositionId: '777' }] },
+    { ticker: 'OLD', status: 'CLOSED', legs: [{ type: 'PUT', side: 'SHORT', qty: 1, strike: 10, expiry: '2026-01-16', entryPrice: 1 }] },
+  ]) + ')');
+  const sp = R('_jxiSplitExisting(' + J([{ ticker: 'ACME', type: 'PUT', side: 'SHORT', qty: 2, strike: 50, expiry: '2026-11-20', entryPrice: 1.2, brokerPositionId: '5' },
+    { ticker: 'ACME', type: 'PUT', side: 'LONG', qty: 5, strike: 99, expiry: '2026-11-20', entryPrice: 9, brokerPositionId: '777' },
+    { ticker: 'OLD', type: 'PUT', side: 'SHORT', qty: 1, strike: 10, expiry: '2026-01-16', entryPrice: 1, brokerPositionId: '8' },
+    { ticker: 'NEW', type: 'CALL', side: 'LONG', qty: 1, strike: 10, expiry: '2026-12-18', entryPrice: 1, brokerPositionId: '9' }]) + ',' + J(existing) + ')');
+  xassert(sp.dup.length === 2 && sp.fresh.map(l => l.ticker).join() === 'OLD,NEW',
+    're-import: a leg is skipped when its broker id OR its exact open leg is already in the Journal; a CLOSED trade never blocks one');
+
+  // ── the trade handed to journalManager.add ───────────────────────────────
+  const group = [Object.assign({}, P.legs[1], { openDate: '2026-10-15' }), P.legs[0]];
+  const frozen = J(group);
+  const t = R('_jxiBuildTradePayload(' + frozen + ',"pf-7","BULL_PUT_SPREAD","Posizioni.xlsx")');
+  xassert(J(group) === frozen, 'payload: the parsed legs are not mutated');
+  xassert(t.portfolioId === 'pf-7' && t.ticker === 'ACME' && t.strategy === 'BULL_PUT_SPREAD' && t.status === 'OPEN' && t.source === 'excel_import', 'payload: portfolio, ticker, strategy, OPEN, source');
+  xassert(t.legs.every(l => l.expiration === l.expiry && l.expirationDate === l.expiry && l.expiryDate === l.expiry), 'payload: every leg carries the four expiry aliases too');
+  xassert(t.legs.map(l => l.openDate).sort().join() === '2026-10-12,2026-10-15', 'payload: every leg keeps its own opening date');
+  xassert(t.exitDate === null && t.realizedPnL === null && t.entryDate === '2026-10-12', 'payload: no exit, no P&L, entry date = earliest leg opening date');
+  xassert(t.expiry === '2026-11-20' && t.expiration === t.expiry && t.expirationDate === t.expiry && t.expiryDate === t.expiry, 'payload: the four trade-level expiry aliases, as the Add Trade form sets them');
+  xassert(t.legs.length === 2 && t.legs[0].strike === 45 && t.legs[1].strike === 50, 'payload: legs sorted by expiry, type, strike');
+  xassert(t.legs[1].streamerSymbol === '.ACME261120P50' && t.legs[0].streamerSymbol === '.ACME261120P45', 'payload: the DXLink streamer symbol is derived, so the live greeks can load');
+  xassert(t.legs[1].brokerPositionId === '1001' && t.legs[1].entryPrice === 1.2 && t.legs[1].qty === 2 && t.legs[1].side === 'SHORT', 'payload: broker id, opening price, quantity, side kept on the leg');
+  xassert(/Posizioni\.xlsx/.test(t.notes) && !('entrySnapshot' in t) && !('preTradeCheck' in t), 'payload: notes name the file; no entry snapshot is fabricated');
+
+  // ── static guards on the UI / save code ──────────────────────────────────
+  const save = extractFn(HTML, 'journalImportExcelSave');
+  xassert(save.indexOf('journalManager.add(') >= 0 && save.indexOf('_awaitJournalBackendWrite(') >= 0, 'save: goes through journalManager.add and awaits the backend outcome');
+  xassert(save.indexOf('localStorage') === -1 && save.indexOf('_buildRichSnapshot') === -1 && save.indexOf('jSaveRemote') === -1, 'save: no direct storage, no snapshot build, no direct remote call');
+  xassert(/Date\.now\(\) <= lastId/.test(save), 'save: never reuses a millisecond (journalManager.add stamps Date.now() as the id)');
+  const RAW_INDEX = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  xassert(RAW_INDEX.indexOf('onclick="journalImportExcelPick()"') > 0 && RAW_INDEX.indexOf('id="jxiFile"') > 0 && /accept="\.xlsx,\.xls,\.csv"/.test(RAW_INDEX) && RAW_INDEX.indexOf('onchange="journalImportExcelFile(this)"') > 0,
+    'the Journal header carries the IMPORT EXCEL button and its file input');
+  xassert((HTML.match(/function\s+journalImportExcelSave\s*\(/g) || []).length === 1 && (HTML.match(/journalImportExcelSave\(\)/g) || []).length === 2, 'exactly one definition, called only from the modal button');
+
+  // ── the save loop, with stand-ins for the managers ───────────────────────
+  const adds = [];
+  const dom = { jxiPortfolio: { value: 'pf-1' }, jxiProgress: { textContent: '' }, jxiGo: { disabled: false } };
+  const toasts = [];
+  const sctx = vm.createContext({ console, Date, Math, JSON, Object, Array, String, Number, parseFloat, isFinite, Promise, setTimeout,
+    document: { getElementById: (id) => dom[id] || null },
+    portfolioManager: { getAll: () => sctx.__pfs },
+    journalManager: { getAll: () => [], add: (p) => { const tr = Object.assign({ id: Date.now() }, p); adds.push(tr); return tr; }, _lastBackendWrite: null },
+    normalizeOptionLegSymbolAliases: (tk, l) => Object.assign(l, { optionSymbol: l.streamerSymbol }),
+    _awaitJournalBackendWrite: async () => ({ ok: true }), showToast: (m, k) => toasts.push([m, k]),
+    renderPortfolioJournalView() {}, isPortfolioViewActive: () => false, renderPortfolioView() {}, S: {},
+    STRATEGY_TEMPLATES: {}, escHtml: (x) => String(x) });
+  vm.runInContext(sym + '\n' + helpers + '\n' + extractFn(HTML, '_jxiGroups') + '\n' + extractFn(HTML, '_jxiClose') + '\n' + save, sctx);
+  sctx.__pfs = [{ id: 'pf-1', name: 'Alpha' }, { id: 'pf-2', name: 'Beta' }];
+  // ── regrouping in the preview ──
+  let renders = 0;
+  const mctx = vm.createContext({ console, Math, Object, Array, _jxiRender: () => { renders++; } });
+  vm.runInContext(extractFn(HTML, '_jxiGroups') + '\n' + extractFn(HTML, '_jxiMoveLeg') + '\n' + extractFn(HTML, '_jxiSetStrategy') + '\n' + extractFn(HTML, '_jxiSetInclude'), mctx);
+  const st = () => JSON.parse(vm.runInContext('JSON.stringify({ gid: _jxiState.gid, strategy: _jxiState.strategy, include: _jxiState.include })', mctx));
+  const setState = (gid) => { mctx.__legs = [{ ticker: 'A' }, { ticker: 'A' }, { ticker: 'B' }]; vm.runInContext('_jxiState = { legs: __legs, gid: ' + J(gid) + ', strategy: { 1: "CUSTOM", 2: "LONG_PUT", 3: "X" }, include: {}, busy: false };', mctx); };
+  setState([1, 2, 3]);
+  vm.runInContext('_jxiMoveLeg(1, "1")', mctx);
+  xassert(J(st().gid) === J([1, 1, 3]) && st().strategy[1] === undefined && st().strategy[2] === undefined && st().strategy[3] === 'X',
+    'regroup: a leg moves to the chosen trade number and the strategy picked for the two affected trades is dropped (others kept)');
+  setState([1, 1, 3]);
+  vm.runInContext('_jxiMoveLeg(0, "3")', mctx);   // 2 trades → number 3 = a new trade
+  xassert(J(st().gid) === J([4, 1, 3]), 'regroup: one past the last number starts a new trade');
+  setState([1, 2, 3]);
+  const r0 = renders;
+  vm.runInContext('_jxiMoveLeg(0, "9"); _jxiMoveLeg(0, "x"); _jxiMoveLeg(0, "1")', mctx);
+  xassert(J(st().gid) === J([1, 2, 3]) && renders === r0 + 3, 'regroup: an out-of-range, non-numeric or unchanged number changes nothing');
+  vm.runInContext('_jxiState.busy = true; _jxiMoveLeg(1, "1"); _jxiSetStrategy(1, "Z"); _jxiSetInclude(1, true)', mctx);
+  xassert(J(st().gid) === J([1, 2, 3]) && st().strategy[1] === 'CUSTOM' && st().include[1] === undefined, 'regroup: nothing can be edited while a save is running');
+  vm.runInContext('_jxiState.busy = false; _jxiSetStrategy(2, "SHORT_PUT"); _jxiSetInclude(3, false)', mctx);
+  xassert(st().strategy[2] === 'SHORT_PUT' && st().include[3] === false, 'regroup: a picked strategy and an unticked trade are remembered');
+  const many = [];
+  for (let i = 0; i < 6; i++) many.push({ row: i + 2, ticker: 'T' + i, type: 'PUT', side: 'SHORT', qty: 1, strike: 10 + i, expiry: '2026-11-20', entryPrice: 1, openDate: '2026-10-12', openedTs: 1000 + i * 1000, brokerPositionId: 'b' + i });
+  sctx.__many = many;
+  vm.runInContext('_jxiState = { file: "f.xlsx", legs: __many, gid: [1,2,3,4,5,6], dup: [], ignored: [], errors: [], include: { 3: false }, strategy: { 2: "CUSTOM" }, mode: "leg", busy: false };', sctx);
+  dom.jxiPortfolio.value = '';
+  vm.runInContext('journalImportExcelSave()', sctx).then(() => {
+    xassert(adds.length === 0 && /Choose a portfolio/.test(dom.jxiProgress.textContent), 'save: with two portfolios and none chosen nothing is saved');
+    dom.jxiPortfolio.value = 'pf-2';
+    return vm.runInContext('journalImportExcelSave()', sctx);
+  }).then(() => {
+    xassert(adds.length === 5 && adds.every(x => x.portfolioId === 'pf-2'), 'save: unchecked trades are skipped, the rest go to the chosen portfolio');
+    xassert(new Set(adds.map(x => x.id)).size === 5, 'save: ids are unique even when the stand-in add() answers within the same millisecond');
+    xassert(adds.find(x => x.ticker === 'T1').strategy === 'CUSTOM' && adds.find(x => x.ticker === 'T0').strategy === 'SHORT_PUT', 'save: a strategy picked in the preview wins, otherwise it is inferred');
+    xassert(adds.every(x => x.legs.every(l => l.optionSymbol && l.streamerSymbol)), 'save: leg symbol aliases are normalized before saving');
+    xassert(toasts.length === 1 && /Imported 5 trade/.test(toasts[0][0]) && toasts[0][1] === 'ok', 'save: one summary toast with the real count');
+    xassert(vm.runInContext('_jxiState', sctx) === null, 'save: the preview is closed afterwards');
+    // one portfolio only → it is used without being chosen
+    sctx.__pfs = [{ id: 'pf-9', name: 'Only' }]; dom.jxiPortfolio.value = ''; adds.length = 0;
+    vm.runInContext('_jxiState = { file: "g.xlsx", legs: __many.slice(0, 2), gid: [1, 2], dup: [], ignored: [], errors: [], include: {}, strategy: {}, mode: "leg", busy: false };', sctx);
+    return vm.runInContext('journalImportExcelSave()', sctx).then(() => {
+      xassert(adds.length === 2 && adds.every(x => x.portfolioId === 'pf-9'), 'save: with a single portfolio it is used by default');
+    });
+  }).then(() => {
+    vm.runInContext('_jxiState = { busy: true };', sctx);
+    vm.runInContext('_jxiClose()', sctx);
+    xassert(vm.runInContext('_jxiState', sctx) !== null, 'close: the preview cannot be closed while a save is running');
+    vm.runInContext('_jxiState = { busy: false }; _jxiClose();', sctx);
+    xassert(vm.runInContext('_jxiState', sctx) === null, 'close: and it closes when idle');
+    console.log('\n' + (xFailed === 0 ? 'EXCEL IMPORT ALL PASSED' : 'EXCEL IMPORT ' + xFailed + ' FAILED') + ' (' + xPassed + ' assertions)');
+    if (xFailed > 0) process.exitCode = 1;
+  }).catch(e => { console.error(e); process.exitCode = 1; });
+})();
+
 setTimeout(function() {
   console.log('\n' + (failed === 0 ? 'ALL PASSED' : failed + ' FAILED') + ' (' + passed + ' assertions)');
   if (failed > 0) process.exit(1);

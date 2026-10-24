@@ -1039,6 +1039,8 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
       <div style="display:flex;gap:8px;align-items:center">
         <button onclick="showJournalExportModal()" style="font-size:10px;background:rgba(52,211,153,.15);color:#34d399;border:1px solid rgba(52,211,153,.35);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">&#11015; EXPORT</button>
         <button onclick="showBackupPanel()" style="font-size:10px;background:rgba(251,191,36,.12);color:var(--am);border:1px solid rgba(251,191,36,.3);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">&#128190; BACKUP</button>
+        <input type="file" id="jxiFile" accept=".xlsx,.xls,.csv" style="display:none" onchange="journalImportExcelFile(this)">
+        <button onclick="journalImportExcelPick()" title="Import open option positions from a broker Excel export" style="font-size:10px;background:rgba(96,165,250,.12);color:#60a5fa;border:1px solid rgba(96,165,250,.35);border-radius:6px;padding:6px 14px;font-family:var(--M);font-weight:600;cursor:pointer">&#11014; IMPORT EXCEL</button>
         <button class="runbtn" onclick="showAddTradeForm()" style="font-size:10px">+ ADD TRADE</button>
       </div>
     </div>
@@ -23817,6 +23819,516 @@ function _journalOutcomeToast(outcome, okMsg, failMsg, localMsg) {
       showToast(localMsg != null ? localMsg : okMsg, 'ok');
     }
   } catch (e) {}
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// JOURNAL — IMPORT OPEN OPTION POSITIONS FROM A BROKER EXCEL EXPORT
+//
+// Quick, error-free recovery path: pick the positions export (.xlsx / .xls / .csv)
+// and the open option legs become Journal trades through the SAME journalManager.add
+// path the Add Trade form uses. Nothing here changes how trades are stored, priced or
+// refreshed: the backend write-through, the Portfolio binding and the DXLink streamer
+// symbols are the ones an Add Trade produces, and the greeks come from the usual live refresh.
+//
+// WHAT IS READ from each row (columns are found by their HEADER, in any order):
+//   Ticker (e.g. ADBE/15F27C305:xcbf) → underlying + expiry + call/put + strike,
+//   Long/Short + Quantità → side + quantity, Scadenza → expiry,
+//   Prezzo di apertura → entry price, Data/ora apertura → entry date,
+//   Id posizione → broker position id (makes a re-import skip what is already there).
+// Rows that are not open options (bonds, ETFs, closed legs) are listed as ignored and
+// never imported; the underlying group header rows are skipped silently. A row whose own
+// columns disagree with its ticker is an error row and is not imported either.
+// The file's grouping is by underlying only, so legs are proposed as trades by opening
+// time and every leg's group number is editable in the preview before anything is saved.
+//
+// JXI-BEGIN (pure helpers, exercised by tests/journal-import-json.test.js)
+var _JXI_MONTHS = { gen:1, jan:1, feb:2, mar:3, apr:4, mag:5, may:5, giu:6, jun:6, lug:7, jul:7,
+  ago:8, aug:8, set:9, sep:9, ott:10, oct:10, nov:11, dic:12, dec:12 };
+var _JXI_CODE_MONTH = { F:1, G:2, H:3, J:4, K:5, M:6, N:7, Q:8, U:9, V:10, X:11, Z:12 };
+var _JXI_COLUMNS = {
+  instrument: ['strumenti', 'strumento', 'instrument'],
+  side:       ['long short', 'long/short'],
+  type:       ['call put'],
+  qty:        ['quantita', 'quantity', 'qty'],
+  expiry:     ['scadenza', 'expiry', 'expiration', 'expiration date'],
+  opened:     ['data ora apertura', 'open date', 'opening date'],
+  price:      ['prezzo di apertura', 'open price', 'opening price'],
+  ticker:     ['ticker'],
+  status:     ['stato', 'status'],
+  strike:     ['prezzo di esercizio', 'strike', 'strike price'],
+  kind:       ['tipo attivita', 'asset type'],
+  id:         ['id posizione', 'position id'],
+};
+var _JXI_REQUIRED = ['side', 'qty', 'opened', 'price', 'ticker'];
+var _JXI_GROUP_WINDOW_SEC = 90;
+
+function _jxiNorm(h) {
+  return String(h == null ? '' : h).normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+// "10.3", 10.3, "305,00", "1.080,00" → number; anything else → null.
+function _jxiNum(v) {
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  var s = String(v == null ? '' : v).replace(/[\s A-Za-z$€£]/g, '');
+  if (!s || !/\d/.test(s)) return null;
+  var comma = s.lastIndexOf(','), dot = s.lastIndexOf('.');
+  if (comma > -1 && dot > -1) {
+    s = comma > dot ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+  } else if (comma > -1) {
+    s = s.replace(',', '.');
+  }
+  var n = parseFloat(s);
+  return isFinite(n) ? n : null;
+}
+
+function _jxiIso(y, m, d) {
+  if (!(y >= 1900 && y <= 2200 && m >= 1 && m <= 12 && d >= 1 && d <= 31)) return null;
+  var t = new Date(Date.UTC(y, m - 1, d));
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== m - 1 || t.getUTCDate() !== d) return null;
+  return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+
+// "22-ott-2026 17:02:39", "2026-10-22", "22/10/2026", Excel serial → { date:'YYYY-MM-DD', ts }
+function _jxiDateTime(v) {
+  var y, m, d, hh = 0, mi = 0, ss = 0, s, mt;
+  if (typeof v === 'number' && isFinite(v) && v > 20000 && v < 80000) {
+    var base = Date.UTC(1899, 11, 30) + Math.round(v * 86400000);
+    var dt = new Date(base);
+    y = dt.getUTCFullYear(); m = dt.getUTCMonth() + 1; d = dt.getUTCDate();
+    hh = dt.getUTCHours(); mi = dt.getUTCMinutes(); ss = dt.getUTCSeconds();
+  } else {
+    s = String(v == null ? '' : v).trim();
+    if ((mt = s.match(/^(\d{1,2})[-\/. ]([A-Za-zÀ-ÿ]{3,})\.?[-\/. ](\d{4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/))) {
+      d = +mt[1]; y = +mt[3];
+      m = _JXI_MONTHS[_jxiNorm(mt[2]).slice(0, 3)];
+      hh = +(mt[4] || 0); mi = +(mt[5] || 0); ss = +(mt[6] || 0);
+    } else if ((mt = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/))) {
+      y = +mt[1]; m = +mt[2]; d = +mt[3]; hh = +(mt[4] || 0); mi = +(mt[5] || 0); ss = +(mt[6] || 0);
+    } else if ((mt = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/))) {
+      d = +mt[1]; m = +mt[2]; y = +mt[3]; hh = +(mt[4] || 0); mi = +(mt[5] || 0); ss = +(mt[6] || 0);
+    } else {
+      return null;
+    }
+  }
+  var iso = _jxiIso(y, m, d);
+  if (!iso) return null;
+  return { date: iso, ts: Date.UTC(y, m - 1, d, hh, mi, ss) / 1000 };
+}
+
+// "ADBE/15F27C305:xcbf" → { root, expiry, type, strike } (month code F=Jan … Z=Dec)
+function _jxiParseOptionTicker(raw) {
+  var mt = String(raw == null ? '' : raw).trim().match(/^([A-Za-z0-9.\-]+)\/(\d{1,2})([A-Za-z])(\d{2})([CPcp])([0-9]+(?:\.[0-9]+)?)(?::.*)?$/);
+  if (!mt) return null;
+  var month = _JXI_CODE_MONTH[mt[3].toUpperCase()];
+  if (!month) return null;
+  var expiry = _jxiIso(2000 + (+mt[4]), month, +mt[2]);
+  var strike = parseFloat(mt[6]);
+  if (!expiry || !(strike > 0)) return null;
+  return { root: mt[1].toUpperCase(), expiry: expiry, type: mt[5].toUpperCase() === 'C' ? 'CALL' : 'PUT', strike: strike };
+}
+
+// Header row → { key: columnIndex }, plus the required keys that are missing.
+function _jxiMapColumns(headerRow) {
+  var idx = {};
+  (headerRow || []).forEach(function(h, i) {
+    var n = _jxiNorm(h);
+    Object.keys(_JXI_COLUMNS).forEach(function(k) {
+      if (idx[k] === undefined && _JXI_COLUMNS[k].indexOf(n) >= 0) idx[k] = i;
+    });
+  });
+  return { idx: idx, missing: _JXI_REQUIRED.filter(function(k) { return idx[k] === undefined; }) };
+}
+
+// Array-of-arrays (first sheet) → { legs, ignored, errors, missing }.
+function _jxiParseRows(aoa) {
+  var out = { legs: [], ignored: [], errors: [], missing: [] };
+  var rows = Array.isArray(aoa) ? aoa : [];
+  var headerAt = -1, cols = null, best = null;
+  for (var h = 0; h < Math.min(rows.length, 15); h++) {
+    var c = _jxiMapColumns(rows[h]);
+    if (!c.missing.length) { best = c; headerAt = h; break; }   // the first complete header row wins
+    if (!best || c.missing.length < best.missing.length) { best = c; headerAt = h; }
+  }
+  cols = best || { idx: {}, missing: _JXI_REQUIRED.slice() };
+  if (headerAt < 0 || cols.missing.length) { out.missing = cols.missing; return out; }
+  var ix = cols.idx;
+  var seenIds = {};
+  for (var r = headerAt + 1; r < rows.length; r++) {
+    var row = rows[r] || [];
+    var cell = function(k) { return ix[k] === undefined ? null : row[ix[k]]; };
+    var tickerRaw = cell('ticker'), sideRaw = cell('side');
+    var label = String(cell('instrument') == null ? '' : cell('instrument')).trim();
+    var rowNo = r + 1;
+    var blank = !row.some(function(v) { return v !== null && v !== undefined && String(v).trim() !== ''; });
+    if (blank) continue;
+    // Underlying group header rows ("Adobe Inc. (2)") carry no ticker and no side.
+    if ((tickerRaw == null || String(tickerRaw).trim() === '') && (sideRaw == null || String(sideRaw).trim() === '')) continue;
+    var parsed = _jxiParseOptionTicker(tickerRaw);
+    var kind = cell('kind') == null ? '' : String(cell('kind')).trim();
+    if (!parsed || (kind && !/opzion|option/i.test(kind))) {
+      out.ignored.push({ row: rowNo, label: label || String(tickerRaw || ''), reason: 'not an option' + (kind ? ' (' + kind + ')' : '') });
+      continue;
+    }
+    var status = cell('status') == null ? '' : String(cell('status')).trim();
+    if (status && !/^(apert|open)/i.test(status)) {
+      out.ignored.push({ row: rowNo, label: label, reason: 'not open (status: ' + status + ')' });
+      continue;
+    }
+    var problems = [];
+    var qtyRaw = _jxiNum(cell('qty'));
+    var sideTxt = _jxiNorm(sideRaw);
+    var side = sideTxt === 'long' ? 'LONG' : (sideTxt === 'short' ? 'SHORT' : null);
+    if (!side) problems.push('Long/Short is "' + sideRaw + '"');
+    if (qtyRaw === null || qtyRaw === 0) problems.push('quantity is "' + cell('qty') + '"');
+    if (side && qtyRaw !== null && qtyRaw !== 0 && ((qtyRaw < 0) !== (side === 'SHORT'))) problems.push('quantity sign disagrees with ' + side);
+    var typeCol = cell('type') == null ? '' : _jxiNorm(cell('type'));
+    if (typeCol && typeCol !== parsed.type.toLowerCase()) problems.push('Call/Put "' + cell('type') + '" disagrees with the ticker');
+    var strikeCol = _jxiNum(cell('strike'));
+    if (strikeCol !== null && Math.abs(strikeCol - parsed.strike) > 0.0005) problems.push('strike ' + strikeCol + ' disagrees with the ticker (' + parsed.strike + ')');
+    if (ix.expiry !== undefined && cell('expiry') != null && String(cell('expiry')).trim() !== '') {
+      var exp = _jxiDateTime(cell('expiry'));
+      if (!exp) problems.push('expiry "' + cell('expiry') + '" is not a date');
+      else if (exp.date !== parsed.expiry) problems.push('expiry ' + exp.date + ' disagrees with the ticker (' + parsed.expiry + ')');
+    }
+    var price = _jxiNum(cell('price'));
+    if (price === null || price < 0) problems.push('opening price is "' + cell('price') + '"');
+    var opened = _jxiDateTime(cell('opened'));
+    if (!opened) problems.push('opening date is "' + cell('opened') + '"');
+    var brokerId = cell('id') == null || String(cell('id')).trim() === '' ? null : String(cell('id')).trim();
+    if (brokerId && seenIds[brokerId]) problems.push('position id ' + brokerId + ' appears twice in the file');
+    if (problems.length) { out.errors.push({ row: rowNo, label: label || String(tickerRaw), problems: problems }); continue; }
+    if (brokerId) seenIds[brokerId] = true;
+    out.legs.push({
+      row: rowNo, label: label, ticker: parsed.root, type: parsed.type, side: side, qty: Math.abs(qtyRaw),
+      strike: parsed.strike, expiry: parsed.expiry, entryPrice: price, openDate: opened.date, openedTs: opened.ts,
+      brokerPositionId: brokerId,
+    });
+  }
+  return out;
+}
+
+// One identity per leg, used to skip what the Journal already holds.
+function _jxiLegSignature(ticker, leg) {
+  return [String(ticker).toUpperCase(), leg.type, +leg.strike, leg.expiry, leg.side, +leg.qty,
+    (Math.round(+leg.entryPrice * 10000) / 10000)].join('|');
+}
+
+// Legs already in the Journal → { ids:{brokerId:true}, sigs:{signature:true} } (OPEN/PARTIAL trades only for signatures).
+function _jxiExistingIndex(trades) {
+  var ids = {}, sigs = {};
+  (trades || []).forEach(function(t) {
+    var open = t && (t.status === 'OPEN' || t.status === 'PARTIAL');
+    ((t && t.legs) || []).forEach(function(l) {
+      if (l && l.brokerPositionId) ids[String(l.brokerPositionId)] = true;
+      if (open && l && (l.type === 'CALL' || l.type === 'PUT')) {
+        sigs[_jxiLegSignature(t.ticker, { type: l.type, strike: l.strike, expiry: l.expiry || l.expiration, side: l.side,
+          qty: l.qty, entryPrice: l.entryPrice })] = true;
+      }
+    });
+  });
+  return { ids: ids, sigs: sigs };
+}
+
+// Splits parsed legs into [fresh, alreadyThere].
+function _jxiSplitExisting(legs, existing) {
+  var fresh = [], dup = [];
+  legs.forEach(function(l) {
+    var hit = (l.brokerPositionId && existing.ids[l.brokerPositionId]) || existing.sigs[_jxiLegSignature(l.ticker, l)];
+    (hit ? dup : fresh).push(l);
+  });
+  return { fresh: fresh, dup: dup };
+}
+
+// Proposed trade number per leg (1-based, by first appearance).
+//   'time'   → same underlying, opened within _JXI_GROUP_WINDOW_SEC of the previous leg (by opening time)
+//   'ticker' → every leg of an underlying together
+//   'leg'    → one trade per leg
+function _jxiAssignGroups(legs, mode) {
+  var order = legs.map(function(l, i) { return i; }).sort(function(a, b) {
+    return legs[a].ticker < legs[b].ticker ? -1 : legs[a].ticker > legs[b].ticker ? 1
+      : (legs[a].openedTs - legs[b].openedTs) || (a - b);
+  });
+  var raw = new Array(legs.length), next = 0, last = {};
+  order.forEach(function(i) {
+    var l = legs[i], prev = last[l.ticker];
+    var join = mode === 'ticker' ? !!prev
+      : mode === 'leg' ? false
+      : !!prev && (l.openedTs - prev.ts) <= _JXI_GROUP_WINDOW_SEC;
+    var g = join ? prev.g : ++next;
+    raw[i] = g;
+    last[l.ticker] = { g: g, ts: l.openedTs };
+  });
+  // Number the trades by first appearance in the file, so the preview reads top to bottom.
+  var renum = {}, n = 0;
+  return raw.map(function(g) { if (!renum[g]) renum[g] = ++n; return renum[g]; });
+}
+
+// Strategy key (a STRATEGY_TEMPLATES key) for a set of option legs; 'CUSTOM' when unsure.
+function _jxiInferStrategy(legs) {
+  var n = legs.length;
+  if (!n) return 'CUSTOM';
+  var o = legs.slice().sort(function(a, b) { return a.strike - b.strike; });
+  var sameExp = o.every(function(l) { return l.expiry === o[0].expiry; });
+  var sameQty = o.every(function(l) { return l.qty === o[0].qty; });
+  if (n === 1) return (o[0].side === 'SHORT' ? 'SHORT_' : 'LONG_') + o[0].type;
+  if (n === 2) {
+    var a = o[0], b = o[1];
+    if (a.type === b.type) {
+      if (!sameExp) {
+        var lg = a.side === 'LONG' ? a : b, sh = a.side === 'LONG' ? b : a;
+        if (a.side === b.side || lg.expiry <= sh.expiry) return 'CUSTOM';
+        if (a.type === 'CALL' && lg.strike < sh.strike) return 'PMCC';
+        if (a.type === 'PUT' && lg.strike > sh.strike) return 'PMCP';
+        return 'CUSTOM';
+      }
+      if (a.strike === b.strike || a.side === b.side) return 'CUSTOM';
+      if (sameQty) {
+        if (a.type === 'CALL') return a.side === 'LONG' ? 'BULL_CALL_SPREAD' : 'BEAR_CALL_SPREAD';
+        return a.side === 'LONG' ? 'BULL_PUT_SPREAD' : 'BEAR_PUT_SPREAD';
+      }
+      var big = a.qty > b.qty ? a : b, small = big === a ? b : a;
+      if (big.qty !== 2 * small.qty) return 'CUSTOM';
+      if (a.type === 'CALL') {
+        if (small === a && a.side === 'LONG') return 'SHORT_CALL_RATIO_SPREAD';
+        if (small === a && a.side === 'SHORT') return 'LONG_CALL_RATIO_SPREAD';
+        return 'CUSTOM';
+      }
+      if (big === a && a.side === 'SHORT') return 'SHORT_PUT_RATIO_SPREAD';
+      if (big === a && a.side === 'LONG') return 'LONG_PUT_RATIO_SPREAD';
+      return 'CUSTOM';
+    }
+    if (!sameExp || !sameQty || a.side !== b.side) return 'CUSTOM';
+    var call = a.type === 'CALL' ? a : b, put = a.type === 'PUT' ? a : b;
+    if (a.side === 'SHORT') return call.strike === put.strike ? 'SHORT_STRADDLE' : (call.strike > put.strike ? 'SHORT_STRANGLE' : 'CUSTOM');
+    return call.strike > put.strike ? 'LONG_STRANGLE' : 'CUSTOM';
+  }
+  if (n === 4 && sameExp && sameQty) {
+    var calls = o.filter(function(l) { return l.type === 'CALL'; }), puts = o.filter(function(l) { return l.type === 'PUT'; });
+    if (calls.length === 2 && puts.length === 2 && puts[0].side === 'LONG' && puts[1].side === 'SHORT' &&
+        calls[0].side === 'SHORT' && calls[1].side === 'LONG' && puts[1].strike < calls[0].strike) return 'IRON_CONDOR';
+  }
+  return 'CUSTOM';
+}
+
+// The trade handed to journalManager.add — the same shape submitTrade builds for a new OPEN trade.
+function _jxiBuildTradePayload(group, portfolioId, strategy, fileName) {
+  var ticker = group[0].ticker;
+  var sorted = group.slice().sort(function(a, b) {
+    return (a.expiry < b.expiry ? -1 : a.expiry > b.expiry ? 1 : 0) || (a.type < b.type ? -1 : a.type > b.type ? 1 : 0) || (a.strike - b.strike);
+  });
+  var legs = sorted.map(function(l) {
+    var leg = { legLabel: '', type: l.type, side: l.side, qty: l.qty, strike: l.strike, expiry: l.expiry,
+      expiration: l.expiry, expirationDate: l.expiry, expiryDate: l.expiry, entryPrice: l.entryPrice,
+      openDate: l.openDate, streamerSymbol: null, brokerPositionId: l.brokerPositionId || null };
+    var sym = typeof buildCompactOptionDxlinkSymbol === 'function' ? buildCompactOptionDxlinkSymbol(ticker, leg) : null;
+    if (sym) leg.streamerSymbol = sym;
+    return leg;
+  });
+  var entryDate = sorted.map(function(l) { return l.openDate; }).sort()[0];
+  var expiry = legs[0].expiry;
+  return { portfolioId: portfolioId, ticker: ticker, strategy: strategy,
+    expiry: expiry, expiration: expiry, expirationDate: expiry, expiryDate: expiry,
+    legs: legs, entryDate: entryDate, exitDate: null, realizedPnL: null,
+    notes: 'Imported from Excel' + (fileName ? ' (' + fileName + ')' : ''), status: 'OPEN', source: 'excel_import' };
+}
+// JXI-END
+
+// ── UI state ─────────────────────────────────────────────────────────────
+var _jxiState = null;   // { file, legs[], gid[], dup[], ignored[], errors[], include{}, strategy{}, mode }
+
+function _jxiGroups() {
+  var s = _jxiState, map = {}, order = [];
+  s.legs.forEach(function(l, i) {
+    var g = s.gid[i];
+    if (!map[g]) { map[g] = []; order.push(g); }
+    map[g].push(l);
+  });
+  return order.map(function(g) { return { gid: g, legs: map[g] }; });
+}
+
+function journalImportExcelPick() {
+  var el = document.getElementById('jxiFile');
+  if (el) el.click();
+}
+
+function journalImportExcelFile(input) {
+  var f = input && input.files && input.files[0];
+  if (input) input.value = '';
+  if (!f) return;
+  var reader = new FileReader();
+  reader.onerror = function() { showToast('Could not read ' + f.name, 'warn'); };
+  reader.onload = function() {
+    _loadSheetJS(function(XLSX) {
+      try {
+        var wb = XLSX.read(reader.result, { type: 'array' });
+        var parsed = null;
+        for (var i = 0; i < wb.SheetNames.length; i++) {
+          var aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[i]], { header: 1, raw: true, defval: null, blankrows: false });
+          parsed = _jxiParseRows(aoa);
+          if (!parsed.missing.length) break;
+        }
+        _jxiOpen(f.name, parsed);
+      } catch (e) {
+        showToast('Excel file not readable: ' + (e && e.message || e), 'warn');
+      }
+    }, function() {
+      showToast('The Excel reader (SheetJS) could not be loaded — check the connection and retry.', 'warn');
+    });
+  };
+  reader.readAsArrayBuffer(f);
+}
+
+function _jxiOpen(fileName, parsed) {
+  if (parsed.missing.length) {
+    showToast('Positions file: column(s) not found — ' + parsed.missing.join(', '), 'warn');
+    return;
+  }
+  var split = _jxiSplitExisting(parsed.legs, _jxiExistingIndex(journalManager.getAll()));
+  _jxiState = { file: fileName, legs: split.fresh, dup: split.dup, ignored: parsed.ignored, errors: parsed.errors,
+    gid: _jxiAssignGroups(split.fresh, 'time'), include: {}, strategy: {}, mode: 'time', busy: false };
+  _jxiRender();
+}
+
+function _jxiClose() {
+  if (_jxiState && _jxiState.busy) return;   // never walk away from a save in progress
+  var m = document.getElementById('jxiModal');
+  if (m) m.remove();
+  _jxiState = null;
+}
+
+function _jxiSetMode(mode) {
+  var s = _jxiState;
+  if (!s || s.busy) return;
+  s.mode = mode; s.gid = _jxiAssignGroups(s.legs, mode); s.include = {}; s.strategy = {};
+  _jxiRender();
+}
+
+// Move one leg to another trade number (1..M, or M+1 for a new trade).
+function _jxiMoveLeg(i, value) {
+  var s = _jxiState;
+  if (!s || s.busy) return;
+  var groups = _jxiGroups(), n = parseInt(value, 10);
+  if (!(n >= 1 && n <= groups.length + 1)) { _jxiRender(); return; }
+  var from = s.gid[i], target = n <= groups.length ? groups[n - 1].gid : Math.max.apply(null, s.gid) + 1;
+  if (target === from) { _jxiRender(); return; }
+  s.gid[i] = target;
+  delete s.strategy[from]; delete s.strategy[target];
+  _jxiRender();
+}
+
+function _jxiSetStrategy(gid, key) { if (_jxiState && !_jxiState.busy) { _jxiState.strategy[gid] = key; } }
+function _jxiSetInclude(gid, on) { if (_jxiState && !_jxiState.busy) { _jxiState.include[gid] = !!on; _jxiRender(); } }
+
+function _jxiRender() {
+  var s = _jxiState;
+  if (!s) return;
+  var old = document.getElementById('jxiModal');
+  var keepScroll = old ? (old.querySelector('.modal-box') || {}).scrollTop : 0;
+  var chosen = (document.getElementById('jxiPortfolio') || {}).value;
+  if (old) old.remove();
+  var groups = _jxiGroups();
+  var portfolios = portfolioManager.getAll();
+  var pfSel = '<select id="jxiPortfolio" style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:5px;padding:5px 7px;font-size:10px;font-family:var(--M)">' +
+    (portfolios.length === 1 ? '' : '<option value="">— choose a portfolio —</option>') +
+    portfolios.map(function(p) {
+      return '<option value="' + escHtml(String(p.id)) + '"' + (String(p.id) === chosen ? ' selected' : '') + '>' + escHtml(p.name) + '</option>';
+    }).join('') + '</select>';
+  var modeSel = '<select onchange="_jxiSetMode(this.value)" style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:5px;padding:5px 7px;font-size:10px;font-family:var(--M)">' +
+    [['time', 'Group legs opened together'], ['ticker', 'One trade per underlying'], ['leg', 'One trade per leg']].map(function(o) {
+      return '<option value="' + o[0] + '"' + (s.mode === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+    }).join('') + '</select>';
+  var th = 'style="text-align:left;font-size:8px;color:var(--tx3);font-weight:600;padding:3px 6px"';
+  var td = 'style="font-family:var(--M);font-size:10px;padding:3px 6px;white-space:nowrap"';
+  var body = '';
+  groups.forEach(function(grp, gi) {
+    var strat = s.strategy[grp.gid] || _jxiInferStrategy(grp.legs);
+    var on = s.include[grp.gid] !== false;
+    var opts = Object.keys(STRATEGY_TEMPLATES).filter(function(k) { return k !== 'LONG' && k !== 'SHORT'; }).map(function(k) {
+      return '<option value="' + k + '"' + (k === strat ? ' selected' : '') + '>' + escHtml(STRATEGY_TEMPLATES[k].label) + '</option>';
+    }).join('');
+    body += '<tr style="background:var(--bg3)"><td ' + td + '><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="_jxiSetInclude(' + grp.gid + ',this.checked)"></td>' +
+      '<td ' + td + ' colspan="3"><strong>Trade ' + (gi + 1) + '</strong> · ' + escHtml(grp.legs[0].ticker) + ' · ' + grp.legs.length + ' leg' + (grp.legs.length > 1 ? 's' : '') + '</td>' +
+      '<td ' + td + ' colspan="4"><select onchange="_jxiSetStrategy(' + grp.gid + ',this.value)" style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:5px;padding:3px 6px;font-size:9px;font-family:var(--M)">' + opts + '</select></td></tr>';
+    grp.legs.forEach(function(l) {
+      var i = s.legs.indexOf(l);
+      body += '<tr style="opacity:' + (on ? 1 : 0.45) + '"><td ' + td + '></td><td ' + td + '>' + l.side + ' ' + l.qty + '×</td><td ' + td + '>' + l.type + ' ' + l.strike + '</td>' +
+        '<td ' + td + '>' + escHtml(l.expiry) + '</td><td ' + td + '>@ ' + l.entryPrice + '</td><td ' + td + '>' + escHtml(l.openDate) + '</td>' +
+        '<td ' + td + '><input type="number" min="1" max="' + (groups.length + 1) + '" value="' + (gi + 1) + '" onchange="_jxiMoveLeg(' + i + ',this.value)" title="Move this leg to another trade number" style="width:46px;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:4px;font-size:10px;font-family:var(--M)"></td></tr>';
+    });
+  });
+  var chosenCount = groups.filter(function(g) { return s.include[g.gid] !== false; }).length;
+  var notes = '';
+  if (s.dup.length) notes += '<div style="font-size:9px;color:var(--tx3);margin-top:6px">' + s.dup.length + ' leg(s) are already in the Journal and are skipped.</div>';
+  if (s.ignored.length) {
+    notes += '<details style="margin-top:6px;font-size:9px;color:var(--tx3)"><summary>' + s.ignored.length + ' row(s) ignored</summary>' +
+      s.ignored.map(function(r) { return '<div>row ' + r.row + ' — ' + escHtml(r.label) + ': ' + escHtml(r.reason) + '</div>'; }).join('') + '</details>';
+  }
+  if (s.errors.length) {
+    notes += '<div style="margin-top:8px;font-size:9px;color:var(--rd)"><strong>' + s.errors.length + ' row(s) have errors and are NOT imported:</strong>' +
+      s.errors.map(function(r) { return '<div>row ' + r.row + ' — ' + escHtml(r.label) + ': ' + escHtml(r.problems.join('; ')) + '</div>'; }).join('') + '</div>';
+  }
+  var empty = !s.legs.length
+    ? '<div style="padding:18px;text-align:center;font-size:11px;color:var(--tx2)">Nothing new to import from this file.</div>' : '';
+  var html = '<div id="jxiModal" class="modal-overlay" style="z-index:300">' +
+    '<div class="modal-box" style="width:min(96vw,860px);max-height:90vh;overflow:auto">' +
+      '<div class="modal-title" style="font-family:var(--M);margin-bottom:4px">Import positions from Excel</div>' +
+      '<div class="modal-sub">' + escHtml(s.file) + ' — ' + s.legs.length + ' new option leg(s) → ' + groups.length + ' proposed trade(s). Greeks then come from the usual live refresh (DXLink).</div>' +
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:10px 0">' +
+        '<label style="font-size:9px;color:var(--tx3);font-family:var(--M)">PORTFOLIO&nbsp;' + pfSel + '</label>' +
+        '<label style="font-size:9px;color:var(--tx3);font-family:var(--M)">GROUPING&nbsp;' + modeSel + '</label></div>' +
+      (s.legs.length ? '<table style="width:100%;border-collapse:collapse"><thead><tr><th ' + th + '></th><th ' + th + '>LEG</th><th ' + th + '>OPTION</th><th ' + th + '>EXPIRY</th><th ' + th + '>OPEN PRICE</th><th ' + th + '>OPENED</th><th ' + th + '>TRADE #</th></tr></thead><tbody>' + body + '</tbody></table>' : empty) +
+      notes +
+      '<div id="jxiProgress" style="font-size:10px;font-family:var(--M);color:var(--tx2);margin-top:10px"></div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;position:sticky;bottom:0;padding:8px 0;background:var(--bg2)">' +
+        '<button onclick="_jxiClose()" style="background:transparent;color:var(--tx2);border:1px solid var(--b0);border-radius:6px;padding:6px 14px;font-family:var(--M);font-size:9px;cursor:pointer">Cancel</button>' +
+        '<button id="jxiGo" onclick="journalImportExcelSave()" ' + (chosenCount ? '' : 'disabled ') + 'style="background:var(--gr);color:#fff;border:none;border-radius:6px;padding:6px 16px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">Import ' + chosenCount + ' trade(s)</button>' +
+      '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+  var box = document.querySelector('#jxiModal .modal-box');
+  if (box && keepScroll) box.scrollTop = keepScroll;
+}
+
+async function journalImportExcelSave() {
+  var s = _jxiState;
+  if (!s || s.busy) return;
+  var pfVal = (document.getElementById('jxiPortfolio') || {}).value || '';
+  var progress = document.getElementById('jxiProgress');
+  var say = function(t) { if (progress) progress.textContent = t; };
+  var pf = portfolioManager.getAll().filter(function(p) { return String(p.id) === pfVal || (!pfVal && portfolioManager.getAll().length === 1); })[0];
+  if (!pf) { say('Choose a portfolio first.'); return; }
+  var todo = _jxiGroups().filter(function(g) { return s.include[g.gid] !== false; });
+  if (!todo.length) { say('Nothing selected.'); return; }
+  s.busy = true;
+  var go = document.getElementById('jxiGo');
+  if (go) go.disabled = true;
+  var saved = 0, backendOk = 0, localOnly = 0, failed = [], lastId = 0;
+  for (var k = 0; k < todo.length; k++) {
+    var grp = todo[k];
+    var strategy = s.strategy[grp.gid] || _jxiInferStrategy(grp.legs);
+    say('Saving ' + (k + 1) + ' / ' + todo.length + ' — ' + grp.legs[0].ticker + '…');
+    try {
+      var payload = _jxiBuildTradePayload(grp.legs, pf.id, strategy, s.file);
+      payload.legs = payload.legs.map(function(l) { return normalizeOptionLegSymbolAliases(payload.ticker, l); });
+      // journalManager.add stamps Date.now() as the id: never reuse a millisecond.
+      while (Date.now() <= lastId) await new Promise(function(r) { setTimeout(r, 1); });
+      var trade = journalManager.add(payload);
+      lastId = trade.id;
+      saved++;
+      var outcome = await _awaitJournalBackendWrite(journalManager._lastBackendWrite);
+      if (outcome && outcome.ok) backendOk++; else localOnly++;
+    } catch (e) {
+      failed.push(grp.legs[0].ticker + ': ' + (e && e.message || e));
+    }
+  }
+  s.busy = false;
+  _jxiClose();
+  try { renderPortfolioJournalView(); } catch (e) {}
+  if (isPortfolioViewActive()) renderPortfolioView(); else S.portfolioDirty = true;
+  var msg = 'Imported ' + saved + ' trade(s) into ' + pf.name + (backendOk ? ' — ' + backendOk + ' confirmed by the backend' : '') +
+    (localOnly ? ' — ' + localOnly + ' saved locally only (backend not confirmed)' : '') + (failed.length ? ' — FAILED: ' + failed.join('; ') : '');
+  showToast(msg, failed.length || localOnly ? 'warn' : 'ok');
+  console.log('[JOURNAL EXCEL IMPORT]', JSON.stringify({ file: s.file, portfolio: pf.id, saved: saved, backendOk: backendOk, localOnly: localOnly, failed: failed }));
 }
 
 async function submitTrade() {
