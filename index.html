@@ -15807,8 +15807,96 @@ async function _pfDrawChart(posId, ticker) {
     if (_pfOk4h) console.log('[PORTFOLIO CHART] 4H pipeline matched parity-authoritative backend pipeline symbol=' + ticker);
   }
 
+  _pfLogChartPrice(posId, ticker);
   _pfDrawTf(posId, ticker, '1D');
   _pfDrawTf(posId, ticker, '4H');
+}
+
+// One line per chart open: the price both timeframes end on, how it was resolved, the trading
+// session of each series' final bar, which series the session guard let through — and the
+// position's own price, which is reported but never written into a bar (see _pfAlignedCandles).
+function _pfLogChartPrice(posId, ticker) {
+  try {
+    var d, h;
+    if (ffBackendCandlesPortfolioCharts()) {
+      var c = (_pfBackendCandleCache && _pfBackendCandleCache.symbol === ticker) ? _pfBackendCandleCache : null;
+      d = c && c.candles1d; h = c && c.candles4h;
+    } else { d = getDailyCandles(ticker); h = getFourHourCandles(ticker); }
+    if (!d || !h) return;
+    var pr = _pfResolveChartPrice(ticker, d, h, Date.now());
+    var row = (typeof positionManager !== 'undefined' && typeof _portfolioRowUnderlyingPrice === 'function')
+      ? _portfolioRowUnderlyingPrice(positionManager.getById(posId)) : null;
+    var lastOf = function(arr, is1d) { var l = arr.length ? arr[arr.length - 1] : null; return l ? { session: _pfBarSession(l, is1d), close: parseFloat(l.close != null ? l.close : l.c) } : null; };
+    console.log('[PORTFOLIO CHART] price symbol=' + ticker, JSON.stringify({
+      price: pr.price, source: pr.source, session: pr.sessionDate, d1: lastOf(d, true), h4: lastOf(h, false),
+      positionPrice: row, newestSession: _swingExpectedNewestSessionDate(Date.now())
+    }));
+  } catch (e) {}
+}
+
+// The Portfolio 1D and 4H charts end on ONE price whose trading session is PROVEN (the rule the
+// Swing charts follow): a live DXLink mark observed in the current session, else the close of the
+// newest stored bar. A series is patched only when its final bar IS that session. The position's
+// own underlyingPrice is NOT used: it carries neither a session nor an age, so writing it into a
+// bar can fabricate one. Observed on IBM (2026-10-24): the backend served the 1D series ending
+// 2026-08-12 on 235.98, the portfolio refresh returned that same stale 235.98 as the underlying
+// price, and the 4H series ended 2026-10-23 on 253.58 — patching 235.98 into that 4H bar drew a
+// false -7% candle. A lagging series now stays exactly as served and says so in its source badge.
+//
+// Trading date of a bar. Backend 1D bars are stamped at exactly 00:00Z of their own date
+// (2026-08-12T00:00:00.000Z is the 12 Aug bar), which America/New_York would read as the previous
+// evening, so for 1D a UTC-midnight stamp IS its date; every other stamp uses the ET date.
+function _pfBarSession(candle, is1d) {
+  var ms = _swingCandleTimeMs(candle);
+  if (ms == null) return null;
+  if (is1d && ms % 86400000 === 0) return new Date(ms).toISOString().substring(0, 10);
+  return _etDateStr(ms);
+}
+
+// { price, source, sessionDate } — the one price both timeframes may end on, or nulls.
+function _pfResolveChartPrice(ticker, daily, fourH, nowMs) {
+  var live = _swingResolveRenderPrice(ticker, daily, fourH, nowMs);
+  if (live && live.source === 'dxlink' && live.price != null && live.sessionDate != null) {
+    return { price: live.price, source: 'dxlink', sessionDate: live.sessionDate };
+  }
+  var best = null;
+  [[fourH, false, 'backend 4H'], [daily, true, 'backend 1D']].forEach(function(s) {
+    var last = (s[0] && s[0].length) ? s[0][s[0].length - 1] : null;
+    if (!last) return;
+    var px = parseFloat(last.close != null ? last.close : last.c);
+    var t = _swingCandleTimeMs(last);
+    if (isFinite(px) && px > 0 && t != null && (!best || t > best.t)) {
+      best = { price: px, source: s[2], sessionDate: _pfBarSession(last, s[1]), t: t };
+    }
+  });
+  return best ? { price: best.price, source: best.source, sessionDate: best.sessionDate }
+              : { price: null, source: null, sessionDate: null };
+}
+
+// `own` is the series being drawn; the other timeframe is read from the same sources.
+function _pfAlignedCandles(ticker, tf, own) {
+  if (!own || !own.length) return own;
+  var is1d = tf === '1D', other = null;
+  if (ffBackendCandlesPortfolioCharts()) {
+    if (_pfBackendCandleCache && _pfBackendCandleCache.symbol === ticker) {
+      var oc = is1d ? _pfBackendCandleCache.candles4h : _pfBackendCandleCache.candles1d;
+      if (oc && oc.length >= 20) other = oc;
+    }
+  } else {
+    other = is1d ? getFourHourCandles(ticker) : getDailyCandles(ticker);
+  }
+  var px = _pfResolveChartPrice(ticker, is1d ? own : other, is1d ? other : own, Date.now());
+  if (px.price == null || px.sessionDate == null) return own;
+  if (_pfBarSession(own[own.length - 1], is1d) !== px.sessionDate) return own;
+  return patchLastCandleWithLivePrice(own, px.price);
+}
+
+// ' · last bar YYYY-MM-DD (stale)' when the series' final bar is older than the newest trading
+// session that can exist now; '' otherwise. An unknown date on either side compares false.
+function _pfStaleBarNote(candles, is1d) {
+  var sess = (candles && candles.length) ? _pfBarSession(candles[candles.length - 1], is1d) : null;
+  var newest = _swingExpectedNewestSessionDate(Date.now());
+  return (sess < newest) ? ' · last bar ' + sess + ' (stale)' : '';
 }
 
 // Draw a single timeframe section (1D or 4H): candles + RSI + RS + squeeze.
@@ -15861,21 +15949,11 @@ function _pfDrawTf(posId, ticker, tf) {
     return;
   }
 
-  candles = _patchLivePrice(candles, ticker);
-  // _patchLivePrice only knows scanner rows with a DXLink quote. A Portfolio underlying
-  // outside the scanner universe (or with no quote) left each timeframe on its own last
-  // stored close, so 1D and 4H disagreed. Fall back to the price the Portfolio table
-  // already resolved for this position — one value, so both charts end on the same close.
-  var _pfScanRow = S.scanData && S.scanData.find(function(x){ return x.ticker === ticker; });
-  var _pfHasDxQuote = !!(_pfScanRow && _pfScanRow._priceSource === 'DXLink' && _pfScanRow.price && _pfScanRow.bid != null);
-  if (!_pfHasDxQuote && typeof positionManager !== 'undefined' && typeof _portfolioRowUnderlyingPrice === 'function') {
-    var _pfRowPx = _portfolioRowUnderlyingPrice(positionManager.getById(posId));
-    if (_pfRowPx != null) candles = patchLastCandleWithLivePrice(candles, _pfRowPx);
-  }
+  candles = _pfAlignedCandles(ticker, tf, candles);
   var ind = computeCandleIndicators(candles);
   if (!ind) return;
 
-  var src     = _backendCandlesUsed ? (_pfBackendCandleCache.source || 'BACKEND_CANDLE_STORE') : getCandleDataSource(ticker, tf);
+  var src     = (_backendCandlesUsed ? (_pfBackendCandleCache.source || 'BACKEND_CANDLE_STORE') : getCandleDataSource(ticker, tf)) + _pfStaleBarNote(candles, is1d);
   var viewLen = Math.min(75, candles.length);
 
   // ── Candle chart ───────────────────────────────────────────────
