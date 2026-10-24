@@ -925,9 +925,10 @@ function makeEnv() {
 }
 
 const FNS = ['_chartPad2', '_chartXSpan', '_chartViewKey', '_chartResolveView', '_chartRedraw', '_chartClearHover', '_chartBindInteractions',
-  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel'];
+  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel', '_chartLinkedRsiId', '_chartSyncLinkedRsi'];
+const CHART_RSI_LINKS_SRC = (HTML.match(/^var _CHART_RSI_LINKS = \[[\s\S]*?\n\];/m) || [''])[0];
 function load(env) {
-  const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;';
+  const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;\n' + CHART_RSI_LINKS_SRC;
   vm.runInContext(consts + '\n' + FNS.map((n) => { try { return extractFn(HTML, n); } catch (e) { return ''; } }).join('\n'), env.sandbox);
 }
 
@@ -1061,6 +1062,96 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     ok(/if \(!panelsDrawn\) drawPanels\(candles\.length - viewLen, candles\.length\);/.test(body), '4: fallback draws the default window when the chart did not report one');
     ok(!/_mcxDrawRsi\(/.test(body), '4: the trailing-only shared RSI drawer is no longer used by the Portfolio charts');
     ok(body.indexOf('var spyCandles = null;') < body.indexOf('_drawCandleChart(wrapId'), '4: SPY series is resolved before the chart is drawn (the callback needs it)');
+  }
+  // ── 5. the other charts' RSI panels follow the window too ────────────────────
+  // MCX and SFS draw their RSI from byte-pinned modules (right after _drawCandleChart returns), so the
+  // chart finds the panel by id and redraws it once the caller is done.
+  section('16.5 scanner / RS / SFS / MCX RSI panels follow the window (linked by id, redrawn after the caller)');
+  {
+    const flush = async () => { for (let i = 0; i < 4; i++) await Promise.resolve(); };
+    ok(CHART_RSI_LINKS_SRC.length > 0, '5: the link table is found in the source');
+    const env0 = makeEnv(); load(env0);
+    const L = env0.sandbox._chartLinkedRsiId;
+    ok(L('schart-big-wrap-1d') === 'schart-rsi-1d' && L('schart-big-wrap-4h') === 'schart-rsi-4h', '5: scanner inline chart -> schart-rsi-*');
+    ok(L('rs-big-wrap-1d') === 'rs-rsi-1d' && L('rs-big-wrap-4h') === 'rs-rsi-4h', '5: RS charts -> rs-rsi-*');
+    ok(L('sfs-big-wrap-1d') === 'sfs-rsi-1d' && L('sfs-big-wrap-4h') === 'sfs-rsi-4h', '5: SFS detail -> sfs-rsi-*');
+    ok(L('mcx-wrap-spy-1d') === 'mcx-rsi-spy-1d' && L('mcx-wrap-vi3m-4h') === 'mcx-rsi-vi3m-4h', '5: MCX -> mcx-rsi-*');
+    ok(L('pf-1d-wrap-7') === null && L('') === null && L(null) === null && L('xschart-big-wrap-1d') === null, '5: the Portfolio (it passes onView, and is not in the table), empty / null ids and non-prefix matches are not linked');
+
+    // The link table is checked against every chart wrap that exists in the app source: each one has
+    // its RSI wrap, so no chart is silently left on the trailing window.
+    const MARKUP = [path.join(__dirname, '..', 'index.html')].concat(fs.readdirSync(path.join(__dirname, '..', 'js', 'ui')).map((f) => path.join(__dirname, '..', 'js', 'ui', f)))
+      .map((f) => fs.readFileSync(f, 'utf8')).join('\n');
+    const wrapIds = [...MARKUP.matchAll(/id="((?:schart-big-wrap-|rs-big-wrap-|sfs-big-wrap-|mcx-wrap-)[a-z0-9-]*)"/g)].map((m) => m[1]);
+    ok(wrapIds.length === 10, '5: ten linked chart wraps exist in the app source (' + wrapIds.length + ')');
+    ok(wrapIds.every((id) => MARKUP.indexOf('id="' + L(id) + '"') >= 0), '5: every one of them has its RSI wrap in the source: ' + wrapIds.filter((id) => MARKUP.indexOf('id="' + L(id) + '"') < 0).join(','));
+    // ... and the callers pass the ids the table derives.
+    const sfsCalls = [...HTML.matchAll(/_sfsDrawOneTf\(symbol, '[14][DH]', '([a-z0-9-]+)', '([a-z0-9-]+)'/g)];
+    ok(sfsCalls.length === 2 && sfsCalls.every((m) => L(m[1]) === m[2]), '5: both SFS calls hand _sfsDrawOneTf the ids the table derives');
+    ok(/var rsiId = wrapId\.replace\('mcx-wrap-', 'mcx-rsi-'\);/.test(HTML), '5: the MCX caller derives its RSI id with the same prefixes');
+    ok(/var wrapId   = 'schart-big-wrap-' \+ sfx;\s+var rsiId    = 'schart-rsi-'      \+ sfx;/.test(HTML), '5: the scanner caller uses schart-big-wrap-* / schart-rsi-*');
+    ok(/var wrapId='rs-big-wrap-'\+sfx, rsiId='rs-rsi-'\+sfx/.test(HTML), '5: the RS-chart caller uses rs-big-wrap-* / rs-rsi-*');
+
+    // Real order of events in a caller: chart, then the shared trailing-window RSI drawer.
+    const env = makeEnv(); load(env);
+    vm.runInContext(extractFn(HTML, '_mcxDrawRsi'), env.sandbox);
+    const { candles, ind, rsi } = series(120);
+    const plotW = W - 10 - 64, plotH = H - 14 - 4;
+    const yOf = (v) => 14 + (1 - v / 100) * plotH;
+    const lastSeg = (from) => { const sg = dataSegs(segments(env.log, from)); return sg[sg.length - 1]; };
+
+    env.sandbox._drawCandleChart('schart-big-wrap-1d', candles, ind, { source: 'X', rsi: ind.lastRsi });
+    const beforeCaller = env.log.length;
+    env.sandbox._mcxDrawRsi('schart-rsi-1d', ind.rsi, 75);                 // the caller's own call
+    const afterCaller = env.log.length;
+    const callerSeg = lastSeg(beforeCaller);
+    await flush();
+    const seg = lastSeg(afterCaller);
+    ok(!!seg, '5: the RSI panel is redrawn after the caller finished');
+    ok(seg && near(seg[2], 10 + 74 / 78 * plotW) && near(seg[3], yOf(rsi[119])), '5: ... on the candle grid, ending on the last RSI value');
+    ok(callerSeg && seg && !near(callerSeg[2], seg[2]), '5: ... replacing the caller\'s trailing-window layout (which ends at a different x)');
+
+    // pan: the panel follows
+    const wrap = env.sandbox.document.getElementById('schart-big-wrap-1d');
+    wrap.__chartView.start = 10; wrap.__chartView.end = 60; wrap.__chartView.anchored = false;
+    const beforePan = env.log.length;
+    env.sandbox._chartRedraw(wrap);
+    await flush();
+    const panSeg = lastSeg(beforePan);
+    ok(panSeg && near(panSeg[3], yOf(rsi[59])), '5: after a pan the RSI panel ends on the RSI at the new right edge (index 59)');
+    wrap.__chartView = null;
+    const beforeReset = env.log.length;
+    env.sandbox._chartRedraw(wrap);
+    await flush();
+    const resetSeg = lastSeg(beforeReset);
+    ok(resetSeg && near(resetSeg[3], yOf(rsi[119])) && near(resetSeg[2], 10 + 74 / 78 * plotW), '5: reset puts the RSI panel back on the default window');
+
+    // every family draws through the same hook
+    const calls = [];
+    const env2 = makeEnv(); load(env2);
+    env2.sandbox._pfDrawRsiPanel = (id, series_, vs, ve) => calls.push([id, series_ === rsi || series_ === ind.rsi, vs, ve]);
+    for (const id of ['rs-big-wrap-4h', 'sfs-big-wrap-1d', 'mcx-wrap-spy-1d']) env2.sandbox._drawCandleChart(id, candles, ind, { source: 'X' });
+    await flush();
+    ok(JSON.stringify(calls.map((c) => c[0])) === JSON.stringify(['rs-rsi-4h', 'sfs-rsi-1d', 'mcx-rsi-spy-1d']) && calls.every((c) => c[1] && c[2] === 45 && c[3] === 120),
+      '5: RS, SFS and MCX charts each redraw their own RSI panel on the default window');
+
+    // not linked / superseded / cleared
+    calls.length = 0;
+    env2.sandbox._drawCandleChart('pf-1d-wrap-9', candles, ind, { source: 'X', onView: () => {} });
+    env2.sandbox._drawCandleChart('pf-1d-wrap-8', candles, ind, { source: 'X' });
+    env2.sandbox._drawCandleChart('schart-big-wrap-1d', candles.slice(0, 3), ind, { source: 'X' });   // too few candles: cannot draw
+    env2.sandbox._drawCandleChart('schart-big-wrap-4h', candles, { sma8: ind.sma8 }, { source: 'X' });  // no RSI series
+    await flush();
+    ok(calls.length === 0, '5: the Portfolio (onView), an unlinked id, a chart that cannot draw and a chart without an RSI series draw no linked panel');
+    env2.sandbox._drawCandleChart('sfs-big-wrap-4h', candles, ind, { source: 'X' });
+    env2.sandbox._drawCandleChart('sfs-big-wrap-4h', candles.slice(0, 100), Object.assign({}, ind, { rsi: ind.rsi.slice(0, 100) }), { source: 'X' });
+    await flush();
+    ok(calls.length === 1 && calls[0][0] === 'sfs-rsi-4h' && calls[0][3] === 100, '5: two draws before the panel runs redraw it once, for the newer draw (end 100)');
+    env2.sandbox._drawCandleChart('sfs-big-wrap-1d', candles, ind, { source: 'X' });
+    env2.sandbox.document.getElementById('sfs-big-wrap-1d').__chart = null;                              // chart cleared meanwhile
+    calls.length = 0;
+    await flush();
+    ok(calls.length === 0, '5: a chart cleared before the panel runs is not drawn over');
   }
 })();
 
