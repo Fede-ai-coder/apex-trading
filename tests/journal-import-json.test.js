@@ -529,10 +529,43 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   xassert(syncP.changed.length === 0 && syncP.gone.length === 0 && syncP.matched === 0, 'sync: closed trades are never touched');
   syncP = plan([jt([jl({ qty: 1, legStatus: 'CLOSED' }), jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4, legStatus: 'EXPIRED_OTM' })])]);
   xassert(syncP.changed.length === 0 && syncP.gone.length === 0 && syncP.matched === 0, 'sync: legs that are no longer open in the Journal are never touched');
-  syncP = plan([jt([jl({ qty: 1 }), jl({ brokerPositionId: undefined, strike: 77 }), null], { status: 'PARTIAL' })]);
-  xassert(syncP.changed.length === 1 && syncP.changed[0].idx === 0 && syncP.gone.length === 0, 'sync: PARTIAL trades count; legs without a broker id and empty slots are skipped');
+  const hand = (o) => jl(Object.assign({ brokerPositionId: undefined, side: 'LONG', strike: 45, entryPrice: 0.4 }, o || {}));   // a leg entered by hand: the contract of file leg 1002
+  syncP = plan([jt([jl({ qty: 1 }), hand(), null], { status: 'PARTIAL' })]);
+  xassert(syncP.changed.length === 1 && syncP.changed[0].idx === 0 && syncP.gone.length === 0 && syncP.matched === 2, 'sync: PARTIAL trades count; a hand-entered leg the file has (by contract) is found, and empty slots are skipped');
   syncP = plan([jt([jl({ qty: 1 })], { id: 5 }), jt([jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.9 })], { id: 6 })]);
   xassert(syncP.changed.map(c => c.key).join() === '5|0,6|0', 'sync: updates from several trades each carry their own trade id');
+  // ── legs WITHOUT a broker id: found by contract (entered by hand, or imported before the id was kept) ──
+  const PC = Object.assign({}, P, { errors: [] });   // the shared file fixture has unreadable ACME rows; this block starts from a clean file
+  const planC = (trades, parsed) => plan(trades, parsed || PC);
+  const jh = (o, t) => jt([Object.assign({ type: 'PUT', side: 'SHORT', qty: 2, strike: 50, expiry: '2026-11-20', entryPrice: 1.2 }, o || {})], t);   // no brokerPositionId at all
+  syncP = planC([jt([jl()]), jh({ strike: 99 }, { id: 90 })]);
+  xassert(syncP.gone.length === 1 && syncP.gone[0].tradeId === 90 && syncP.gone[0].reason === 'absent' && syncP.gone[0].noBrokerId === true && syncP.gone[0].brokerPositionId === '' && syncP.gone[0].strike === 99 && syncP.gone[0].key === '90|0',
+    'no id: a Journal leg whose contract is not in the file is proposed for removal (reason absent, flagged as having no broker id)');
+  syncP = planC([jt([jl()]), jh({}, { id: 90 })]);
+  xassert(syncP.gone.length === 0 && syncP.matched === 2 && syncP.changed.length === 0, 'no id: a leg whose contract the file has is found - kept, and counted as matched');
+  syncP = planC([jt([jl()]), jh({ qty: 5, entryPrice: 9 }, { id: 90 })]);
+  xassert(syncP.gone.length === 0 && syncP.changed.length === 0, 'no id: a different quantity or price is not a removal (the contract is what identifies it)');
+  ['side', 'type', 'expiry', 'strike'].forEach(k => {
+    const alt = { side: 'LONG', type: 'CALL', expiry: '2026-12-18', strike: 51 }[k];
+    xassert(planC([jt([jl()]), jh({ [k]: alt }, { id: 90 })]).gone.length === 1, 'no id: a different ' + k + ' is a different contract - not in the file');
+  });
+  syncP = planC([jt([jl()]), jh({ strike: 99 }, { id: 90, ticker: 'acme' })], Object.assign({}, P, { errors: [{ row: 9, label: 'ACME/15F27C99:xcbf', problems: ['bad'] }] }));
+  xassert(syncP.gone.length === 0, 'no id: the underlying is compared in upper case against the unreadable rows too');
+  xassert(planC([jt([jl()]), jh({}, { id: 90, ticker: 'OTHER' })]).gone.length === 1, 'no id: the same contract on another underlying is not in the file');
+  xassert(planC([jt([jl()]), jh({}, { id: 90, ticker: 'acme' })]).gone.length === 0, 'no id: the underlying is compared in upper case');
+  syncP = planC([jt([jl()]), jh({ type: 'EQUITY', strike: null, expiry: null }, { id: 90 })]);
+  xassert(syncP.gone.length === 0, 'no id: a stock leg is never proposed (the file lists options only)');
+  syncP = planC([jt([jl()]), jh({ legStatus: 'CLOSED', strike: 99 }, { id: 90 }), jh({ strike: 98 }, { id: 91, status: 'CLOSED' })]);
+  xassert(syncP.gone.length === 0, 'no id: closed legs and closed trades are never proposed');
+  syncP = planC([jh({ strike: 99 }, { id: 90 })]);
+  xassert(syncP.gone.length === 0 && syncP.matched === 0, 'no id: a file that shares no leg with the Journal never proposes removing them (wrong account / wrong file)');
+  syncP = planC([jt([jl()]), jh({ strike: 99 }, { id: 90 })], Object.assign({}, P, { errors: [{ row: 9, label: 'ACME/15F27C99:xcbf', problems: ['bad'] }] }));
+  xassert(syncP.gone.length === 0, 'no id: when the file has an unreadable row for that underlying nothing is proposed for it');
+  syncP = planC([jt([jl()]), jh({ strike: 99 }, { id: 90, ticker: 'OTHER' })], Object.assign({}, P, { errors: [{ row: 9, label: 'ACME/15F27C99:xcbf', problems: ['bad'] }] }));
+  xassert(syncP.gone.length === 1 && syncP.gone[0].ticker === 'OTHER', 'no id: ... but another underlying is still checked');
+  syncP = planC([jt([jl(), jl({ brokerPositionId: '9999', strike: 60 })]), jh({ strike: 99 }, { id: 90 }), jh({}, { id: 91 })]);
+  xassert(syncP.checked === 4 && syncP.matched === 2 && syncP.gone.length === 2, 'no id: "checked" counts every open option leg compared (with and without an id)');
+  xassert(R('_jxiContractKey("acme", { type: "PUT", strike: "50", expiry: "2026-11-20", side: "SHORT" })') === 'ACME|PUT|50|2026-11-20|SHORT', 'contract key: underlying upper-cased, strike as a number, no quantity, no price');
   xassert(R('_jxiPlanSync({ legs: [], closedIds: {}, errorIds: {} }, null)').matched === 0 && R('_jxiPlanSync(' + J(P) + ', [null, {}])').matched === 0, 'sync: no trades, empty slots → nothing');
 
   // ── applying accepted changes ────────────────────────────────────────────
@@ -565,9 +598,9 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   xassert(rm[0].portfolioId === null, 'removals: a trade with no portfolio says so (null), not undefined');
   rm = rplan([jt([jl(), gx(), jl({ brokerPositionId: undefined, strike: 77, legStatus: 'CLOSED' })], { status: 'PARTIAL' })]);
   xassert(rm[0].kind === 'LEGS' && rm[0].kept === 2 && rm[0].keptActive === 1 && rm[0].statusAfter === 'PARTIAL', 'removals: closed legs that stay are history - the trade is PARTIAL while an active leg remains');
-  rm = rplan([jt([gx(), jl({ brokerPositionId: undefined, strike: 77, legStatus: 'CLOSED' }), jl({ brokerPositionId: undefined, strike: 78, legStatus: 'EXPIRED_OTM' })], { status: 'PARTIAL' }), jt([jl({ brokerPositionId: '1004' }), jl({ brokerPositionId: undefined, strike: 79 })], { id: 80 }), jt([jl()], { id: 81 })]);   // (the last trade is the one the file matches)
+  rm = rplan([jt([gx(), jl({ brokerPositionId: undefined, strike: 77, legStatus: 'CLOSED' }), jl({ brokerPositionId: undefined, strike: 78, legStatus: 'EXPIRED_OTM' })], { status: 'PARTIAL' }), jt([jl({ brokerPositionId: '1004' }), hand()], { id: 80 }), jt([jl()], { id: 81 })]);   // (the last trade is the one the file matches)
   xassert(rm[0].kind === 'LEGS' && rm[0].keptActive === 0 && rm[0].statusAfter === 'CLOSED', 'removals: when only closed / expired legs stay the trade becomes CLOSED - its realized history is not deleted');
-  xassert(rm[1].kind === 'LEGS' && rm[1].statusAfter === 'OPEN' && rm[1].kept === 1, 'removals: a leg without a broker id (entered by hand) is never removed');
+  xassert(rm[1].kind === 'LEGS' && rm[1].statusAfter === 'OPEN' && rm[1].kept === 1, 'removals: a hand-entered leg that the file still has stays');
   xassert(R('_jxiPlanRemovals([], [])').length === 0 && R('_jxiPlanRemovals(null, null)').length === 0 && R('_jxiPlanRemovals([{ tradeId: 1, idx: 0 }], [])').length === 0, 'removals: nothing gone (or a trade no longer there) → nothing to remove');
   const gone2 = plan([jt([jl(), gx()], { id: 5 }), jt([jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 }), gx({ strike: 61 })], { id: 6 })]).gone;
   xassert(gone2.length === 2 && R('_jxiPlanRemovals(' + J(gone2) + ',' + J([jt([jl(), gx()], { id: 5 }), jt([jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 }), gx({ strike: 61 })], { id: 6 })]) + ')').map(r => r.tradeId).join() === '5,6', 'removals: one entry per trade, in the order the plan lists them');
@@ -660,7 +693,7 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
     legs: [{ side: 'SHORT', qty: 2, type: 'PUT', strike: 40, expiry: '2026-11-20', reason: 'closed' }, { side: 'LONG', qty: 2, type: 'PUT', strike: 35, expiry: '2026-11-20', reason: 'absent' }] }, o || {});
   const preview = (removals, keep) => {
     rctx.__st = { file: 'Posizioni.xlsx', legs: [], gid: [], dup: [], ignored: [], errors: [], include: {}, strategy: {}, mode: 'time', busy: false,
-      sync: { changed: [], gone: [].concat(...removals.map(r => r.legs)), conflict: [], matched: 1 }, removals: removals, applyChange: {}, keepTrade: keep || {} };
+      sync: { changed: [], gone: [].concat(...removals.map(r => r.legs)), conflict: [], matched: 3, checked: 5 }, removals: removals, applyChange: {}, keepTrade: keep || {} };
     vm.runInContext('_jxiState = __st; _jxiRender();', rctx);
     return html;
   };
@@ -676,6 +709,10 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   xassert(/untick a trade to keep it/.test(h1), 'preview: says that a trade can be unticked to keep it');
   let h2 = preview([mkRem()], { 0: true });
   xassert(!/ checked onchange="_jxiSetRemove/.test(h2) && /id="jxiGo"[^>]*disabled/.test(h2) && />Nothing to apply</.test(h2), 'preview: a trade the user keeps is unticked and, with nothing else, there is nothing to apply');
+  xassert(/Compared 5 open option leg\(s\) of the Journal with the file: 3 found, 3 not in the file\./.test(h1), 'preview: says how many open Journal legs were compared with the file, how many were found and how many were not');
+  xassert(!/no broker id on this Journal leg/.test(h1), 'preview: legs that have a broker id are not described as compared by contract');
+  let hN = preview([mkRem({ legs: [{ side: 'SHORT', qty: 1, type: 'PUT', strike: 40, expiry: '2026-11-20', reason: 'absent', noBrokerId: true }], total: 1 })]);
+  xassert(/not in the file \u2014 no broker id on this Journal leg, compared by contract/.test(hN) || /not in the file — no broker id on this Journal leg, compared by contract/.test(hN), 'preview: a leg without a broker id says that it was compared by contract');
   let h3 = preview([]);
   xassert(!/REMOVED from the Journal/.test(h3), 'preview: no removal section when nothing leaves');
   let h4 = preview([mkRem({ ticker: '<b>X</b>' })]);
@@ -754,7 +791,7 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   }).then(() => {
     // ── save: updates and removals of legs the Journal already holds ──
     const fresh = () => [jt([jl({ qty: 1, entryPrice: 1 }), jl({ brokerPositionId: '1002', side: 'LONG', strike: 45, entryPrice: 0.4 })]),
-      jt([jl({ brokerPositionId: '1004', strike: 40 }), jl({ brokerPositionId: '9999', strike: 60 })], { id: 78, ticker: 'BETA' })];
+      jt([jl({ brokerPositionId: '1004', strike: 40 }), jl({ brokerPositionId: '9999', strike: 60 })], { id: 78 })];
     const startSync = (over, mutate) => {
       sctx.__trades = fresh(); if (mutate) mutate(sctx.__trades);
       sctx.__log = []; adds.length = 0; toasts.length = 0; dom.jxiProgress.textContent = ''; sctx.__deleteOk = true;
@@ -805,32 +842,38 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
     }).then(() => {
       xassert(kinds() === 'delete' && /^Removed 2 leg\(s\) from the Journal and Portfolio \(1 whole trade\(s\)\)/.test(toasts[0][0]), 'save-sync: a removal alone is enough to apply (got ' + kinds() + ' / ' + toasts.map(t => t[0]) + ')');
       // a trade that keeps a leg: only the departed leg is taken off
-      startSync({ applyChange: { 0: false } }, (tr) => { tr[1].legs.push(jl({ brokerPositionId: undefined, strike: 77 })); });
+      startSync({ applyChange: { 0: false } }, (tr) => { tr[1].legs.push(jl({ brokerPositionId: undefined, side: 'LONG', strike: 45, entryPrice: 0.4 })); });
       xassert(sctx.__st.removals[0].kind === 'LEGS' && sctx.__st.removals[0].legs.length === 2 && sctx.__st.removals[0].kept === 1, 'save-sync: fixture — a hand-entered leg (no broker id) stays on the trade whose broker legs left');
       return vm.runInContext('journalImportExcelSave()', sctx);
     }).then(() => {
       xassert(kinds() === 'adj,update' && !sctx.__log.some(x => x[0] === 'delete'), 'save-sync: such a trade is edited, not deleted (got ' + kinds() + ')');
       const patch = sctx.__log[1][2];
-      xassert(sctx.__log[1][1] === 78 && patch.legs.length === 1 && patch.legs[0].strike === 77 && patch.status === 'OPEN', 'save-sync: only the departed legs are taken off; the rest stays, and the trade stays OPEN');
+      xassert(sctx.__log[1][1] === 78 && patch.legs.length === 1 && patch.legs[0].strike === 45 && patch.legs[0].brokerPositionId === undefined && patch.status === 'OPEN', 'save-sync: only the departed legs are taken off; the rest stays, and the trade stays OPEN');
       xassert(/^Excel sync \(new\.xlsx\): removed 2 leg\(s\) no longer open at the broker — /.test(sctx.__log[0][2].notes), 'save-sync: the removal is noted on the trade');
       xassert(toasts.length === 1 && /^Removed 2 leg\(s\) from the Journal and Portfolio — 1 confirmed by the backend$/.test(toasts[0][0]), 'save-sync: the toast counts the legs, and names no whole trade (got ' + toasts[0][0] + ')');
+      // a Journal leg with no broker id that the file does not have goes the same way (the plan still recognises it at apply time)
+      startSync({ applyChange: { 0: false }, keepTrade: { 0: true } }, (tr) => { tr.push(jt([jl({ brokerPositionId: undefined, strike: 99 })], { id: 90, ticker: 'ZED' })); });
+      xassert(sctx.__st.removals.length === 2 && sctx.__st.removals[1].tradeId === 90 && sctx.__st.removals[1].legs[0].noBrokerId === true, 'save-sync: fixture - a trade made of one leg without a broker id, which the file does not have');
+      return vm.runInContext('journalImportExcelSave()', sctx);
+    }).then(() => {
+      xassert(sctx.__log.length === 1 && sctx.__log[0][0] === 'delete' && sctx.__log[0][1] === 90 && sctx.__trades.some(t => t.id === 78) && !sctx.__trades.some(t => t.id === 90) && toasts[0][1] === 'ok', 'save-sync: a leg without a broker id is removed (not reported as "changed meanwhile") (got ' + sctx.__log.map(x => x[0] + ':' + x[1]) + ' / ' + toasts.map(t => t[0]) + ')');
       // the backend refuses the delete: the trade stays, and the user is told
       startSync({ applyChange: { 0: false } });
       sctx.__deleteOk = false;
       return vm.runInContext('journalImportExcelSave()', sctx);
     }).then(() => {
-      xassert(sctx.__trades.length === 2 && toasts.length === 1 && toasts[0][1] === 'warn' && /FAILED: BETA: delete not confirmed by the backend — trade kept/.test(toasts[0][0]) && /^Nothing applied/.test(toasts[0][0]), 'save-sync: a delete the backend does not confirm leaves the trade and says so (got ' + toasts.map(t => t[0]) + ')');
+      xassert(sctx.__trades.length === 2 && toasts.length === 1 && toasts[0][1] === 'warn' && /FAILED: ACME: delete not confirmed by the backend — trade kept/.test(toasts[0][0]) && /^Nothing applied/.test(toasts[0][0]), 'save-sync: a delete the backend does not confirm leaves the trade and says so (got ' + toasts.map(t => t[0]) + ')');
       // the Journal changed since the preview
       startSync({ applyChange: { 0: false } });
       sctx.__trades[1].legs[0].brokerPositionId = 'changed-meanwhile';
       return vm.runInContext('journalImportExcelSave()', sctx);
     }).then(() => {
-      xassert(!sctx.__log.some(x => x[0] === 'delete') && toasts[0][1] === 'warn' && /FAILED: BETA: trade changed in the Journal meanwhile — not removed/.test(toasts[0][0]), 'save-sync: a trade that is no longer the one planned is not removed, and is reported');
+      xassert(!sctx.__log.some(x => x[0] === 'delete') && toasts[0][1] === 'warn' && /FAILED: ACME: trade changed in the Journal meanwhile — not removed/.test(toasts[0][0]), 'save-sync: a trade that is no longer the one planned is not removed, and is reported');
       startSync({ applyChange: { 0: false } });
-      sctx.__trades[1].legs.push(jl({ brokerPositionId: undefined, strike: 88 }));      // a leg entered by hand since the preview: the whole trade no longer leaves
+      sctx.__trades[1].legs.push(jl({ brokerPositionId: undefined, side: 'LONG', strike: 45, entryPrice: 0.4 }));      // a leg entered by hand since the preview: the whole trade no longer leaves
       return vm.runInContext('journalImportExcelSave()', sctx);
     }).then(() => {
-      xassert(!sctx.__log.some(x => x[0] === 'delete' || x[0] === 'update') && toasts[0][1] === 'warn' && /FAILED: BETA: trade changed in the Journal meanwhile — not removed/.test(toasts[0][0]), 'save-sync: a trade that gained a leg since the preview is not deleted - the plan is no longer the one the user saw');
+      xassert(!sctx.__log.some(x => x[0] === 'delete' || x[0] === 'update') && toasts[0][1] === 'warn' && /FAILED: ACME: trade changed in the Journal meanwhile — not removed/.test(toasts[0][0]), 'save-sync: a trade that gained a leg since the preview is not deleted - the plan is no longer the one the user saw');
       startSync({ applyChange: { 0: false } });
       sctx.__trades[1].legs[1].legStatus = 'CLOSED';
       return vm.runInContext('journalImportExcelSave()', sctx);
@@ -840,7 +883,7 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
       sctx.__trades.splice(1, 1);
       return vm.runInContext('journalImportExcelSave()', sctx);
     }).then(() => {
-      xassert(sctx.__log.length === 0 && /FAILED: BETA: trade changed in the Journal meanwhile/.test(toasts[0][0]), 'save-sync: a trade deleted in the meantime is reported, not retried');
+      xassert(sctx.__log.length === 0 && /FAILED: ACME: trade changed in the Journal meanwhile/.test(toasts[0][0]), 'save-sync: a trade deleted in the meantime is reported, not retried');
       startSync({ legs: [many[0]], gid: [1] });
       dom.jxiPortfolio.value = 'pf-2';
       return vm.runInContext('journalImportExcelSave()', sctx);

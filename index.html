@@ -24355,13 +24355,30 @@ function _jxiSplitExisting(legs, existing) {
 // A leg missing from the file is only reported when the file clearly belongs to the same account:
 // the file lists it as not open, or at least one other Journal leg was found in it by id.
 function _jxiPlanSync(parsed, trades) {
-  var byId = {};
-  parsed.legs.forEach(function(l) { if (l.brokerPositionId) byId[l.brokerPositionId] = l; });
-  var changed = [], conflict = [], gone = [], matched = 0;
+  var byId = {}, byContract = {};
+  parsed.legs.forEach(function(l) {
+    if (l.brokerPositionId) byId[l.brokerPositionId] = l;
+    byContract[_jxiContractKey(l.ticker, l)] = true;
+  });
+  // A Journal leg WITHOUT a broker id (entered by hand, or imported before the id was kept) is found by its contract. It cannot be
+  // told apart from a row the file could not read, so none is proposed for removal when the file has an error row for its ticker.
+  var errorLabels = (parsed.errors || []).map(function(e) { return String(e.label || '').toUpperCase(); });
+  var changed = [], conflict = [], gone = [], matched = 0, checked = 0;
   (trades || []).forEach(function(t) {
     if (!t || (t.status !== 'OPEN' && t.status !== 'PARTIAL')) return;
     (t.legs || []).forEach(function(l, idx) {
-      if (!l || !l.brokerPositionId || (l.legStatus || 'OPEN') !== 'OPEN') return;
+      if (!l || (l.legStatus || 'OPEN') !== 'OPEN') return;
+      if (!l.brokerPositionId) {
+        if (l.type !== 'CALL' && l.type !== 'PUT') return;                                  // the file lists options only
+        checked++;
+        if (byContract[_jxiContractKey(t.ticker, { type: l.type, strike: l.strike, expiry: l.expiry || l.expiration, side: l.side })]) { matched++; return; }
+        var tk = String(t.ticker || '').toUpperCase();
+        if (tk && errorLabels.some(function(lb) { return lb.indexOf(tk) >= 0; })) return;
+        gone.push({ key: t.id + '|' + idx, tradeId: t.id, idx: idx, ticker: t.ticker, brokerPositionId: '', type: l.type, side: l.side,
+          strike: +l.strike, expiry: l.expiry || l.expiration, qty: +l.qty, entryPrice: +l.entryPrice, reason: 'absent', noBrokerId: true });
+        return;
+      }
+      checked++;
       var id = String(l.brokerPositionId), f = byId[id];
       var ref = { key: t.id + '|' + idx, tradeId: t.id, idx: idx, ticker: t.ticker, brokerPositionId: id, type: l.type, side: l.side,
         strike: +l.strike, expiry: l.expiry || l.expiration, qty: +l.qty, entryPrice: +l.entryPrice };
@@ -24380,7 +24397,12 @@ function _jxiPlanSync(parsed, trades) {
     });
   });
   if (!matched) gone = gone.filter(function(g) { return g.reason === 'closed'; });
-  return { changed: changed, conflict: conflict, gone: gone, matched: matched };
+  return { changed: changed, conflict: conflict, gone: gone, matched: matched, checked: checked };
+}
+
+// What a leg is, apart from who owns it: underlying, call / put, strike, expiry, side (not the quantity or the price).
+function _jxiContractKey(ticker, leg) {
+  return [String(ticker).toUpperCase(), leg.type, +leg.strike, leg.expiry, leg.side].join('|');
 }
 
 // What a re-import REMOVES: the legs the file no longer lists as open (_jxiPlanSync().gone), grouped by Journal trade.
@@ -24720,6 +24742,7 @@ function _jxiRender() {
   var notes = '';
   var sameCount = _jxiUnchangedCount(s.dup, s.sync);
   if (sameCount) notes += '<div style="font-size:9px;color:var(--tx3);margin-top:6px">' + sameCount + ' leg(s) are already in the Journal and unchanged.</div>';
+  if (s.sync.checked) notes += '<div style="font-size:9px;color:var(--tx3);margin-top:4px">Compared ' + s.sync.checked + ' open option leg(s) of the Journal with the file: ' + s.sync.matched + ' found, ' + s.sync.gone.length + ' not in the file.</div>';
   var sy = '';
   var tdl = 'style="font-family:var(--M);font-size:10px;padding:3px 6px;white-space:nowrap"';
   var head = function(t) { return '<div style="margin-top:14px;font-size:10px;font-family:var(--M);color:var(--tx2)">' + t + '</div>'; };
@@ -24746,7 +24769,7 @@ function _jxiRender() {
           ? '<strong style="color:var(--rd)">whole trade removed</strong> (' + r.total + ' leg' + (r.total > 1 ? 's' : '') + ')'
           : '<strong style="color:var(--rd)">' + r.legs.length + ' of ' + r.total + ' legs removed</strong>, ' + r.kept + ' stay \u2192 trade ' + escHtml(String(r.statusAfter));
         var legsTxt = r.legs.map(function(g) {
-          return g.side + ' ' + g.qty + '\u00d7 ' + g.type + ' ' + g.strike + ' ' + escHtml(g.expiry) + ' <span style="color:var(--tx3)">(' + (g.reason === 'closed' ? 'closed in the file' : 'not in the file') + ')</span>';
+          return g.side + ' ' + g.qty + '\u00d7 ' + g.type + ' ' + g.strike + ' ' + escHtml(g.expiry) + ' <span style="color:var(--tx3)">(' + (g.reason === 'closed' ? 'closed in the file' : g.noBrokerId ? 'not in the file \u2014 no broker id on this Journal leg, compared by contract' : 'not in the file') + ')</span>';
         }).join('<br>');
         return '<tr style="opacity:' + (on ? 1 : 0.5) + ';vertical-align:top"><td ' + tdl + '><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="_jxiSetRemove(' + i + ',this.checked)" title="Remove this from the Journal and the Portfolio"></td>' +
           '<td ' + tdl + '><strong>' + escHtml(String(r.ticker)) + '</strong><div style="font-size:8px;color:var(--tx3)">' + escHtml(pfName(r.portfolioId)) + (r.strategy ? ' \u00b7 ' + escHtml(String(r.strategy)) : '') + '</div></td>' +
@@ -24812,7 +24835,7 @@ async function journalImportExcelSave() {
   // A Journal leg is touched only while it is still the leg the plan was built from.
   var stillThere = function(c) {
     var t = journalManager.getById(c.tradeId), l = t && t.legs && t.legs[c.idx];
-    return t && l && String(l.brokerPositionId) === c.brokerPositionId && (l.legStatus || 'OPEN') === 'OPEN' ? t : null;
+    return t && l && String(l.brokerPositionId || '') === String(c.brokerPositionId || '') && (l.legStatus || 'OPEN') === 'OPEN' ? t : null;
   };
   var perTrade = function(list) {
     var order = [], map = {};
