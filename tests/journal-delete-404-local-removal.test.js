@@ -150,4 +150,51 @@ function vmCtx(extra) {
   await p.deletePosition('T2');
 
   console.log('✓ backend-first Journal/Portfolio DELETE: failure, success, tombstones, string IDs');
+
+  // opts.quiet (used by the Excel re-import, which reports once and renders once): the delete is the same backend-first,
+  // tombstoned one - only the toasts and the re-render are left to the caller.
+  const quietRun = async (confirmed, extra) => {
+    const log = [], msgs = [];
+    const q = vmCtx(Object.assign({
+      confirm: () => { log.push('confirm'); return true; }, BACKEND: 'backend', S: { backendKey: 'key' },
+      journalManager: { getById: id => (id === 'Q1' ? { id: 'Q1' } : null), remove: id => log.push('remove:' + id) },
+      jDeleteRemote: async () => { log.push('requested'); return confirmed; },
+      _jConfirmedDeletedTradeIds: Object.create(null), _jLastKnownGoodTrades: [{ id: 'Q1' }, { id: 'Q2' }], _jLastKnownGoodCount: 2,
+      localStorage: { setItem: (k, v) => log.push('ledger:' + v) }, apexStorageKey: s => s,
+      showToast: (m, k) => msgs.push(k), renderPortfolioJournalView: () => log.push('render'),
+      isPortfolioViewActive: () => true, renderPortfolioView: () => log.push('renderPortfolio'),
+    }, extra || {}));
+    vm.runInContext(journalDelete, q);
+    const out = await q.deleteTrade('Q1', { skipConfirm: true, quiet: true });
+    return { out, log, msgs, q };
+  };
+  let qr = await quietRun(true);
+  assert.strictEqual(qr.out, true, 'quiet: a confirmed delete answers true');
+  assert.deepStrictEqual(qr.log, ['requested', 'ledger:["Q1"]', 'remove:Q1'], 'quiet: backend first, then the tombstone, then the local removal - no confirm dialog, no render');
+  assert.deepStrictEqual(qr.msgs, [], 'quiet: no toast');
+  assert.strictEqual(qr.q._jConfirmedDeletedTradeIds.Q1, true, 'quiet: the confirmed delete is still tombstoned');
+  assert.strictEqual(qr.q._jLastKnownGoodCount, 1, 'quiet: the last-known-good copy is still purged');
+  qr = await quietRun(false);
+  assert.strictEqual(qr.out, false, 'quiet: a delete the backend does not confirm answers false');
+  assert.deepStrictEqual(qr.log, ['requested'], 'quiet: ... and the trade is kept');
+  assert.deepStrictEqual(qr.msgs, [], 'quiet: ... without a toast (the caller reports it)');
+  qr = await quietRun(true, { journalManager: { getById: () => null, remove: () => assert.fail('must not remove') } });
+  assert.strictEqual(qr.out, false); assert.deepStrictEqual(qr.msgs, [], 'quiet: a trade that is not there answers false, silently');
+  qr = await quietRun(true, { BACKEND: '' });
+  assert.strictEqual(qr.out, false); assert.deepStrictEqual(qr.log, [], 'quiet: with no backend the delete is refused (the trade is kept), silently');
+  assert.deepStrictEqual(qr.msgs, []);
+  // without quiet nothing changed: the toast and the render are still there
+  const loud = await (async () => {
+    const msgs = [], log = [];
+    const l = vmCtx({ confirm: () => true, BACKEND: 'backend', S: { backendKey: 'key' }, journalManager: { getById: () => ({ id: 'Q1' }), remove() {} },
+      jDeleteRemote: async () => true, _jConfirmedDeletedTradeIds: Object.create(null), _jLastKnownGoodTrades: [], _jLastKnownGoodCount: 0,
+      localStorage: { setItem() {} }, apexStorageKey: s => s, showToast: (m, k) => msgs.push(k), renderPortfolioJournalView: () => log.push('render'),
+      isPortfolioViewActive: () => true, renderPortfolioView: () => log.push('renderPortfolio') });
+    vm.runInContext(journalDelete, l);
+    await l.deleteTrade('Q1', { skipConfirm: true });
+    return { msgs, log };
+  })();
+  assert.deepStrictEqual(loud.msgs, ['ok'], 'not quiet: the success toast is unchanged');
+  assert.deepStrictEqual(loud.log, ['render', 'renderPortfolio'], 'not quiet: the re-render is unchanged');
+  console.log('✓ deleteTrade({ quiet }): same backend-first delete, no toast, no render');
 })().catch(e=>{console.error(e);process.exitCode=1;});

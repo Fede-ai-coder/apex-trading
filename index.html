@@ -24139,6 +24139,10 @@ function _journalOutcomeToast(outcome, okMsg, failMsg, localMsg) {
 // The file's grouping is by underlying only, so legs are proposed as trades by opening
 // time and every leg's group number is editable in the preview before anything is saved.
 //
+// RE-IMPORT. A second upload also syncs what the Journal already holds, matched by broker position id: a leg whose quantity or
+// opening price changed is proposed as an update; a leg the file no longer lists as open is REMOVED - from the Journal and so
+// from the Portfolio - and the preview lists every removal (whole trade, or which legs of which trade) before anything is applied.
+// Nothing is removed for a file that shares no leg with the Journal, and each trade can be unticked to be kept.
 // JXI-BEGIN (pure helpers, exercised by tests/journal-import-json.test.js)
 var _JXI_MONTHS = { gen:1, jan:1, feb:2, mar:3, apr:4, mag:5, may:5, giu:6, jun:6, lug:7, jul:7,
   ago:8, aug:8, set:9, sep:9, ott:10, oct:10, nov:11, dic:12, dec:12 };
@@ -24347,7 +24351,7 @@ function _jxiSplitExisting(legs, existing) {
 // What a re-import changes in legs the Journal already holds, matched by broker position id.
 //   changed  → open Journal leg, same contract, different quantity or opening price → proposed update
 //   conflict → same id but a different contract (type / side / strike / expiry) → reported, never touched
-//   gone     → open Journal leg whose id is no longer an open position in the file → proposed close
+//   gone     → open Journal leg whose id is no longer an open position in the file → proposed REMOVAL (see _jxiPlanRemovals)
 // A leg missing from the file is only reported when the file clearly belongs to the same account:
 // the file lists it as not open, or at least one other Journal leg was found in it by id.
 function _jxiPlanSync(parsed, trades) {
@@ -24377,6 +24381,58 @@ function _jxiPlanSync(parsed, trades) {
   });
   if (!matched) gone = gone.filter(function(g) { return g.reason === 'closed'; });
   return { changed: changed, conflict: conflict, gone: gone, matched: matched };
+}
+
+// What a re-import REMOVES: the legs the file no longer lists as open (_jxiPlanSync().gone), grouped by Journal trade.
+//   TRADE → every leg of the trade is among them: the whole trade leaves the Journal and, with it, the Portfolio
+//   LEGS  → only some legs go: they are taken off the trade, the legs that stay keep their data and the status follows what is left
+// `statusAfter` is null for a removed trade; otherwise CLOSED (nothing active left), PARTIAL (closed legs and active legs) or OPEN.
+function _jxiPlanRemovals(gone, trades) {
+  var byTrade = {}, order = [];
+  (gone || []).forEach(function(g) {
+    var k = String(g.tradeId);
+    if (!byTrade[k]) { byTrade[k] = []; order.push(k); }
+    byTrade[k].push(g);
+  });
+  var out = [];
+  order.forEach(function(k) {
+    var t = (trades || []).filter(function(x) { return x && String(x.id || x.tradeId) === k; })[0];
+    if (!t) return;
+    var all = t.legs || [], idxs = {};
+    byTrade[k].forEach(function(g) { idxs[g.idx] = true; });
+    var kept = all.filter(function(l, i) { return !idxs[i]; });
+    var active = kept.filter(function(l) { return l && !legIsTerminal(l); });
+    out.push({ tradeId: t.id, ticker: t.ticker, strategy: t.strategy || null, portfolioId: t.portfolioId == null ? null : t.portfolioId,
+      kind: kept.length ? 'LEGS' : 'TRADE', legs: byTrade[k], total: all.length, kept: kept.length, keptActive: active.length,
+      statusAfter: !kept.length ? null : !active.length ? 'CLOSED' : active.length < kept.length ? 'PARTIAL' : 'OPEN' });
+  });
+  return out;
+}
+
+// The fields journalManager.update takes to take the departed legs off a trade (input untouched). The strategy is renamed only
+// when it was the one the legs gave (a name the user chose is left alone).
+function _jxiTradeAfterRemoval(trade, removed) {
+  var gone = {};
+  removed.forEach(function(c) { gone[c.idx] = true; });
+  var legs = (trade.legs || []).filter(function(l, i) { return !gone[i]; });
+  var active = function(list) { return list.filter(function(l) { return l && !legIsTerminal(l); }); };
+  var patch = { legs: legs };
+  var activeBefore = active(trade.legs || []), activeAfter = active(legs);
+  if (!activeAfter.length) {
+    patch.status = 'CLOSED';
+    patch.exitDate = legs.map(function(l) { return l && l.closeDate; }).filter(Boolean).sort().pop() || new Date().toISOString().substring(0, 10);
+  } else {
+    patch.status = activeAfter.length < legs.length ? 'PARTIAL' : 'OPEN';
+    var before = _journalStrategyFromLegs(activeBefore), after = _journalStrategyFromLegs(activeAfter);
+    if (before && after && trade.strategy === before && after !== before) patch.strategy = after;
+  }
+  return patch;
+}
+
+function _jxiRemovalNote(removed, fileName) {
+  return 'Excel sync' + (fileName ? ' (' + fileName + ')' : '') + ': removed ' + removed.length + ' leg(s) no longer open at the broker — ' + removed.map(function(c) {
+    return c.side + ' ' + c.qty + '\u00d7 ' + c.type + ' ' + c.strike + ' ' + c.expiry;
+  }).join('; ');
 }
 
 // Legs the file repeats exactly as the Journal has them (split.dup minus the ones that differ).
@@ -24500,7 +24556,7 @@ function _jxiBuildTradePayload(group, portfolioId, strategy, fileName) {
 // JXI-END
 
 // ── UI state ─────────────────────────────────────────────────────────────
-var _jxiState = null;   // { file, legs[], gid[], dup[], ignored[], errors[], include{}, strategy{}, mode, sync, applyChange{}, closePrice{}, closeDate }
+var _jxiState = null;   // { file, legs[], gid[], dup[], ignored[], errors[], include{}, strategy{}, mode, sync, removals[], applyChange{}, keepTrade{} }
 
 function _jxiGroups() {
   var s = _jxiState, map = {}, order = [];
@@ -24553,7 +24609,9 @@ function _jxiOpen(fileName, parsed) {
   var split = _jxiSplitExisting(parsed.legs, _jxiExistingIndex(trades));
   _jxiState = { file: fileName, legs: split.fresh, dup: split.dup, ignored: parsed.ignored, errors: parsed.errors,
     gid: _jxiAssignGroups(split.fresh, 'time'), include: {}, strategy: {}, mode: 'time', busy: false,
-    sync: _jxiPlanSync(parsed, trades), applyChange: {}, closePrice: {}, closeDate: new Date().toISOString().substring(0, 10) };
+    sync: null, removals: [], applyChange: {}, keepTrade: {} };
+  _jxiState.sync = _jxiPlanSync(parsed, trades);
+  _jxiState.removals = _jxiPlanRemovals(_jxiState.sync.gone, trades);
   _jxiRender();
 }
 
@@ -24585,30 +24643,28 @@ function _jxiMoveLeg(i, value) {
 }
 
 function _jxiSetChange(i, on) { if (_jxiState && !_jxiState.busy) { _jxiState.applyChange[i] = !!on; _jxiRefreshGo(); } }
-function _jxiSetClose(i, v) { if (_jxiState && !_jxiState.busy) { _jxiState.closePrice[i] = v; _jxiRefreshGo(); } }
-function _jxiSetCloseDate(v) { if (_jxiState && !_jxiState.busy) { _jxiState.closeDate = v; } }
-
-// A closing price counts only when it is a number >= 0 (0 = expired worthless); empty keeps the leg open.
-function _jxiClosePriceOf(v) {
-  if (v === undefined || v === null || String(v).trim() === '') return null;
-  var n = Number(String(v).trim().replace(',', '.'));
-  return isFinite(n) && n >= 0 ? n : null;
-}
+// Tick = remove (the default); untick = keep this trade as it is in the Journal.
+function _jxiSetRemove(i, on) { if (_jxiState && !_jxiState.busy) { _jxiState.keepTrade[i] = !on; _jxiRefreshGo(); } }
 
 // What "Apply" would do with the current choices.
 function _jxiActions() {
   var s = _jxiState;
   var adds = _jxiGroups().filter(function(g) { return s.include[g.gid] !== false; });
   var upd = s.sync.changed.filter(function(c, i) { return s.applyChange[i] !== false; });
-  var closes = s.sync.gone.filter(function(g, i) { return _jxiClosePriceOf(s.closePrice[i]) !== null; });
-  return { adds: adds, upd: upd, closes: closes };
+  var removes = (s.removals || []).filter(function(r, i) { return !s.keepTrade[i]; });
+  return { adds: adds, upd: upd, removes: removes };
+}
+
+// Positions (legs) the removals take out of the Journal.
+function _jxiRemovedLegCount(removes) {
+  return (removes || []).reduce(function(n, r) { return n + r.legs.length; }, 0);
 }
 
 function _jxiGoLabel(a) {
   var parts = [];
   if (a.adds.length) parts.push(a.adds.length + ' new trade(s)');
   if (a.upd.length) parts.push(a.upd.length + ' update(s)');
-  if (a.closes.length) parts.push(a.closes.length + ' close(s)');
+  if (a.removes.length) parts.push(_jxiRemovedLegCount(a.removes) + ' removal(s)');
   return parts.length ? 'Apply: ' + parts.join(', ') : 'Nothing to apply';
 }
 
@@ -24617,7 +24673,7 @@ function _jxiRefreshGo() {
   if (!s || !go) return;
   var a = _jxiActions();
   go.textContent = _jxiGoLabel(a);
-  go.disabled = !(a.adds.length || a.upd.length || a.closes.length);
+  go.disabled = !(a.adds.length || a.upd.length || a.removes.length);
 }
 
 function _jxiSetStrategy(gid, key) { if (_jxiState && !_jxiState.busy) { _jxiState.strategy[gid] = key; } }
@@ -24675,14 +24731,28 @@ function _jxiRender() {
         '<td ' + tdl + '>qty ' + c.qty + ' → <strong>' + c.qtyNew + '</strong></td><td ' + tdl + '>open @ ' + c.entryPrice + ' → <strong>' + c.priceNew + '</strong></td></tr>';
     }).join('') + '</table>';
   }
-  if (s.sync.gone.length) {
-    sy += head('<strong>' + s.sync.gone.length + ' Journal leg(s) no longer open in the file</strong> — type the closing price to close a leg (0 = expired worthless); leave empty to keep it open' +
-      ' &nbsp; close date <input type="date" value="' + escHtml(s.closeDate) + '" onchange="_jxiSetCloseDate(this.value)" style="background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:4px;font-size:10px;font-family:var(--M)">');
-    sy += '<table style="width:100%;border-collapse:collapse">' + s.sync.gone.map(function(g, i) {
-      return '<tr><td ' + tdl + '>' + escHtml(g.ticker) + '</td><td ' + tdl + '>' + g.side + ' ' + g.qty + '× ' + g.type + ' ' + g.strike + '</td><td ' + tdl + '>' + escHtml(g.expiry) + '</td>' +
-        '<td ' + tdl + '>' + (g.reason === 'closed' ? 'listed as closed in the file' : 'not in the file') + '</td>' +
-        '<td ' + tdl + '><input type="text" inputmode="decimal" placeholder="close price" value="' + escHtml(String(s.closePrice[i] === undefined ? '' : s.closePrice[i])) + '" onchange="_jxiSetClose(' + i + ',this.value)" style="width:90px;background:var(--bg2);color:var(--tx);border:1px solid var(--b0);border-radius:4px;font-size:10px;font-family:var(--M)"></td></tr>';
-    }).join('') + '</table>';
+  if (s.removals.length) {
+    var pfName = function(id) {
+      var p = portfolios.filter(function(x) { return String(x.id) === String(id); })[0];
+      return p ? p.name : (id == null ? 'Unassigned' : 'portfolio ' + id);
+    };
+    var nLegs = _jxiRemovedLegCount(s.removals);
+    sy += '<div style="margin-top:14px;border:1px solid var(--rd);border-radius:8px;padding:8px 10px;background:rgba(239,68,68,.07)">' +
+      '<div style="font-size:10px;font-family:var(--M);color:var(--rd)"><strong>' + nLegs + ' position(s) in ' + s.removals.length + ' trade(s) are not in the file \u2014 they will be REMOVED from the Journal and from the Portfolio</strong>' +
+      ' <span style="color:var(--tx3)">(untick a trade to keep it)</span></div>' +
+      '<table style="width:100%;border-collapse:collapse;margin-top:4px">' + s.removals.map(function(r, i) {
+        var on = !s.keepTrade[i];
+        var effect = r.kind === 'TRADE'
+          ? '<strong style="color:var(--rd)">whole trade removed</strong> (' + r.total + ' leg' + (r.total > 1 ? 's' : '') + ')'
+          : '<strong style="color:var(--rd)">' + r.legs.length + ' of ' + r.total + ' legs removed</strong>, ' + r.kept + ' stay \u2192 trade ' + escHtml(String(r.statusAfter));
+        var legsTxt = r.legs.map(function(g) {
+          return g.side + ' ' + g.qty + '\u00d7 ' + g.type + ' ' + g.strike + ' ' + escHtml(g.expiry) + ' <span style="color:var(--tx3)">(' + (g.reason === 'closed' ? 'closed in the file' : 'not in the file') + ')</span>';
+        }).join('<br>');
+        return '<tr style="opacity:' + (on ? 1 : 0.5) + ';vertical-align:top"><td ' + tdl + '><input type="checkbox"' + (on ? ' checked' : '') + ' onchange="_jxiSetRemove(' + i + ',this.checked)" title="Remove this from the Journal and the Portfolio"></td>' +
+          '<td ' + tdl + '><strong>' + escHtml(String(r.ticker)) + '</strong><div style="font-size:8px;color:var(--tx3)">' + escHtml(pfName(r.portfolioId)) + (r.strategy ? ' \u00b7 ' + escHtml(String(r.strategy)) : '') + '</div></td>' +
+          '<td ' + tdl.replace('white-space:nowrap', 'white-space:normal') + '>' + effect + '</td>' +
+          '<td ' + tdl + '>' + legsTxt + '</td></tr>';
+      }).join('') + '</table></div>';
   }
   if (s.sync.conflict.length) {
     sy += '<div style="margin-top:10px;font-size:9px;color:var(--rd)"><strong>' + s.sync.conflict.length + ' leg(s) share a position id with the file but describe a different contract — left untouched:</strong>' +
@@ -24703,7 +24773,7 @@ function _jxiRender() {
     '<div class="modal-box" style="width:min(96vw,860px);max-height:90vh;overflow:auto">' +
       '<div class="modal-title" style="font-family:var(--M);margin-bottom:4px">Import positions from Excel</div>' +
       '<div class="modal-sub">' + escHtml(s.file) + ' — ' + s.legs.length + ' new option leg(s) → ' + groups.length + ' proposed trade(s)' +
-        (s.sync.changed.length ? ', ' + s.sync.changed.length + ' changed' : '') + (s.sync.gone.length ? ', ' + s.sync.gone.length + ' no longer open' : '') +
+        (s.sync.changed.length ? ', ' + s.sync.changed.length + ' changed' : '') + (s.removals.length ? ', ' + _jxiRemovedLegCount(s.removals) + ' to remove' : '') +
         '. Greeks then come from the usual live refresh (DXLink).</div>' +
       '<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:10px 0">' +
         '<label style="font-size:9px;color:var(--tx3);font-family:var(--M)">PORTFOLIO&nbsp;' + pfSel + '</label>' +
@@ -24713,7 +24783,7 @@ function _jxiRender() {
       '<div id="jxiProgress" style="font-size:10px;font-family:var(--M);color:var(--tx2);margin-top:10px"></div>' +
       '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;position:sticky;bottom:0;padding:8px 0;background:var(--bg2)">' +
         '<button onclick="_jxiClose()" style="background:transparent;color:var(--tx2);border:1px solid var(--b0);border-radius:6px;padding:6px 14px;font-family:var(--M);font-size:9px;cursor:pointer">Cancel</button>' +
-        '<button id="jxiGo" onclick="journalImportExcelSave()" ' + (act.adds.length || act.upd.length || act.closes.length ? '' : 'disabled ') + 'style="background:var(--gr);color:#fff;border:none;border-radius:6px;padding:6px 16px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">' + _jxiGoLabel(act) + '</button>' +
+        '<button id="jxiGo" onclick="journalImportExcelSave()" ' + (act.adds.length || act.upd.length || act.removes.length ? '' : 'disabled ') + 'style="background:var(--gr);color:#fff;border:none;border-radius:6px;padding:6px 16px;font-family:var(--M);font-size:9px;font-weight:700;cursor:pointer">' + _jxiGoLabel(act) + '</button>' +
       '</div></div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
   var box = document.querySelector('#jxiModal .modal-box');
@@ -24728,13 +24798,13 @@ async function journalImportExcelSave() {
   var pfVal = (document.getElementById('jxiPortfolio') || {}).value || '';
   var progress = document.getElementById('jxiProgress');
   var say = function(t) { if (progress) progress.textContent = t; };
-  if (!todo.length && !act.upd.length && !act.closes.length) { say('Nothing selected.'); return; }
+  if (!todo.length && !act.upd.length && !act.removes.length) { say('Nothing selected.'); return; }
   var pf = portfolioManager.getAll().filter(function(p) { return String(p.id) === pfVal || (!pfVal && portfolioManager.getAll().length === 1); })[0];
   if (todo.length && !pf) { say('Choose a portfolio first.'); return; }
   s.busy = true;
   var go = document.getElementById('jxiGo');
   if (go) go.disabled = true;
-  var saved = 0, updated = 0, closed = 0, backendOk = 0, localOnly = 0, failed = [], lastId = 0;
+  var saved = 0, updated = 0, removedLegs = 0, removedTrades = 0, backendOk = 0, localOnly = 0, failed = [], lastId = 0;
   var settle = async function() {
     var outcome = await _awaitJournalBackendWrite(journalManager._lastBackendWrite);
     if (outcome && outcome.ok) backendOk++; else localOnly++;
@@ -24766,21 +24836,38 @@ async function journalImportExcelSave() {
       failed.push(cs[0].ticker + ': ' + (e && e.message || e));
     }
   }
-  // 2. legs that left the file, closed at the price the user typed (P&L is derived from prices by closeLegs)
-  var closeDate = s.closeDate || new Date().toISOString().substring(0, 10);
-  var closeGroups = perTrade(act.closes);
-  for (k = 0; k < closeGroups.length; k++) {
-    var cl = closeGroups[k].filter(function(c) { return stillThere(c); });
-    if (!cl.length) { failed.push(closeGroups[k][0].ticker + ': leg changed in the Journal meanwhile'); continue; }
-    say('Closing ' + (k + 1) + ' / ' + closeGroups.length + ' — ' + cl[0].ticker + '…');
+  // 2. legs that left the file are REMOVED. A trade with no leg left goes out of the Journal (so out of the Portfolio too), through the
+  //    same backend-first delete as the trash button; otherwise only its departed legs are taken off. Planned again against the
+  //    Journal as it is NOW, so a trade that changed since the preview is reported, never touched on a stale plan.
+  var planned = [];
+  act.removes.forEach(function(r) { r.legs.forEach(function(c) { planned.push(c); }); });
+  var nowGone = planned.filter(function(c) { return stillThere(c); });
+  var nowTrades = [];
+  nowGone.forEach(function(c) { var t = journalManager.getById(c.tradeId); if (t && nowTrades.indexOf(t) < 0) nowTrades.push(t); });
+  var liveRemovals = _jxiPlanRemovals(nowGone, nowTrades);
+  act.removes.forEach(function(r) {
+    var lr = liveRemovals.filter(function(x) { return String(x.tradeId) === String(r.tradeId); })[0];
+    if (!lr || lr.legs.length !== r.legs.length || lr.kind !== r.kind) failed.push(r.ticker + ': trade changed in the Journal meanwhile \u2014 not removed');
+  });
+  for (k = 0; k < liveRemovals.length; k++) {
+    var rm = liveRemovals[k];
+    var planOf = act.removes.filter(function(r) { return String(r.tradeId) === String(rm.tradeId); })[0];
+    if (!planOf || planOf.legs.length !== rm.legs.length || planOf.kind !== rm.kind) continue;       // already reported above
+    say('Removing ' + (k + 1) + ' / ' + liveRemovals.length + ' \u2014 ' + rm.ticker + '\u2026');
     try {
-      journalManager.closeLegs(cl[0].tradeId, cl.map(function(c) {
-        return { idx: c.idx, closeDate: closeDate, closePrice: _jxiClosePriceOf(s.closePrice[s.sync.gone.indexOf(c)]) };
-      }));
-      closed += cl.length;
-      await settle();
+      if (rm.kind === 'TRADE') {
+        var gone = await deleteTrade(rm.tradeId, { skipConfirm: true, quiet: true });
+        if (gone) { removedTrades++; removedLegs += rm.legs.length; backendOk++; }
+        else failed.push(rm.ticker + ': delete not confirmed by the backend \u2014 trade kept');
+      } else {
+        var trd = journalManager.getById(rm.tradeId);
+        journalManager.addAdjustment(trd.id, { type: 'NOTE', notes: _jxiRemovalNote(rm.legs, s.file) });
+        journalManager.update(trd.id, _jxiTradeAfterRemoval(trd, rm.legs));
+        removedLegs += rm.legs.length;
+        await settle();
+      }
     } catch (e) {
-      failed.push(cl[0].ticker + ': ' + (e && e.message || e));
+      failed.push(rm.ticker + ': ' + (e && e.message || e));
     }
   }
   // 3. new trades
@@ -24808,12 +24895,12 @@ async function journalImportExcelSave() {
   var did = [];
   if (saved) did.push('imported ' + saved + ' trade(s) into ' + pf.name);
   if (updated) did.push('updated ' + updated + ' leg(s)');
-  if (closed) did.push('closed ' + closed + ' leg(s)');
+  if (removedLegs) did.push('removed ' + removedLegs + ' leg(s) from the Journal and Portfolio' + (removedTrades ? ' (' + removedTrades + ' whole trade(s))' : ''));
   var msg = (did.length ? did.join(', ').replace(/^./, function(c) { return c.toUpperCase(); }) : 'Nothing applied') +
     (backendOk ? ' — ' + backendOk + ' confirmed by the backend' : '') +
     (localOnly ? ' — ' + localOnly + ' saved locally only (backend not confirmed)' : '') + (failed.length ? ' — FAILED: ' + failed.join('; ') : '');
   showToast(msg, failed.length || localOnly ? 'warn' : 'ok');
-  console.log('[JOURNAL EXCEL IMPORT]', JSON.stringify({ file: s.file, portfolio: pf ? pf.id : null, saved: saved, updated: updated, closed: closed, backendOk: backendOk, localOnly: localOnly, failed: failed }));
+  console.log('[JOURNAL EXCEL IMPORT]', JSON.stringify({ file: s.file, portfolio: pf ? pf.id : null, saved: saved, updated: updated, removedLegs: removedLegs, removedTrades: removedTrades, backendOk: backendOk, localOnly: localOnly, failed: failed }));
 }
 
 async function submitTrade() {
@@ -25067,14 +25154,17 @@ async function submitTrade() {
 }
 
 async function deleteTrade(id, opts) {
+  // opts.quiet: the caller reports (one summary for a batch) and renders once; this then only answers true / false
+  var quiet = !!(opts && opts.quiet);
+  var tell = function(msg, kind) { if (!quiet) showToast(msg, kind); };
   if (!(opts && opts.skipConfirm) && !confirm('Delete this trade entry?')) return false;
   var sid = String(id);
   if (!journalManager.getById(id)) {
-    showToast('Trade not found locally; refresh Journal before deleting.', 'warn');
+    tell('Trade not found locally; refresh Journal before deleting.', 'warn');
     return false;
   }
   if (!BACKEND || !S.backendKey) {
-    showToast('Cannot confirm backend deletion: backend/API key unavailable. Trade kept.', 'warn');
+    tell('Cannot confirm backend deletion: backend/API key unavailable. Trade kept.', 'warn');
     return false;
   }
   // Backend-first: never make a trade disappear locally until DELETE is
@@ -25082,7 +25172,7 @@ async function deleteTrade(id, opts) {
   // the trade in place, rather than resurrecting it on the next backend sync.
   var deleted = await jDeleteRemote(sid);
   if (!deleted) {
-    showToast('Delete NOT confirmed by backend. Trade kept; check connection and retry.', 'warn');
+    tell('Delete NOT confirmed by backend. Trade kept; check connection and retry.', 'warn');
     return false;
   }
   _jConfirmedDeletedTradeIds[sid] = true;
@@ -25115,6 +25205,7 @@ async function deleteTrade(id, opts) {
   } catch (_legacyDeleteErr) {
     console.warn('[JOURNAL-SYNC] Could not purge confirmed trade from legacy store:', _legacyDeleteErr);
   }
+  if (quiet) return true;
   showToast('Trade deleted from backend.', 'ok');
   renderPortfolioJournalView();
   if (isPortfolioViewActive()) {
