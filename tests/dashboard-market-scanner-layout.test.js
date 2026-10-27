@@ -225,6 +225,16 @@ assert.equal(rv.devContext('deploy-preview-545--spontaneous-queijadas-118823.net
   const owners = scope.contractOwners(contract);
   assert.ok(owners.includes('js/services/ai-scan-context.js'));
   assert.ok(owners.includes('tests/ai-scan-context-boundary-contract.test.js'));
+  const git = (args) => require('child_process').execFileSync('git', args, {
+    cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024
+  });
+  const historical = scope.historicalChangedFiles(git, 'aa76d50', contract).split(/\\r?\\n/).filter(Boolean);
+  assert.ok(historical.includes('js/services/ai-scan-context.js'),
+    'the real audited original extraction remains included');
+  assert.equal(historical.includes('devtools/rv-pilot-audit.js'), false,
+    'the real later RV preview module does not become an AI scan extraction');
+  assert.equal(historical.includes('devtools/README.md'), false,
+    'later preview docs are not retroactively attributed to the old extraction');
   assert.equal(scope.ownsCommit(['devtools/rv-pilot-audit.js', 'tests/dashboard-market-scanner-layout.test.js'], owners), false,
     'unrelated DEV feature does not become an older extraction');
   assert.equal(scope.ownsCommit(['js/services/ai-scan-context.js', 'devtools/sneaky.js'], owners), true,
