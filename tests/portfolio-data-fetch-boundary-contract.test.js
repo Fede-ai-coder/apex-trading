@@ -784,7 +784,7 @@ eq(U.isApplied(INDEX.replace(MODULE_TAG, MODULE_TAG + '\n' + MODULE_TAG)), false
 // ─────────────────────────────────────────────────────────────────────────────
 section('12. Exact production scope, and the temporary audit is gone');
 // ─────────────────────────────────────────────────────────────────────────────
-const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'])
+const committed = require('./lib/extraction-change-scope').historicalChangedFiles(git, BASE_SHA, __filename)
   .trim().split(/\r?\n/).filter(Boolean);
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));
