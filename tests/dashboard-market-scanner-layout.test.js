@@ -105,3 +105,113 @@ assert.match(uiSource,/setTimeout\(\(\) => controller\.abort\(\), 20000\)/);
 assert.match(uiSource,/if \(current !== controller \|\| host !== runHost\) return;/);
 assert.match(uiSource,/if \(current === controller && host === runHost\)/);
 assert.doesNotMatch(uiSource,/localStorage|sessionStorage/);
+
+
+// Exercise the actual browser lifecycle, not only source-code regexes. A late
+// resolved fetch must neither enqueue more requests nor corrupt a reopened UI.
+// A late timeout from the cancelled run must not abort the new controller.
+const vm = require('vm');
+async function testRvCloseReopenLifecycle() {
+  const roots = [], hosts = [], requests = [], timeouts = [];
+  let launcher = null;
+  function element() {
+    return {
+      style: {}, handlers: {}, textContent: '', innerHTML: '',
+      addEventListener(type, fn) { this.handlers[type] = fn; },
+      setAttribute() {},
+      focus() { this.focused = true; },
+      remove() { this.removed = true; },
+      click() { return this.handlers.click(); }
+    };
+  }
+  const document = {
+    readyState: 'complete',
+    getElementById(id) { return id === 'apex-rv-pilot-launcher' ? launcher : null; },
+    createElement(tag) {
+      const el = element();
+      if (tag === 'div') {
+        const fields = Object.fromEntries(
+          ['run', 'state', 'results', 'close'].map(id => [id, element()]));
+        fields.shade = element();
+        const root = {
+          fields, getElementById(id) { return fields[id]; },
+          querySelector(selector) {
+            assert.equal(selector, '.shade');
+            return fields.shade;
+          }
+        };
+        el.attachShadow = () => root;
+        roots.push(root);
+        hosts.push(el);
+      }
+      return el;
+    },
+    body: {
+      appendChild(el) {
+        if (el.id === 'apex-rv-pilot-launcher') launcher = el;
+      }
+    }
+  };
+  const context = {
+    module: { exports: {} }, document,
+    window: { location: { hostname: 'deploy-preview-545--spontaneous-queijadas-118823.netlify.app' } },
+    BACKEND: devBackend, S: { backendKey: 'fixture-only-api-key' },
+    AbortController,
+    setTimeout(fn) { timeouts.push(fn); return timeouts.length; },
+    clearTimeout() {},
+    fetch(url, options) {
+      return new Promise(resolve => requests.push({ url, options, resolve }));
+    }
+  };
+  vm.runInNewContext(uiSource, context, { filename: 'rv-pilot-audit.js' });
+  assert.ok(launcher, 'DEV launcher mounts on the exact preview hostname');
+
+  launcher.click();
+  const first = roots[0].fields;
+  const firstRun = first.run.click();
+  assert.equal(requests.length, 1, 'first run begins with one GET');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.headers['x-api-key'], 'fixture-only-api-key');
+  assert.ok(requests[0].url.startsWith(devBackend + '/debug/volatility-carry/rv-pilot-readiness?'));
+  first.close.click();
+  assert.equal(hosts[0].removed, true);
+  assert.equal(requests[0].options.signal.aborted, true, 'close aborts only the old run');
+
+  launcher.click();
+  assert.equal(roots.length, 2, 'open creates an independent panel');
+  const second = roots[1].fields;
+  const secondRun = second.run.click();
+  assert.equal(requests.length, 2, 'reopen starts another run');
+  timeouts[0]();  // Deliberately fire an obsolete timer even after clearTimeout.
+  assert.equal(requests[1].options.signal.aborted, false,
+    'stale timer cannot abort a newly opened run');
+
+  // Simulate a network API that resolves despite abort(), as JSON parsing can.
+  requests[0].resolve({ ok: true, status: 200, json: async () => pilotPages()[0] });
+  await new Promise(resolve => setImmediate(resolve));
+  await firstRun;
+  assert.equal(requests.length, 2, 'old run cannot enqueue page 2 after closing');
+  assert.equal(second.state.textContent.startsWith('Lettura 1/4'), true,
+    'old completion does not overwrite the reopened status');
+
+  const pages = pilotPages();
+  for (let i = 0; i < 4; i++) {
+    requests[i + 1].resolve({ ok: true, status: 200, json: async () => pages[i] });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests.length, Math.min(2 + i + 1, 5),
+      'only the live run advances one page at a time');
+  }
+  await secondRun;
+  assert.match(second.state.textContent, /Completato: 20 membri verificati/);
+  assert.match(second.results.innerHTML, /T19/);
+  assert.equal(second.run.disabled, false, 'button is restored');
+  assert.equal(requests[1].options.signal.aborted, false);
+}
+assert.equal(rv.devContext('evil-deploy-preview.netlify.app', devBackend), false,
+  'DEV host check rejects unrelated preview hosts');
+assert.equal(rv.devContext('deploy-preview-545--spontaneous-queijadas-118823.netlify.app.evil.example', devBackend), false,
+  'DEV host check rejects deceptive suffixes');
+testRvCloseReopenLifecycle().catch(error => {
+  console.error('rv-pilot close/reopen lifecycle failed:', error);
+  process.exitCode = 1;
+});
