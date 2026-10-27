@@ -840,7 +840,7 @@ section('7. Every documented failure, with its exact message');
 section('8. Exact production scope, and the temporary audit is gone');
 // ─────────────────────────────────────────────────────────────────────────────
 {
-  const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const committed = require('./lib/extraction-change-scope').historicalChangedFiles(git, BASE_SHA, __filename).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
