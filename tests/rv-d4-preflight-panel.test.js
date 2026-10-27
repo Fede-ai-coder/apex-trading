@@ -8,7 +8,7 @@ const make = () => ({
   blockers:['ACCOUNT_WIDE_DXLINK_SESSION_BUDGET_UNVERIFIED'],
   providerBudget:{sessionsLimitVerified:false,entitlementVerified:false,quoteTokenRequestBudgetVerified:false},
   symbols:['AAPL','SPY'].map(symbol=>({symbol,rv20:{status:'UNAVAILABLE'},
-    rv60:{status:'UNAVAILABLE'},pendingSessionEvidence:{rv20:[],rv60:[]}}))
+    rv60:{status:'UNAVAILABLE'},pendingSessionEvidence:{rv20:[{sessionDate:'2026-10-26',reason:'NOT_VALIDATED'}],rv60:[]}}))
 });
 test('renders NO-GO for AAPL and SPY',()=>{
   const html=renderD4Preflight(make());
@@ -26,4 +26,10 @@ test('rejects unsafe or incomplete responses',()=>{
     const d=make();change(d);
     assert.throws(()=>renderD4Preflight(d),/D4_PREFLIGHT_INVALID_OR_UNSAFE_RESPONSE/);
   }
+});
+
+test('renders structured pending session evidence, not object coercion',()=>{
+  const html=renderD4Preflight(make());
+  assert.match(html,/2026-10-26 \\(NOT_VALIDATED\\)/);
+  assert.doesNotMatch(html,/\\[object Object\\]/);
 });
