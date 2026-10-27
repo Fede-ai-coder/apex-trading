@@ -52,10 +52,20 @@ function historicalChangedFiles(git, baseSha, callerFile) {
 
   const original = lines(git(['diff', '--name-only', '--no-renames', baseSha, CERTIFIED_SHA]));
   const owners = contractOwners(callerFile);
+  // One first-parent walk, including the merge commit's diff against its
+  // first parent. Avoid O(commits × contracts) Git subprocess spawning.
+  const log = git(['log', '--first-parent', '-m', '--name-only', '--no-renames',
+    '--format=@@EXTRACTION_COMMIT:%H', CERTIFIED_SHA + '..HEAD']);
   const commits = [];
-  for (const sha of lines(git(['rev-list', '--reverse', CERTIFIED_SHA + '..HEAD']))) {
-    const touched = lines(git(['diff', '--name-only', '--no-renames', sha + '^1', sha]));
-    commits.push({ sha, touched });
+  let current = null;
+  for (const line of lines(log)) {
+    if (line.startsWith('@@EXTRACTION_COMMIT:')) {
+      current = { sha: line.slice('@@EXTRACTION_COMMIT:'.length), touched: [] };
+      commits.push(current);
+    } else {
+      if (!current) throw new Error('Unattributed path in extraction commit walk: ' + line);
+      current.touched.push(line);
+    }
   }
   return includeOwnedCommits(original, commits, owners).join('\n') + '\n';
 }
