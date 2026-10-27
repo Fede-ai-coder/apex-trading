@@ -170,6 +170,8 @@ async function testRvCloseReopenLifecycle() {
   const first = roots[0].fields;
   const firstRun = first.run.click();
   assert.equal(requests.length, 1, 'first run begins with one GET');
+  await first.run.click();
+  assert.equal(requests.length, 1, 'concurrent click cannot enqueue duplicate GET');
   assert.equal(requests[0].options.method, 'GET');
   assert.equal(requests[0].options.headers['x-api-key'], 'fixture-only-api-key');
   assert.ok(requests[0].url.startsWith(devBackend + '/debug/volatility-carry/rv-pilot-readiness?'));
@@ -182,6 +184,8 @@ async function testRvCloseReopenLifecycle() {
   const second = roots[1].fields;
   const secondRun = second.run.click();
   assert.equal(requests.length, 2, 'reopen starts another run');
+  await second.run.click();
+  assert.equal(requests.length, 2, 'second panel also serializes concurrent clicks');
   timeouts[0]();  // Deliberately fire an obsolete timer even after clearTimeout.
   assert.equal(requests[1].options.signal.aborted, false,
     'stale timer cannot abort a newly opened run');
@@ -206,6 +210,8 @@ async function testRvCloseReopenLifecycle() {
   assert.match(second.results.innerHTML, /T19/);
   assert.equal(second.run.disabled, false, 'button is restored');
   assert.equal(requests[1].options.signal.aborted, false);
+  second.shade.click();
+  assert.equal(hosts[1].removed, true, 'backdrop closes the completed panel');
 }
 assert.equal(rv.devContext('evil-deploy-preview.netlify.app', devBackend), false,
   'DEV host check rejects unrelated preview hosts');
