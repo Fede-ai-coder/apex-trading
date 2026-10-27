@@ -13,8 +13,7 @@
   function devContext(hostname, backend) {
     const host = String(hostname || '');
     const allowedHost = host === 'localhost' || host === '127.0.0.1' ||
-      host.includes('deploy-preview') ||
-      host.includes('--spontaneous-queijadas-118823.netlify.app');
+      /^deploy-preview-[0-9]+--spontaneous-queijadas-118823\.netlify\.app$/.test(host);
     return allowedHost && backend === SCRIPT_BACKEND;
   }
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({
@@ -234,10 +233,14 @@
         try {
           const pages = [];
           for (let offset = 0; offset < TOTAL; offset += PAGE_SIZE) {
+            // A resolved fetch/JSON parse may race with close(), even after abort.
+            // Never schedule the next page for a stale or cancelled panel run.
+            if (signal.aborted || current !== controller || host !== runHost) return;
             state.textContent = 'Lettura ' + (offset / PAGE_SIZE + 1) + '/4…';
-            pages.push(await fetchPage(offset, pages[0]?.membershipHash, S.backendKey, signal));
+            const page = await fetchPage(offset, pages[0]?.membershipHash, S.backendKey, signal);
+            if (signal.aborted || current !== controller || host !== runHost) return;
+            pages.push(page);
           }
-          if (signal.aborted) throw Error('RV_AUDIT_ABORTED');
           const data = combinePages(pages);
           if (current !== controller || host !== runHost) return;
           results.innerHTML = renderTable(data);
