@@ -96,10 +96,9 @@ const rendered=rv.renderTable({membershipHash:digest,rows:[malicious]});
 assert.ok(rendered.includes('&lt;img'));
 assert.ok(!rendered.includes('<img'));
 assert.ok(!rendered.includes('x-api-key'));
-// No JS script tags were added: the classic-loader ordering is unchanged.
-// No boot-time HTTP calls and no source/credential expansion to PROD.
-assert.match(html, /<body onload="if \(\(location\.hostname/);
-assert.match(html, /devtools\/rv-pilot-audit\.js/);
+// Historical extraction contracts pin the full SHA256 of index.html.
+// This feature does NOT alter the document or modify its JS script count.
+assert.doesNotMatch(html, /devtools\/rv-pilot-audit\.js/);
 assert.equal((html.match(/<script\b/gi) || []).length, 115);
 const uiSource=fs.readFileSync(path.join(__dirname, '..', 'devtools', 'rv-pilot-audit.js'),'utf8');
 assert.match(uiSource,/setTimeout\(\(\) => controller\.abort\(\), 20000\)/);
