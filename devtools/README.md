@@ -6,7 +6,7 @@ The frontend's historical extraction contracts pin every byte of `index.html`. B
 
 ## Open in APEX DEV
 
-1. Open and log in to APEX on its DEV/preview frontend, with the backend resolved to `https://apex-tastytrade-backend-dev-production.up.railway.app`.
+1. Open the **PR #545 deploy preview** at `https://deploy-preview-545--spontaneous-queijadas-118823.netlify.app`, log in to APEX there, and confirm that the active `BACKEND` is `https://apex-tastytrade-backend-dev-production.up.railway.app`. The ordinary production Netlify hostname is deliberately rejected; other DEV hosts are not automatically authorized.
 2. In the browser DevTools **Console**, paste the following *once*:
 
 ```js
@@ -23,7 +23,7 @@ Create a browser bookmark, paste this code into its **URL** field, then click th
 javascript:(()=>{if(document.getElementById('apex-rv-pilot-launcher'))return;const s=document.createElement('script');s.src='/devtools/rv-pilot-audit.js';document.head.appendChild(s);})();
 ```
 
-The panel has a secondary host/backend check and will not initialize on the production Netlify host. The button is session-local and not permanently installed; the bookmarklet is repeatable. If the server returns 403 because diagnostic flags are disabled, it reports the error rather than changing settings.
+The panel has a secondary *exact preview hostname + DEV backend URL* check and will not initialize on the production Netlify host. If the button does not appear after loading, verify that the preview actually serves `/devtools/rv-pilot-audit.js`, that the page's content-security policy permits that same-origin script, and that `BACKEND` matches the exact DEV URL; do not work around the guard with an external script URL. The button is session-local and not permanently installed; the bookmarklet is repeatable. If the server returns 403 because diagnostic flags are disabled, it reports the error rather than changing settings.
 
 ### Non-goals / follow-up
 
