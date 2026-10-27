@@ -181,7 +181,9 @@
         ' · sedute ' + esc(w?.validatedSessions ?? '—') + '/' +
         esc(w?.closesRequired ?? '—') +
         '<div class="sub">Mancanti: ' + esc(Array.isArray(pending) ?
-          pending.join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
+          pending.map(item => typeof item?.sessionDate === 'string' ?
+          item.sessionDate + ' (' + String(item.reason || 'NOT_VALIDATED') + ')' :
+          'voce non valida').join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
         '<div class="sub">' + esc((w?.reasons || []).join(', ') || '—') + '</div>';
       return '<tr><th scope="row">' + esc(s.symbol) + '</th><td>' +
         window(s.rv20, s.pendingSessionEvidence?.rv20) + '</td><td>' +
