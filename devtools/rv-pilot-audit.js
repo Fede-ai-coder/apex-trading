@@ -162,6 +162,69 @@
     return json;
   }
 
+  // D4 preflight is a separate read-only audit; it NEVER authorizes execution.
+  function renderD4Preflight(data) {
+    if (!data || data.ok !== true || data.readOnly !== true ||
+        data.executionAuthorized !== false || data.liveAcquisitionsStarted !== false ||
+        data.version !== 'RV_D4_PROVIDER_PREFLIGHT_V1' ||
+        data.decision !== 'NO_GO_UNTIL_PROVIDER_AND_EVIDENCE_GATES_VERIFIED' ||
+        !Array.isArray(data.symbols) || data.symbols.length !== 2 ||
+        data.symbols[0]?.symbol !== 'AAPL' || data.symbols[1]?.symbol !== 'SPY' ||
+        !Array.isArray(data.blockers) || !data.providerBudget ||
+        data.providerBudget.sessionsLimitVerified !== false ||
+        data.providerBudget.entitlementVerified !== false ||
+        data.providerBudget.quoteTokenRequestBudgetVerified !== false)
+      throw Error('D4_PREFLIGHT_INVALID_OR_UNSAFE_RESPONSE');
+    const yes = v => v === true ? 'SÌ' : v === false ? 'NO' : 'NON NOTO';
+    const rows = data.symbols.map(s => {
+      const window = (w, pending) => esc(w?.status || 'UNAVAILABLE') +
+        ' · sedute ' + esc(w?.validatedSessions ?? '—') + '/' +
+        esc(w?.closesRequired ?? '—') +
+        '<div class="sub">Mancanti: ' + esc(Array.isArray(pending) ?
+          pending.join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
+        '<div class="sub">' + esc((w?.reasons || []).join(', ') || '—') + '</div>';
+      return '<tr><th scope="row">' + esc(s.symbol) + '</th><td>' +
+        window(s.rv20, s.pendingSessionEvidence?.rv20) + '</td><td>' +
+        window(s.rv60, s.pendingSessionEvidence?.rv60) + '</td><td>' +
+        'Evidenza: ' + yes(s.observationAvailable) +
+        ' · troncata: ' + yes(s.evidenceTruncated) +
+        '<div class="sub">Errore: ' + esc(s.sourceError || '—') + '</div></td></tr>';
+    }).join('');
+    const feed = data.feed || {}, gate = data.admission || {};
+    return '<h3>NO-GO · Preflight D4 AAPL/SPY (sola lettura)</h3>' +
+      '<p class="note">Nessuna acquisizione autorizzata. Il feed locale NON dimostra il budget DXLink dell’account.</p>' +
+      '<p>Blocchi: ' + esc(data.blockers.join(', ') || '—') + '</p>' +
+      '<p>Sessione: ' + esc(data.asOfSessionDate ?? '—') +
+      ' · Verifica: ' + esc(data.generatedAt ?? '—') + '</p>' +
+      '<p>Feed: connesso ' + yes(feed.connected) + ', pronto ' + yes(feed.ready) +
+      ', utilizzabile ' + yes(feed.usable) + ', token disponibile ' +
+      yes(feed.quoteTokenAvailable) + ', token scaduto ' + yes(feed.quoteTokenStale) +
+      ', pressione ' + yes(feed.candleGlobalCapActive || feed.candleSubscriptionBackoffActive ||
+      feed.candleSubscriptionLimitHit) + '</p>' +
+      '<p>Gate SQLite: disponibile ' + yes(gate.available) + ', lease attivo ' +
+      yes(gate.activeLease) + ', avvii ultima ora ' + esc(gate.startsPastHour ?? '—') +
+      ', ultimo avvio ' + esc(gate.lastStartAt ?? '—') + '</p>' +
+      '<p>Budget provider: NON VERIFICATO · entitlement: NON VERIFICATO · quote-token budget: NON VERIFICATO</p>' +
+      '<div class="scroll"><table><thead><tr><th>Simbolo</th><th>RV20</th><th>RV60</th>' +
+      '<th>Fonte</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+  }
+
+  async function fetchD4Preflight(apiKey, signal) {
+    const resp = await fetch(BACKEND + '/debug/volatility-carry/daily-evidence/pilot-preflight', {
+      method: 'GET', cache: 'no-store',
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' }, signal,
+    });
+    let json;
+    try { json = await resp.json(); }
+    catch (_) { throw Error('D4_PREFLIGHT_NON_JSON_' + resp.status); }
+    if (!resp.ok) {
+      if (resp.status === 401) throw Error('Accesso negato: effettua nuovamente il login APEX.');
+      if (resp.status === 403) throw Error('Diagnostica D4 non abilitata su DEV.');
+      throw Error('D4_PREFLIGHT_HTTP_' + resp.status);
+    }
+    return json;
+  }
+
   function setupUi() {
     if (document.getElementById('apex-rv-pilot-launcher')) return;
     const trigger = document.createElement('button');
@@ -208,6 +271,7 @@
         '<p class="note">20 membri IV, 4 pagine × 5. Legge i dati esistenti, senza avviare acquisti,' +
         ' acquisizioni, ordini o nuovi feed.</p>' +
         '<button type="button" id="run">Analizza i 20 titoli</button>' +
+        '<button type="button" id="runD4">Preflight D4 · AAPL/SPY</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
         '<div id="results"></div></section>';
       const run = root.getElementById('run');
@@ -215,6 +279,38 @@
       const results = root.getElementById('results');
       root.getElementById('close').addEventListener('click', close);
       root.querySelector('.shade').addEventListener('click', close);
+      const runD4 = root.getElementById('runD4');
+      runD4.addEventListener('click', async () => {
+        if (busy) return;
+        if (typeof S === 'undefined' || !S.backendKey) {
+          state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
+          return;
+        }
+        busy = true; run.disabled = true; runD4.disabled = true;
+        results.textContent = ''; state.className = 'info';
+        const controller = new AbortController();
+        current = controller;
+        const runHost = host;
+        const timeout = setTimeout(() => controller.abort(), 20000);
+        try {
+          state.textContent = 'Lettura preflight D4…';
+          const data = await fetchD4Preflight(S.backendKey, controller.signal);
+          if (controller.signal.aborted || current !== controller || host !== runHost) return;
+          results.innerHTML = renderD4Preflight(data);
+          state.textContent = 'Preflight D4 letto. NO-GO: budget account non attestato.';
+        } catch (error) {
+          if (current !== controller || host !== runHost) return;
+          state.textContent = controller.signal.aborted ?
+            'Richiesta annullata o scaduta.' : error?.message || 'Errore di lettura D4.';
+          state.className = 'error';
+        } finally {
+          clearTimeout(timeout);
+          if (current === controller && host === runHost) {
+            run.disabled = false; runD4.disabled = false;
+            busy = false; current = null;
+          }
+        }
+      });
       run.addEventListener('click', async () => {
         if (busy) return;
         if (typeof S === 'undefined' || !S.backendKey) {
@@ -223,6 +319,7 @@
         }
         busy = true;
         run.disabled = true;
+        runD4.disabled = true;
         results.textContent = '';
         state.className = 'info';
         const controller = new AbortController();
@@ -257,6 +354,7 @@
           clearTimeout(timeout);
           if (current === controller && host === runHost) {
             run.disabled = false;
+            runD4.disabled = false;
             busy = false;
             current = null;
           }
@@ -269,7 +367,7 @@
     document.body.appendChild(trigger);
   }
   if (typeof module !== 'undefined' && module.exports)
-    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable, available };
+    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable, available, renderD4Preflight, fetchD4Preflight };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location?.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
