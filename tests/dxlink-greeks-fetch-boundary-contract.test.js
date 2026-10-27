@@ -1320,7 +1320,7 @@ section('9. Reachability, the chain, and exact production scope');
     '…and this layer follows the post-#406 convention, which its own export settles');
 }
 {
-  const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const committed = require('./lib/extraction-change-scope').historicalChangedFiles(git, BASE_SHA, __filename).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();
