@@ -52,19 +52,29 @@ function historicalChangedFiles(git, baseSha, callerFile) {
 
   const original = lines(git(['diff', '--name-only', '--no-renames', baseSha, CERTIFIED_SHA]));
   const owners = contractOwners(callerFile);
-  // One first-parent walk, including the merge commit's diff against its
-  // first parent. Avoid O(commits × contracts) Git subprocess spawning.
-  const log = git(['log', '--first-parent', '-m', '--name-only', '--no-renames',
-    '--format=@@EXTRACTION_COMMIT:%H', CERTIFIED_SHA + '..HEAD']);
+  // GitHub Actions checks out a SYNTHETIC PR merge commit. A first-parent
+  // diff of that merge contains *every* PR file, including unrelated DEV
+  // additions. Never treat that aggregated diff as one owner commit.
+  // Walk individual changes on BOTH sides of every merge instead; capture
+  // genuine merge-only conflict resolutions through a combined (-c) diff.
+  // Each Git log is one subprocess, not one subprocess per commit.
+  const logs = [
+    git(['log', '--full-history', '--no-merges', '--name-only', '--no-renames',
+      '--format=@@EXTRACTION_COMMIT:%H', CERTIFIED_SHA + '..HEAD']),
+    git(['log', '--full-history', '--merges', '-c', '--name-only', '--no-renames',
+      '--format=@@EXTRACTION_COMMIT:%H', CERTIFIED_SHA + '..HEAD'])
+  ];
   const commits = [];
-  let current = null;
-  for (const line of lines(log)) {
-    if (line.startsWith('@@EXTRACTION_COMMIT:')) {
-      current = { sha: line.slice('@@EXTRACTION_COMMIT:'.length), touched: [] };
-      commits.push(current);
-    } else {
-      if (!current) throw new Error('Unattributed path in extraction commit walk: ' + line);
-      current.touched.push(line);
+  for (const log of logs) {
+    let current = null;
+    for (const line of lines(log)) {
+      if (line.startsWith('@@EXTRACTION_COMMIT:')) {
+        current = { sha: line.slice('@@EXTRACTION_COMMIT:'.length), touched: [] };
+        commits.push(current);
+      } else {
+        if (!current) throw new Error('Unattributed path in extraction commit walk: ' + line);
+        current.touched.push(line);
+      }
     }
   }
   return includeOwnedCommits(original, commits, owners).join('\n') + '\n';
