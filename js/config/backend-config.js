@@ -30,20 +30,3 @@ function resolveBackendUrl(){
 
 const BACKEND = resolveBackendUrl();
 console.log('[BACKEND CONFIG] host='+(location.hostname||'')+' backend='+BACKEND);
-
- 
-// Optional DEV-only RV pilot audit panel. Kept OUTSIDE the pinned backend URL
-// resolver block; no app state, requests, or timers are used at boot.
-// This is not part of the byte-exact extraction: it is new feature wiring.
-if (typeof document !== 'undefined' && typeof document.createElement === 'function' &&
-    BACKEND === DEV_BACKEND &&
-    (location.hostname === 'localhost' || location.hostname === '127.0.0.1' ||
-     location.hostname.includes('deploy-preview') ||
-     location.hostname.includes('--spontaneous-queijadas-118823.netlify.app'))) {
-  (function () {
-    const script = document.createElement('script');
-    script.src = './js/ui/rv-pilot-audit.js';
-    script.async = true;
-    (document.head || document.documentElement).appendChild(script);
-  })();
-}

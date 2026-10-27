@@ -21,7 +21,11 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[c]);
   const available = w => w && w.status === 'AVAILABLE' &&
-    typeof w.value === 'number' && Number.isFinite(w.value) && w.value >= 0;
+    typeof w.value === 'number' && Number.isFinite(w.value) && w.value >= 0 &&
+    (w.closesRequired === 21 || w.closesRequired === 61) &&
+    w.validatedSessions === w.closesRequired &&
+    w.returnsUsed === w.closesRequired - 1 &&
+    typeof w.inputsDigest === 'string' && HASH.test(w.inputsDigest);
 
   function combinePages(pages) {
     if (!Array.isArray(pages) || pages.length !== TOTAL / PAGE_SIZE)
@@ -171,7 +175,7 @@
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, busy = false;
     function close() {
-      current?.abort();
+      if (current) current.abort();
       current = null;
       busy = false;
       if (host) { host.remove(); host = null; }
@@ -221,9 +225,12 @@
         busy = true;
         run.disabled = true;
         results.textContent = '';
-        current = new AbortController();
-        const timeout = setTimeout(() => current?.abort(), 20000);
-        const signal = current.signal;
+        state.className = 'info';
+        const controller = new AbortController();
+        current = controller;
+        const runHost = host;
+        const timeout = setTimeout(() => controller.abort(), 20000);
+        const signal = controller.signal;
         try {
           const pages = [];
           for (let offset = 0; offset < TOTAL; offset += PAGE_SIZE) {
@@ -232,19 +239,24 @@
           }
           if (signal.aborted) throw Error('RV_AUDIT_ABORTED');
           const data = combinePages(pages);
+          if (current !== controller || host !== runHost) return;
           results.innerHTML = renderTable(data);
           state.textContent = 'Completato: 20 membri verificati, nessun valore inventato.';
         } catch (error) {
-          if (host && !signal.aborted) {
+          if (current !== controller || host !== runHost) return;
+          if (!signal.aborted) {
             state.textContent = error?.message || 'Errore di lettura.';
-            state.className = 'error';
-          } else if (host) {
+          } else {
             state.textContent = 'Richiesta annullata o scaduta.';
-            state.className = 'error';
           }
+          state.className = 'error';
         } finally {
           clearTimeout(timeout);
-          if (host) { run.disabled = false; busy = false; current = null; }
+          if (current === controller && host === runHost) {
+            run.disabled = false;
+            busy = false;
+            current = null;
+          }
         }
       });
       document.body.appendChild(host);
@@ -254,7 +266,7 @@
     document.body.appendChild(trigger);
   }
   if (typeof module !== 'undefined' && module.exports)
-    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable };
+    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable, available };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location?.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
