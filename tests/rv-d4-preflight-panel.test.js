@@ -30,6 +30,6 @@ test('rejects unsafe or incomplete responses',()=>{
 
 test('renders structured pending session evidence, not object coercion',()=>{
   const html=renderD4Preflight(make());
-  assert.match(html,/2026-10-26 \\(NOT_VALIDATED\\)/);
-  assert.doesNotMatch(html,/\\[object Object\\]/);
+  assert.ok(html.includes('2026-10-26 (NOT_VALIDATED)'));
+  assert.ok(!html.includes('[object Object]'));
 });
