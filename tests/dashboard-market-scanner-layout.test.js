@@ -228,7 +228,7 @@ assert.equal(rv.devContext('deploy-preview-545--spontaneous-queijadas-118823.net
   const git = (args) => require('child_process').execFileSync('git', args, {
     cwd: path.join(__dirname, '..'), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024
   });
-  const historical = scope.historicalChangedFiles(git, 'aa76d50', contract).split(/\\r?\\n/).filter(Boolean);
+  const historical = scope.historicalChangedFiles(git, 'aa76d50', contract).split('\n').filter(Boolean);
   assert.ok(historical.includes('js/services/ai-scan-context.js'),
     'the real audited original extraction remains included');
   assert.equal(historical.includes('devtools/rv-pilot-audit.js'), false,
