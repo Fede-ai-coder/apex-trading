@@ -936,7 +936,7 @@ eq(countLiteral(MODULE.replace(RECONNECT_CALL, ''), RECONNECT_CALL), 0,
 // ─────────────────────────────────────────────────────────────────────────────
 section('11. Exact production scope');
 // ─────────────────────────────────────────────────────────────────────────────
-const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'])
+const committed = require('./lib/extraction-change-scope').historicalChangedFiles(git, BASE_SHA, __filename)
   .trim().split(/\r?\n/).filter(Boolean);
 const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
   .split(/\r?\n/).filter(Boolean).map((l) => l.slice(3));

@@ -1049,7 +1049,7 @@ section('8. Reachability, the chain, and exact production scope');
     + 'pair is not the tell the separator is');
 }
 {
-  const committed = git(['diff', '--name-only', '--no-renames', BASE_SHA]).split('\n').filter(Boolean);
+  const committed = require('./lib/extraction-change-scope').historicalChangedFiles(git, BASE_SHA, __filename).split('\n').filter(Boolean);
   const status = git(['status', '--porcelain=v1', '--untracked-files=all'])
     .split('\n').filter(Boolean).map((l) => l.slice(3));
   const changed = Array.from(new Set(committed.concat(status))).sort();

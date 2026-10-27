@@ -1407,9 +1407,7 @@ throws(() => U.undoMcxCharts(INDEX, undefined), /BAD_INPUT/, 'an undefined modul
 // ─────────────────────────────────────────────────────────────────────────────
 section('12. Exact production scope and audit replacement');
 function changedPaths() {
-  const committed = execFileSync('git', ['diff', '--name-only', '--no-renames', BASE_SHA + '...HEAD'], {
-    cwd: ROOT, encoding: 'utf8',
-  }).trim().split(/\r?\n/).filter(Boolean);
+  const committed = require('./lib/extraction-change-scope').historicalChangedFiles((args) => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' }), BASE_SHA, __filename).trim().split(/\r?\n/).filter(Boolean);
   const statusOutput = execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
     cwd: ROOT, encoding: 'utf8',
   });
