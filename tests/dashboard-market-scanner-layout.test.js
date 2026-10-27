@@ -217,6 +217,29 @@ assert.equal(rv.devContext('evil-deploy-preview.netlify.app', devBackend), false
   'DEV host check rejects unrelated preview hosts');
 assert.equal(rv.devContext('deploy-preview-545--spontaneous-queijadas-118823.netlify.app.evil.example', devBackend), false,
   'DEV host check rejects deceptive suffixes');
+// Historical extraction scopes must reject rogue files WITHIN an extraction,
+// while ignoring later commits that do not touch an extraction-owned artifact.
+{
+  const scope = require('./lib/extraction-change-scope');
+  const contract = path.join(__dirname, 'ai-scan-context-boundary-contract.test.js');
+  const owners = scope.contractOwners(contract);
+  assert.ok(owners.includes('js/services/ai-scan-context.js'));
+  assert.ok(owners.includes('tests/ai-scan-context-boundary-contract.test.js'));
+  assert.equal(scope.ownsCommit(['devtools/rv-pilot-audit.js', 'tests/dashboard-market-scanner-layout.test.js'], owners), false,
+    'unrelated DEV feature does not become an older extraction');
+  assert.equal(scope.ownsCommit(['js/services/ai-scan-context.js', 'devtools/sneaky.js'], owners), true,
+    'an undeclared file riding an owner commit remains attributable');
+  assert.deepStrictEqual(scope.includeOwnedCommits(
+    ['index.html', 'js/services/ai-scan-context.js'],
+    [
+      { touched: ['devtools/rv-pilot-audit.js', 'devtools/README.md'] },
+      { touched: ['js/services/ai-scan-context.js', 'devtools/undeclared.js'] },
+      { touched: ['tests/dashboard-market-scanner-layout.test.js', 'devtools/another-new-file.js'] },
+    ],
+    owners
+  ), ['devtools/undeclared.js', 'index.html', 'js/services/ai-scan-context.js'],
+  'historical digest paths remain, unrelated commits vanish, unauthorized owner-commit files survive');
+}
 testRvCloseReopenLifecycle().catch(error => {
   console.error('rv-pilot close/reopen lifecycle failed:', error);
   process.exitCode = 1;
