@@ -292,3 +292,32 @@ require('node:test')('renders structured pending session evidence, not object co
   assert.ok(html.includes('2026-10-26 (NOT_VALIDATED)'));
   assert.ok(!html.includes('[object Object]'));
 });
+
+require('node:test')('D4 preflight explains unavailable SQLite gate and NYSE close+45m without granting GO',()=>{
+  const d=make();
+  d.admission={available:false,reason:'D2_LEDGER_ABSENT',activeLease:null,startsPastHour:null};
+  d.timing={todayIsSession:true,afterCloseGrace:false,closeEpochMs:Date.parse('2026-10-27T20:00:00Z')};
+  const html=renderD4Preflight(d);
+  assert.match(html,/Gate SQLite: disponibile NO/);
+  assert.match(html,/D2_LEDGER_ABSENT/);
+  assert.match(html,/dopo close\+45m NO/);
+  assert.match(html,/2026-10-27T20:45:00\.000Z/);
+  assert.match(html,/non autorizza acquisizioni/);
+  assert.match(html,/Nessuna acquisizione autorizzata/);
+});
+
+require('node:test')('D4 preflight treats absent/invalid timing and unknown gate reason conservatively',()=>{
+  const d=make(); d.admission={available:false};
+  d.timing={todayIsSession:false,afterCloseGrace:false,closeEpochMs:Infinity};
+  const html=renderD4Preflight(d);
+  assert.match(html,/NON_RIPORTATO/);
+  assert.match(html,/non verificabile/);
+  assert.match(html,/dopo close\+45m NO/);
+});
+
+require('node:test')('D4 gate diagnostic reason is HTML escaped',()=>{
+  const d=make();d.admission={available:false,reason:'<script>alert(1)</script>'};
+  const html=renderD4Preflight(d);
+  assert.doesNotMatch(html,/<script>/);
+  assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+});
