@@ -131,7 +131,7 @@ async function testRvCloseReopenLifecycle() {
       const el = element();
       if (tag === 'div') {
         const fields = Object.fromEntries(
-          ['run', 'state', 'results', 'close'].map(id => [id, element()]));
+          ['run', 'runD4', 'state', 'results', 'close'].map(id => [id, element()]));
         fields.shade = element();
         const root = {
           fields, getElementById(id) { return fields[id]; },
