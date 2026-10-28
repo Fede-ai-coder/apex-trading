@@ -321,3 +321,53 @@ require('node:test')('D4 gate diagnostic reason is HTML escaped',()=>{
   assert.doesNotMatch(html,/<script>/);
   assert.match(html,/&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
 });
+
+
+require('node:test')('D4 evidence per session discloses stored, structural and independent acquisition facts without asserting finality',()=>{
+  const d=make();
+  d.symbols[0].rv20={status:'UNAVAILABLE',validatedSessions:19,closesRequired:21,reasons:['RV20_NOT_FINAL']};
+  d.symbols[0].pendingSessionEvidence.rv20=[
+    {sessionDate:'2026-10-26',reason:'UNVERIFIED',stored:true,structurallyValid:true,
+      distinctAcquisitions:1,observationSpanMs:0},
+    {sessionDate:'2026-10-27',reason:'UNVERIFIED',stored:true,structurallyValid:true,
+      distinctAcquisitions:2,observationSpanMs:900000}
+  ];
+  const body=renderD4Preflight(d);
+  assert.match(body,/Verifica delle singole sedute \(2\)/);
+  assert.match(body,/2026-10-26 · causa UNVERIFIED · candela salvata SÌ · struttura valida SÌ · acquisizioni distinte 1 · intervallo osservazioni 0 ms/);
+  assert.match(body,/2026-10-27 · causa UNVERIFIED · candela salvata SÌ · struttura valida SÌ · acquisizioni distinte 2 · intervallo osservazioni 900000 ms/);
+  assert.match(body,/NON bastano da sole a validare/);
+  assert.match(body,/limite documentato 5 sessioni simultanee/);
+  assert.match(body,/sessioni effettivamente attive, disponibilità residua/);
+  assert.match(body,/NON VERIFICATI/);
+  assert.match(body,/Nessuna acquisizione autorizzata/);
+});
+
+require('node:test')('D4 details never invent missing numbers or accept hostile session metadata',()=>{
+  const d=make();
+  d.symbols[0].pendingSessionEvidence.rv20=[
+    {sessionDate:'2026-10-26',reason:'<img src=x onerror=alert(1)>',
+      stored:null,structurallyValid:undefined,distinctAcquisitions:Infinity,
+      observationSpanMs:-1},
+    {sessionDate:'2026-10-27',reason:'UNVERIFIED',stored:false,structurallyValid:false,
+      distinctAcquisitions:0,observationSpanMs:0},
+    {sessionDate:'javascript:alert(1)',reason:'BAD'}
+  ];
+  d.symbols[1].pendingSessionEvidence.rv20=null;
+  const body=renderD4Preflight(d);
+  assert.doesNotMatch(body,/<img/);
+  assert.match(body,/&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(body,/candela salvata NON NOTO · struttura valida NON NOTO · acquisizioni distinte NON NOTO · intervallo osservazioni NON NOTO ms/);
+  assert.match(body,/candela salvata NO · struttura valida NO · acquisizioni distinte 0 · intervallo osservazioni 0 ms/);
+  assert.match(body,/Elemento non verificabile/);
+  assert.match(body,/Dettagli sedute: non verificabili/);
+  assert.doesNotMatch(body,/javascript:alert/);
+});
+
+require('node:test')('D4 triage module and launcher remain strictly GET-only and do not touch credentials or flags',()=>{
+  const source=fs.readFileSync(path.join(__dirname,'..','devtools','rv-pilot-audit.js'),'utf8');
+  assert.doesNotMatch(source,/method:\s*['"]POST['"]/);
+  assert.doesNotMatch(source,/localStorage|sessionStorage|VOLATILITY_CARRY_D4_PROVIDER_BUDGET_ATTESTED/);
+  assert.doesNotMatch(source,/new WebSocket|FEED_SUBSCRIPTION|prepare-admission/);
+  assert.match(source,/fetchD4Preflight\(S\.backendKey, controller\.signal\)/);
+});
