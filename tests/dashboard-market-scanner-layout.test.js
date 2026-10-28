@@ -131,7 +131,7 @@ async function testRvCloseReopenLifecycle() {
       const el = element();
       if (tag === 'div') {
         const fields = Object.fromEntries(
-          ['run', 'state', 'results', 'close'].map(id => [id, element()]));
+          ['run', 'runD4', 'state', 'results', 'close'].map(id => [id, element()]));
         fields.shade = element();
         const root = {
           fields, getElementById(id) { return fields[id]; },
@@ -253,4 +253,42 @@ assert.equal(rv.devContext('deploy-preview-545--spontaneous-queijadas-118823.net
 testRvCloseReopenLifecycle().catch(error => {
   console.error('rv-pilot close/reopen lifecycle failed:', error);
   process.exitCode = 1;
+});
+
+// D4 preflight assertions share the existing DEV RV panel suite to preserve
+// the repository's ratcheted count of 197 test files.
+
+
+const {renderD4Preflight} = require('../devtools/rv-pilot-audit.js');
+const make = () => ({
+  ok:true, readOnly:true, executionAuthorized:false, liveAcquisitionsStarted:false,
+  version:'RV_D4_PROVIDER_PREFLIGHT_V1',
+  decision:'NO_GO_UNTIL_PROVIDER_AND_EVIDENCE_GATES_VERIFIED',
+  blockers:['ACCOUNT_WIDE_DXLINK_SESSION_BUDGET_UNVERIFIED'],
+  providerBudget:{sessionsLimitVerified:false,entitlementVerified:false,quoteTokenRequestBudgetVerified:false},
+  symbols:['AAPL','SPY'].map(symbol=>({symbol,rv20:{status:'UNAVAILABLE'},
+    rv60:{status:'UNAVAILABLE'},pendingSessionEvidence:{rv20:[{sessionDate:'2026-10-26',reason:'NOT_VALIDATED'}],rv60:[]}}))
+});
+require('node:test')('renders NO-GO for AAPL and SPY',()=>{
+  const html=renderD4Preflight(make());
+  assert.match(html,/NO-GO/);
+  assert.match(html,/AAPL/);
+  assert.match(html,/SPY/);
+});
+require('node:test')('rejects unsafe or incomplete responses',()=>{
+  for(const change of [
+    d=>{d.executionAuthorized=true},
+    d=>{d.symbols.pop()},
+    d=>{d.providerBudget.sessionsLimitVerified=true},
+    d=>{d.readOnly=false}
+  ]){
+    const d=make();change(d);
+    assert.throws(()=>renderD4Preflight(d),/D4_PREFLIGHT_INVALID_OR_UNSAFE_RESPONSE/);
+  }
+});
+
+require('node:test')('renders structured pending session evidence, not object coercion',()=>{
+  const html=renderD4Preflight(make());
+  assert.ok(html.includes('2026-10-26 (NOT_VALIDATED)'));
+  assert.ok(!html.includes('[object Object]'));
 });
