@@ -192,7 +192,11 @@
         ' · troncata: ' + yes(s.evidenceTruncated) +
         '<div class="sub">Errore: ' + esc(s.sourceError || '—') + '</div></td></tr>';
     }).join('');
-    const feed = data.feed || {}, gate = data.admission || {};
+    const feed = data.feed || {}, gate = data.admission || {}, timing = data.timing || {};
+    const close = timing.closeEpochMs;
+    const afterCloseAt = Number.isSafeInteger(close) && close >= 0 &&
+      close < 8_640_000_000_000_000 - 45 * 60_000 ?
+      new Date(close + 45 * 60_000).toISOString() : 'non verificabile';
     return '<h3>NO-GO · Preflight D4 AAPL/SPY (sola lettura)</h3>' +
       '<p class="note">Nessuna acquisizione autorizzata. Il feed locale NON dimostra il budget DXLink dell’account.</p>' +
       '<p>Blocchi: ' + esc(data.blockers.join(', ') || '—') + '</p>' +
@@ -205,7 +209,12 @@
       feed.candleSubscriptionLimitHit) + '</p>' +
       '<p>Gate SQLite: disponibile ' + yes(gate.available) + ', lease attivo ' +
       yes(gate.activeLease) + ', avvii ultima ora ' + esc(gate.startsPastHour ?? '—') +
-      ', ultimo avvio ' + esc(gate.lastStartAt ?? '—') + '</p>' +
+      ', ultimo avvio ' + esc(gate.lastStartAt ?? '—') +
+      ', motivo ' + esc(gate.available === false ? (gate.reason ?? 'NON_RIPORTATO') : '—') + '</p>' +
+      '<p>Finestra NYSE: giorno di borsa ' + yes(timing.todayIsSession) +
+      ', dopo close+45m ' + yes(timing.afterCloseGrace) +
+      ', soglia temporale ' + esc(afterCloseAt) +
+      ' (non autorizza acquisizioni)</p>' +
       '<p>Budget provider: NON VERIFICATO · entitlement: NON VERIFICATO · quote-token budget: NON VERIFICATO</p>' +
       '<div class="scroll"><table><thead><tr><th>Simbolo</th><th>RV20</th><th>RV60</th>' +
       '<th>Fonte</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
