@@ -6,7 +6,7 @@ The frontend's historical extraction contracts pin every byte of `index.html`. B
 
 ## Open in APEX DEV
 
-1. Open the **PR #545 deploy preview** at `https://deploy-preview-545--spontaneous-queijadas-118823.netlify.app`, log in to APEX there, and confirm that the active `BACKEND` is `https://apex-tastytrade-backend-dev-production.up.railway.app`. The ordinary production Netlify hostname is deliberately rejected; other DEV hosts are not automatically authorized.
+1. Open the **current PR #551 deploy preview** at `https://deploy-preview-551--spontaneous-queijadas-118823.netlify.app`, log in to APEX there, and confirm that the active `BACKEND` is `https://apex-tastytrade-backend-dev-production.up.railway.app`. The ordinary production Netlify hostname is deliberately rejected; other DEV hosts are not automatically authorized.
 2. In the browser DevTools **Console**, paste the following *once*:
 
 ```js
@@ -30,3 +30,79 @@ The panel has a secondary *exact preview hostname + DEV backend URL* check and w
 This is not yet a native permanent dashboard button. Such an integration requires its own refactoring contract update to preserve the intentionally strict byte-exact extraction invariants. This PR deliberately makes **no modification to `index.html` or `js/**`**. No new `*.test.js` file is added (the suite cardinality remains pinned).
 
 Do not run the bookmarklet on other sites. The loader is relative to the current origin; the module itself checks the exact DEV backend URL.
+
+## D4 readiness checklist — provider headroom and evidence (2026-10-28)
+
+The D4 preflight button is **GET-only and always NO-GO**. Its `admission.available`
+proves only the local persistent SQLite admission schema is readable. It **does
+not** prove account-wide market-data capacity, price finality, entitlement or
+execution permission.
+
+### DXLink provider budget — what is known versus unverified
+
+Tastytrade's official streaming documentation publishes limits **per credential
+set**: **5 concurrent DXLink market-data sessions**, 25,000 subscriptions per
+session, 100 Candle/Order/Series subscriptions *for each event type*, and
+10,000 subscription changes per minute:
+
+- https://developer.tastytrade.com/docs/guides/rate-limits-and-backoff/
+- https://developer.tastytrade.com/docs/concepts/streaming/
+- https://developer.tastytrade.com/reference/accounts-and-customers/getApiQuoteTokens/
+
+The GET `/api-quote-tokens` returns a token, DXLink URL and entitlement
+level; **it is not an inventory of currently open sessions**. A connected
+`MAIN FEED`, a valid local quote token or local subscription counts do not
+prove how many other services, workers, browser clients, third-party tools or
+other applications are using the *same tastytrade credentials*. The official
+pages above do not provide a way to read the account-wide occupied session
+count from the API response.
+
+**Operator checklist before any live provider experiment** (outside this panel):
+1. Identify every concurrently active market-data streamer using those exact
+   credentials: DEV, both production services, other deployments/replicas,
+   scripts, personal applications and third-party clients. Do not equate the
+   number of Railway services with the number of WebSocket sessions.
+2. Independently confirm the real provider-side concurrent-session occupancy
+   and entitlement with trustworthy provider/account instrumentation or
+   tastytrade support. If unknown, the result is **UNKNOWN / NO-GO**, even if
+   local main feed reports healthy. Do not auto-set any attestation flag.
+3. Verify quote-token entitlement and provider-side budget independently.
+   A token's existence does not prove available additional streamer capacity.
+4. Verify local DXLink health, lack of subscription pressure and SQLite
+   shared gate, and the **current NYSE session close +45m** requirement.
+   The current-date rule is re-evaluated on every request, including days
+   after earlier missing sessions.
+5. Keep `VOLATILITY_CARRY_EVIDENCE_DAILY_EXECUTION_ENABLED` and
+   `VOLATILITY_CARRY_D4_PROVIDER_BUDGET_ATTESTED` absent/false until
+   independently verified and explicitly approved. This panel never sets them.
+
+### AAPL / SPY evidence triage
+
+The preflight `symbols[].pendingSessionEvidence.rv20/rv60` names the exact
+currently unvalidated 21/61-session windows, calculated by the existing
+backend RV diagnostics. Expand **Verifica delle singole sedute** to view
+*stored* candle, *structurallyValid*, *distinctAcquisitions* and
+*observationSpanMs*. `null` or absent is **NON NOTO**. An empty pending list
+is only a per-session finding, not proof of a usable RV.
+
+For `OBSERVED_STABLE` the existing RV contract requires >=2 **distinct real
+provider acquisitions**, observed at least **900000 ms (15 minutes)** apart,
+and the same accepted OHLC fingerprint after any revision. Data must be
+observed after the session close + the finalization grace, and must pass
+REGULAR-session, structurally valid, source and corporate-action gates.
+These are **necessary checks, not a claim of provider-confirmed finality**.
+The backend's provider-final signal registry and corporate-actions
+exhaustiveness registry are currently empty; never fabricate either.
+
+On 2026-10-28 the authenticated audit showed both AAPL and SPY at RV20
+19/21 and RV60 59/61, with 2026-10-26 and 2026-10-27 marked UNVERIFIED.
+This is a **dated observation, not a permanent remediation list**. At every
+subsequent preflight read the current `asOfSessionDate` and exact pending
+dates again; new completed NYSE sessions may enter the rolling windows.
+
+Do **not** backfill by inserting synthetic acquisitions, copying existing
+candles, relabeling regular sessions, assuming 15 minutes elapsed makes a
+candle stable, or marking split actions exhaustive. Do not start the D4 pilot
+to "test" account capacity. Provider access is a separate, explicitly
+authorized phase. The read-only panel makes **no requests beyond its existing
+authenticated GET**, does not save tokens, and makes no trading decision.

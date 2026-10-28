@@ -162,6 +162,33 @@
     return json;
   }
 
+  // These are existing backend diagnostics, not an instruction or permission
+  // to acquire. Null fields mean UNKNOWN; never infer finality from a count
+  // or from the passing of time alone.
+  function renderD4SessionEvidence(pending) {
+    if (!Array.isArray(pending))
+      return '<div class="sub">Dettagli sedute: non verificabili</div>';
+    if (!pending.length) return '';
+    const yes = v => v === true ? 'SÌ' : v === false ? 'NO' : 'NON NOTO';
+    const number = n => Number.isSafeInteger(n) && n >= 0 ? n : 'NON NOTO';
+    return '<details class="sub"><summary>Verifica delle singole sedute (' +
+      pending.length + ')</summary><ul>' + pending.map(s => {
+        if (!s || typeof s.sessionDate !== 'string' ||
+            !/^\d{4}-\d{2}-\d{2}$/.test(s.sessionDate))
+          return '<li>Elemento non verificabile</li>';
+        return '<li>' + esc(s.sessionDate) + ' · causa ' +
+          esc(s.reason || 'NOT_VALIDATED') + ' · candela salvata ' +
+          yes(s.stored) + ' · struttura valida ' + yes(s.structurallyValid) +
+          ' · acquisizioni distinte ' + esc(number(s.distinctAcquisitions)) +
+          ' · intervallo osservazioni ' + esc(number(s.observationSpanMs)) +
+          ' ms</li>';
+      }).join('') + '</ul>' +
+      '<div>Due acquisizioni distinte con almeno 900000 ms di intervallo ' +
+      'sono necessarie per OBSERVED_STABLE, ma NON bastano da sole a validare ' +
+      'la seduta: valgono anche impronta OHLC, orario, policy e revisioni.</div>' +
+      '</details>';
+  }
+
   // D4 preflight is a separate read-only audit; it NEVER authorizes execution.
   function renderD4Preflight(data) {
     if (!data || data.ok !== true || data.readOnly !== true ||
@@ -181,10 +208,12 @@
         ' · sedute ' + esc(w?.validatedSessions ?? '—') + '/' +
         esc(w?.closesRequired ?? '—') +
         '<div class="sub">Mancanti: ' + esc(Array.isArray(pending) ?
-          pending.map(item => typeof item?.sessionDate === 'string' ?
-          item.sessionDate + ' (' + String(item.reason || 'NOT_VALIDATED') + ')' :
-          'voce non valida').join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
-        '<div class="sub">' + esc((w?.reasons || []).join(', ') || '—') + '</div>';
+          pending.map(item => item && typeof item.sessionDate === 'string' &&
+            /^\d{4}-\d{2}-\d{2}$/.test(item.sessionDate) ?
+            item.sessionDate + ' (' + String(item.reason || 'NOT_VALIDATED') + ')' :
+            'voce non valida').join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
+        '<div class="sub">' + esc((w?.reasons || []).join(', ') || '—') + '</div>' +
+        renderD4SessionEvidence(pending);
       return '<tr><th scope="row">' + esc(s.symbol) + '</th><td>' +
         window(s.rv20, s.pendingSessionEvidence?.rv20) + '</td><td>' +
         window(s.rv60, s.pendingSessionEvidence?.rv60) + '</td><td>' +
@@ -215,7 +244,14 @@
       ', dopo close+45m ' + yes(timing.afterCloseGrace) +
       ', soglia temporale ' + esc(afterCloseAt) +
       ' (non autorizza acquisizioni)</p>' +
-      '<p>Budget provider: NON VERIFICATO · entitlement: NON VERIFICATO · quote-token budget: NON VERIFICATO</p>' +
+      '<p>DXLink tastytrade: limite documentato 5 sessioni simultanee per ' +
+      'credenziali; sessioni effettivamente attive, disponibilità residua, ' +
+      'entitlement e budget quote-token: NON VERIFICATI.</p>' +
+      '<p class="note">Verifica indipendente richiesta prima del pilot: ' +
+      'inventario di TUTTI i client/servizi che usano le credenziali, ' +
+      'conferma esterna del budget e autorizzazione esplicita. ' +
+      'Il feed locale e il gate SQLite NON sono attestazioni del provider. ' +
+      'Nessuna acquisizione, flag o ordine viene modificato dal pannello.</p>' +
       '<div class="scroll"><table><thead><tr><th>Simbolo</th><th>RV20</th><th>RV60</th>' +
       '<th>Fonte</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
   }
@@ -378,7 +414,7 @@
     document.body.appendChild(trigger);
   }
   if (typeof module !== 'undefined' && module.exports)
-    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable, available, renderD4Preflight, fetchD4Preflight };
+    module.exports = { devContext, combinePages, classifyRow, summarizeRows, renderTable, available, renderD4SessionEvidence, renderD4Preflight, fetchD4Preflight };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location?.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
