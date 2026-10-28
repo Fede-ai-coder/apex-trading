@@ -174,7 +174,7 @@
     return '<details class="sub"><summary>Verifica delle singole sedute (' +
       pending.length + ')</summary><ul>' + pending.map(s => {
         if (!s || typeof s.sessionDate !== 'string' ||
-            !/^\\d{4}-\\d{2}-\\d{2}$/.test(s.sessionDate))
+            !/^\d{4}-\d{2}-\d{2}$/.test(s.sessionDate))
           return '<li>Elemento non verificabile</li>';
         return '<li>' + esc(s.sessionDate) + ' · causa ' +
           esc(s.reason || 'NOT_VALIDATED') + ' · candela salvata ' +
