@@ -6,7 +6,7 @@ The frontend's historical extraction contracts pin every byte of `index.html`. B
 
 ## Open in APEX DEV
 
-1. Open the **PR #545 deploy preview** at `https://deploy-preview-545--spontaneous-queijadas-118823.netlify.app`, log in to APEX there, and confirm that the active `BACKEND` is `https://apex-tastytrade-backend-dev-production.up.railway.app`. The ordinary production Netlify hostname is deliberately rejected; other DEV hosts are not automatically authorized.
+1. Open the **current PR #551 deploy preview** at `https://deploy-preview-551--spontaneous-queijadas-118823.netlify.app`, log in to APEX there, and confirm that the active `BACKEND` is `https://apex-tastytrade-backend-dev-production.up.railway.app`. The ordinary production Netlify hostname is deliberately rejected; other DEV hosts are not automatically authorized.
 2. In the browser DevTools **Console**, paste the following *once*:
 
 ```js
