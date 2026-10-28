@@ -208,9 +208,10 @@
         ' · sedute ' + esc(w?.validatedSessions ?? '—') + '/' +
         esc(w?.closesRequired ?? '—') +
         '<div class="sub">Mancanti: ' + esc(Array.isArray(pending) ?
-          pending.map(item => typeof item?.sessionDate === 'string' ?
-          item.sessionDate + ' (' + String(item.reason || 'NOT_VALIDATED') + ')' :
-          'voce non valida').join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
+          pending.map(item => item && typeof item.sessionDate === 'string' &&
+            /^\d{4}-\d{2}-\d{2}$/.test(item.sessionDate) ?
+            item.sessionDate + ' (' + String(item.reason || 'NOT_VALIDATED') + ')' :
+            'voce non valida').join(', ') || 'nessuna' : 'non verificabili') + '</div>' +
         '<div class="sub">' + esc((w?.reasons || []).join(', ') || '—') + '</div>' +
         renderD4SessionEvidence(pending);
       return '<tr><th scope="row">' + esc(s.symbol) + '</th><td>' +
