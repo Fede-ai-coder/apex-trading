@@ -106,3 +106,38 @@ candle stable, or marking split actions exhaustive. Do not start the D4 pilot
 to "test" account capacity. Provider access is a separate, explicitly
 authorized phase. The read-only panel makes **no requests beyond its existing
 authenticated GET**, does not save tokens, and makes no trading decision.
+
+## Volatility Coverage & Spread Monitor (DEV)
+
+`devtools/volatility-coverage-monitor.js` is a second on-demand, **read-only** panel, under the same rules as the RV
+panel above: the same DEV host and backend gate, the session's `S.backendKey` sent only as a request header, GET only,
+no storage, no polling, and no change to `index.html` or `js/**`. Load it from the Console of the deploy preview:
+
+```js
+(()=>{if(document.getElementById('apex-vol-coverage-launcher'))return;const s=document.createElement('script');s.src='/devtools/volatility-coverage-monitor.js';document.head.appendChild(s);})();
+```
+
+Then click **IV − RV · DEV** and **Analizza universo**. The panel reads `GET /debug/volatility-carry/coverage` 25 symbols
+at a time, in sequence. From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
+session date or IV date changes midway is refused. A timeout of 20 s applies to each page. Clicking a symbol reads
+`GET /debug/volatility-carry/coverage/:symbol` once. These endpoints come from the matching `apex-backend` change; until
+that change runs on DEV, the panel says *Endpoint non ancora disponibile*.
+
+What it shows (every value is the backend's):
+
+- **IV Ref**: the IV pilot's selected Regular expiry nearest 40 DTE, and nothing else. *IV Market* (the scanner's
+  Tastytrade IV index, when the page holds it) is shown apart as informational only. It never enters a spread and never
+  replaces a missing IV Ref.
+- **RV20 / RV60**: labelled *certificata*, *preliminare* or *esplorativa*. An exploratory RV is never compared with IV.
+  The last certified RV of the daily store is shown separately and never used for the current spread.
+- **IV − RV20 / IV − RV60**: the backend's `100 × (ivRef − rv)` in percentage points, rounded to 2 decimals **only on
+  screen**. The sign is the unrounded value's. The CSV keeps full precision. Green means IV > RV, red IV < RV, neutral
+  equal, grey not available: the colours show the sign only and are not trading signals.
+- For each unavailable spread, the missing operand (`IV_REF`, `RV20`, `RV60`, `TIMING`) and the engine's own code, with
+  a readable explanation. Unknown codes are shown as they are, without an invented meaning.
+- Detail: the counts of each 21 / 61-session window, and every session in it that is not validated. *Absent*, *present
+  but structurally invalid*, *valid but not final* and *not REGULAR* are kept as separate facts. The detail also shows
+  the corporate-action status and the IV timing and census. It never estimates how many days would make a window valid.
+
+The summary counters are counts of the rows read. *Dati insufficienti* means at least one window without any RV.
+*Problemi candele* means the backend's `candleQuality.issues` flag.

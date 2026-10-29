@@ -371,3 +371,450 @@ require('node:test')('D4 triage module and launcher remain strictly GET-only and
   assert.doesNotMatch(source,/new WebSocket|FEED_SUBSCRIPTION|prepare-admission/);
   assert.match(source,/fetchD4Preflight\(S\.backendKey, controller\.signal\)/);
 });
+
+// ── Volatility Coverage & Spread Monitor (devtools/volatility-coverage-monitor.js) ──────────────────────────────────
+// Same file, same reason as the RV and D4 panels above: the suite's file count is ratcheted. Every fixture below
+// mirrors the backend's VOLATILITY_COVERAGE_V1 rows; the values are SYNTHETIC.
+const cov = require('../devtools/volatility-coverage-monitor.js');
+const covSource = fs.readFileSync(path.join(__dirname, '..', 'devtools', 'volatility-coverage-monitor.js'), 'utf8');
+const COV_DIGEST = 'c'.repeat(64);
+const COV_HOSTILE = '<img src=x onerror=alert(1)>';
+function covWindow(n, value, basis, extra) {
+  const certified = basis === 'CERTIFIED';
+  return Object.assign({
+    value, basis: value === null ? null : basis, closesRequired: n + 1,
+    certified: { status: certified ? 'AVAILABLE' : 'UNAVAILABLE', value: certified ? value : null,
+      reasons: certified ? [] : ['RV' + n + '_NOT_FINAL'], validatedSessions: certified ? n + 1 : 0,
+      finalityBasis: certified ? 'OBSERVED_STABLE' : null, priceAdjustment: 'UNVERIFIED_NO_JUMP_DETECTED',
+      windowFrom: '2026-09-25', windowThrough: '2026-10-23', inputsDigest: null },
+    stored: null,
+    coverage: { required: n + 1, present: n + 1, structurallyValid: n + 1, validated: certified ? n + 1 : 0,
+      absent: 0, presentNotValid: 0, validNotFinal: certified ? 0 : n + 1, validNotRegular: 0, missing: certified ? 0 : n + 1 },
+    lastCertified: null,
+  }, extra || {});
+}
+function covRow(symbol, position, o) {
+  o = o || {};
+  const iv = o.iv === undefined ? null : o.iv;
+  const spread = v => v === null || v === undefined
+    ? { valuePp: null, basis: null, missing: [{ operand: 'IV_REF', reason: iv === null ? 'NOT_IN_IV_PILOT' : 'X' }] }
+    : { valuePp: v, basis: 'RV_CERTIFIED', missing: [] };
+  const reasons = o.reasons || (iv === null ? ['NOT_IN_IV_PILOT'] : []);
+  return {
+    symbol, universePosition: position, status: o.status || (iv === null ? 'UNAVAILABLE' : 'COMPLETE'),
+    primaryReason: reasons[0] || null, reasons,
+    asOf: { rvSessionDate: '2026-10-23', ivAsOfDate: iv === null ? null : '2026-10-24',
+      ivObservedAt: iv === null ? null : '2026-10-24T15:00:00.000Z', datesDiffer: iv !== null },
+    ivRef: { value: iv, status: iv === null ? 'NOT_IN_PILOT' : 'AVAILABLE', reason: iv === null ? 'NOT_IN_IV_PILOT' : null,
+      source: 'TASTYTRADE_SELECTED_REGULAR_EXPIRY_IV', version: 'SELECTED_REGULAR_IV_V1', pilotMember: iv !== null,
+      asOfDate: '2026-10-24', observedAt: iv === null ? null : '2026-10-24T15:00:00.000Z',
+      selectedExpiration: iv === null ? null : '2026-12-04', selectedDte: iv === null ? null : 41,
+      settlementType: iv === null ? null : 'PM', census: null },
+    rv20: covWindow(20, o.rv20 === undefined ? 0.2 : o.rv20, o.basis || 'EXPLORATORY', o.rv20Extra),
+    rv60: covWindow(60, o.rv60 === undefined ? 0.25 : o.rv60, o.basis || 'EXPLORATORY', o.rv60Extra),
+    spreads: { ivMinusRv20Pp: spread(o.s20), ivMinusRv60Pp: spread(o.s60) },
+    candleQuality: o.candleQuality === undefined ? { storedCandles: 289, structurallyValidCandles: 289, excludedRows: 0,
+      excludedByReason: {}, duplicateSessions: 0, lastWindowPresentNotValid: 0, issues: false } : o.candleQuality,
+    sessionPolicy: { certifiedCovered: false, certifiedBasis: null, preliminaryCovered: false, storedPolicyStatus: null },
+    errors: o.errors || {},
+  };
+}
+const covSources = () => ({ candles: { source: 'APEX_TT_CANDLE_STORE_1D', readOnly: true },
+  observations: { available: true, error: null },
+  ivPilot: { enabled: true, available: true, reason: null, error: null, members: 3, version: 'SELECTED_REGULAR_IV_V1' },
+  census: { enabled: true, available: true, reason: null, error: null },
+  rvDaily: { enabled: false, available: false, reason: 'RV_DAILY_DISABLED', error: null } });
+function covPages(symbols, rowFor) {
+  const pages = [];
+  for (let offset = 0; offset < symbols.length; offset += 25) {
+    const rows = symbols.slice(offset, offset + 25).map((s, i) => (rowFor ? rowFor(s, offset + i) : covRow(s, offset + i)));
+    pages.push({ ok: true, version: 'VOLATILITY_COVERAGE_V1', readOnly: true, notForTrading: true, executionAuthorized: false,
+      generatedAt: '2026-10-24T22:00:0' + pages.length + '.000Z', asOfSessionDate: '2026-10-23', ivAsOfDate: '2026-10-24',
+      universe: { source: 'default:APEX_SCANNER_UNIVERSE', count: symbols.length, digest: COV_DIGEST },
+      offset, limit: 25, returned: rows.length,
+      nextOffset: offset + rows.length < symbols.length ? offset + rows.length : null, sources: covSources(), rows });
+  }
+  return pages;
+}
+const covUniverse = n => Array.from({ length: n }, (_, i) => 'U' + String(i).padStart(3, '0'));
+// A mixed page: certified spreads of every sign, preliminary, missing IV, candle issue, stale and error rows.
+const covMixed = () => covPages(['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III'], (s, i) => covRow(s, i, ({
+  AAA: { iv: 0.3, basis: 'CERTIFIED', s20: 24.86, s60: 25 },
+  BBB: { iv: 0.18, basis: 'CERTIFIED', s20: -4.0000000000000036, s60: 0 },
+  CCC: { iv: 0.2, basis: 'PRELIMINARY', s20: 0.004, s60: -0.004, status: 'COMPLETE' },
+  DDD: {},
+  EEE: { rv20: null, rv60: null, reasons: ['NOT_IN_IV_PILOT', 'RV20_INSUFFICIENT_CLOSES'] },
+  FFF: { candleQuality: { storedCandles: 289, structurallyValidCandles: 288, excludedRows: 1,
+    excludedByReason: { NOT_POSITIVE_PRICE: 1 }, duplicateSessions: 0, lastWindowPresentNotValid: 1, issues: true } },
+  GGG: { status: 'STALE', reasons: ['MEMBERSHIP_OR_CENSUS_CHANGED'] },
+  HHH: { status: 'ERROR', rv20: null, rv60: null, candleQuality: null, errors: { candles: 'SQLITE_BUSY' },
+    reasons: ['CANDLE_READ_FAILED'] },
+  III: { rv60: null, reasons: ['NOT_IN_IV_PILOT', 'RV60_INSUFFICIENT_CLOSES'] },
+})[s]));
+
+require('node:test')('coverage monitor: GET only, no storage, no polling, not loaded by index.html', () => {
+  assert.doesNotMatch(covSource, /method:\s*['"](POST|PUT|PATCH|DELETE)['"]/);
+  assert.doesNotMatch(covSource, /localStorage|sessionStorage|indexedDB|document\.cookie/);
+  assert.doesNotMatch(covSource, /setInterval|new WebSocket|EventSource|subscribe/i);
+  assert.equal((covSource.match(/fetch\(/g) || []).length, 1, 'one fetch call site: fetchJson');
+  assert.match(covSource, /method: 'GET', cache: 'no-store'/);
+  assert.doesNotMatch(html, /devtools\/volatility-coverage-monitor\.js/);
+  assert.equal((html.match(/<script\b/gi) || []).length, 115);
+  for (const [host, backend] of [
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', devBackend], ['localhost', devBackend],
+    ['127.0.0.1', devBackend], ['spontaneous-queijadas-118823.netlify.app', devBackend],
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app.evil.example', devBackend],
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', 'https://apex-tastytrade-backend-production.up.railway.app'],
+  ]) assert.equal(cov.devContext(host, backend), rv.devContext(host, backend), 'same DEV gate as the RV panel: ' + host);
+});
+
+require('node:test')('coverage monitor: every universe symbol once, one digest, one RV date and one IV date', () => {
+  const universe = covUniverse(60);
+  const pages = covPages(universe);
+  assert.deepEqual(pages.map(p => p.rows.length), [25, 25, 10]);
+  const data = cov.combinePages(pages);
+  assert.deepEqual(data.rows.map(r => r.symbol), universe);
+  assert.deepEqual([data.universe.digest, data.asOfSessionDate, data.ivAsOfDate, data.warnings], [COV_DIGEST, '2026-10-23', '2026-10-24', []]);
+  const broken = [
+    [p => { p[1].universe.digest = 'd'.repeat(64); }, /COVERAGE_PAGE_INCONSISTENT_AT_25/],
+    [p => { p.pop(); }, /COVERAGE_UNIVERSE_INCOMPLETE/],
+    [p => { p[2].rows[0].symbol = 'U000'; }, /COVERAGE_DUPLICATE_SYMBOL/],
+    [p => { p[1].rows[3].universePosition = 99; }, /COVERAGE_ROW_INCONSISTENT_AT_28/],
+    [p => { p[1].ivAsOfDate = '2026-10-25'; }, /COVERAGE_DATES_CHANGED_DURING_READ/],
+    [p => { p[2].asOfSessionDate = '2026-10-26'; }, /COVERAGE_DATES_CHANGED_DURING_READ/],
+    [p => { p[0].executionAuthorized = true; }, /COVERAGE_PAGE_INCONSISTENT_AT_0/],
+    [p => { p[0].readOnly = false; }, /COVERAGE_PAGE_INCONSISTENT_AT_0/],
+    [p => { p[0].version = 'VOLATILITY_COVERAGE_V2'; }, /COVERAGE_PAGE_INCONSISTENT_AT_0/],
+    [p => { p[1].nextOffset = null; }, /COVERAGE_PAGE_INCONSISTENT_AT_25/],
+    [p => { p[1].rows.pop(); p[1].returned = 24; }, /COVERAGE_PAGE_INCONSISTENT_AT_25/],
+    [p => { p[0].rows[0].status = 'OK'; }, /COVERAGE_ROW_INCONSISTENT_AT_0/],
+  ];
+  for (const [mutate, error] of broken) { const p = covPages(universe); mutate(p); assert.throws(() => cov.combinePages(p), error); }
+  const changed = covPages(universe);
+  changed[2].sources.ivPilot.members = 4;
+  assert.deepEqual(cov.combinePages(changed).warnings, ['SOURCES_CHANGED_DURING_READ'], 'a source change is stated, not hidden');
+});
+
+require('node:test')('coverage monitor: the counters are counts of the rows read, nothing estimated', () => {
+  const s = cov.summarize(cov.combinePages(covMixed()).rows);
+  assert.deepEqual(s, { total: 9, ivRef: 3,
+    rv20: { any: 7, CERTIFIED: 2, PRELIMINARY: 1, EXPLORATORY: 4 }, rv60: { any: 6, CERTIFIED: 2, PRELIMINARY: 1, EXPLORATORY: 3 },
+    complete: 3, ivAboveRv20: 2, ivBelowRv20: 1, ivEqualRv20: 0, ivAboveRv60: 1, ivBelowRv60: 1, ivEqualRv60: 1,
+    insufficientData: 3, candleIssues: 1, stale: 1, errors: 1 });
+});
+
+require('node:test')('coverage monitor: spreads keep the sign of the unrounded value; colours give the sign only', () => {
+  const cases = [[-4.0000000000000036, '−4.00 pp', 'neg'], [0.004, '+0.00 pp', 'pos'], [-0.004, '−0.00 pp', 'neg'],
+    [0, '0.00 pp', 'zero'], [-0, '0.00 pp', 'zero'], [24.86, '+24.86 pp', 'pos'], [null, '—', 'na'], [NaN, '—', 'na'],
+    [Infinity, '—', 'na'], ['1', '—', 'na'], [undefined, '—', 'na']];
+  for (const [v, text, cls] of cases) {
+    assert.equal(cov.formatPp(v), text, String(v));
+    assert.equal(cov.spreadClass(v), cls, String(v));
+  }
+  assert.equal(cov.formatPct(0.05137021096990555), '5.14%');
+  assert.equal(cov.formatPct(null), '—');
+});
+
+require('node:test')('coverage monitor: sorting by either spread, missing values last in both directions', () => {
+  const rows = cov.combinePages(covMixed()).rows;
+  const order = (key, dir) => cov.sortRows(rows, key, dir).map(r => r.symbol).join(',');
+  assert.equal(order('spread20', 'asc'), 'BBB,CCC,AAA,DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(order('spread20', 'desc'), 'AAA,CCC,BBB,DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(order('spread60', 'asc'), 'CCC,BBB,AAA,DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(order('spread60', 'desc'), 'AAA,BBB,CCC,DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(order('position', 'desc'), 'III,HHH,GGG,FFF,EEE,DDD,CCC,BBB,AAA');
+  assert.equal(cov.sortRows(rows.slice().reverse(), 'spread20', 'asc').map(r => r.symbol).join(','),
+    'BBB,CCC,AAA,DDD,EEE,FFF,GGG,HHH,III', 'ties fall back to the universe order whatever the input order');
+  assert.equal(order('nonsense', 'asc'), 'AAA,BBB,CCC,DDD,EEE,FFF,GGG,HHH,III', 'an unknown key falls back to the universe order');
+  assert.deepEqual(rows.map(r => r.symbol), ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III'], 'the input is not reordered');
+});
+
+require('node:test')('coverage monitor: every filter, exactly', () => {
+  const rows = cov.combinePages(covMixed()).rows;
+  const pick = f => cov.filterRows(rows, f).map(r => r.symbol).join(',');
+  assert.equal(pick({ search: ' cc ' }), 'CCC');
+  assert.equal(pick({ availability: 'IVREF_YES' }), 'AAA,BBB,CCC');
+  assert.equal(pick({ availability: 'IVREF_NO' }), 'DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(pick({ availability: 'RV20_NO' }), 'EEE,HHH');
+  assert.equal(pick({ availability: 'RV60_YES' }), 'AAA,BBB,CCC,DDD,FFF,GGG');
+  assert.equal(pick({ availability: 'COMPLETE' }), 'AAA,BBB,CCC');
+  assert.equal(pick({ availability: 'INCOMPLETE' }), 'DDD,EEE,FFF,GGG,HHH,III');
+  assert.equal(pick({ availability: 'RV60_NO' }), 'EEE,HHH,III');
+  assert.equal(pick({ availability: 'PROBLEMS' }), 'FFF,GGG,HHH');
+  assert.equal(pick({ spread: 'IV_GT_RV20' }), 'AAA,CCC');
+  assert.equal(pick({ spread: 'IV_LT_RV20' }), 'BBB');
+  assert.equal(pick({ spread: 'IV_GT_RV60' }), 'AAA');
+  assert.equal(pick({ spread: 'IV_LT_RV60' }), 'CCC');
+  assert.equal(pick({ spread: 'ANY_POSITIVE' }), 'AAA,CCC');
+  assert.equal(pick({ spread: 'ANY_NEGATIVE' }), 'BBB,CCC');
+  assert.equal(pick({ status: 'STALE' }), 'GGG');
+  assert.equal(pick({ reason: 'RV20_INSUFFICIENT_CLOSES' }), 'EEE');
+  assert.equal(pick({ availability: 'IVREF_NO', reason: 'NOT_IN_IV_PILOT' }), 'DDD,EEE,FFF,III');
+  assert.equal(pick({ availability: 'NOT_A_FILTER' }), '', 'an unknown filter matches nothing');
+  assert.deepEqual(cov.reasonCodes(rows), ['CANDLE_READ_FAILED', 'MEMBERSHIP_OR_CENSUS_CHANGED', 'NOT_IN_IV_PILOT',
+    'RV20_INSUFFICIENT_CLOSES', 'RV60_INSUFFICIENT_CLOSES']);
+});
+
+require('node:test')('coverage monitor: CSV keeps full precision, timestamps and reasons, and never starts a formula', () => {
+  const data = cov.combinePages(covMixed());
+  data.rows[3].reasons = ['=HYPERLINK("http://x")'];
+  data.rows[3].primaryReason = '+SUM(A1)';
+  const csv = cov.toCsv(data, { AAA: { iv: 0.42, source: 'TASTYTRADE', updatedAt: Date.parse('2026-10-24T14:00:00Z') } });
+  const lines = csv.split('\r\n');
+  assert.equal(lines.length, 11, 'header + 9 rows + final CRLF');
+  const header = lines[0].split(',');
+  assert.deepEqual(header, ['symbol', 'universe_position', 'status', 'primary_reason', 'reasons', 'iv_ref', 'iv_ref_status',
+    'iv_ref_reason', 'iv_ref_source', 'iv_ref_expiration', 'iv_ref_dte', 'iv_observed_at', 'iv_as_of_date',
+    'rv20', 'rv20_basis', 'rv20_validated', 'rv20_required', 'rv20_missing', 'rv20_certified_reasons',
+    'rv60', 'rv60_basis', 'rv60_validated', 'rv60_required', 'rv60_missing', 'rv60_certified_reasons',
+    'iv_minus_rv20_pp', 'iv_minus_rv20_basis', 'iv_minus_rv20_missing', 'iv_minus_rv60_pp', 'iv_minus_rv60_basis',
+    'iv_minus_rv60_missing', 'rv_session_date', 'iv_rv_dates_differ', 'rv20_last_certified', 'rv20_last_certified_session',
+    'rv60_last_certified', 'rv60_last_certified_session', 'candle_issues', 'iv_market_informational', 'iv_market_source',
+    'iv_market_updated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
+  const col = name => header.indexOf(name);
+  const bbb = lines[2].split(',');
+  assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
+  assert.equal(bbb[col('iv_minus_rv60_pp')], '0');
+  assert.equal(bbb[col('iv_observed_at')], '2026-10-24T15:00:00.000Z');
+  assert.equal(bbb[col('rv_session_date')], '2026-10-23');
+  assert.equal(bbb[col('iv_rv_dates_differ')], 'true');
+  assert.equal(lines[1].split(',')[col('iv_market_informational')], '0.42');
+  assert.equal(lines[1].split(',')[col('iv_market_updated_at')], '2026-10-24T14:00:00.000Z');
+  assert.ok(lines[4].includes(`"'=HYPERLINK(""http://x"")"`), 'a text cell is quoted, its quotes doubled, its formula defused');
+  assert.ok(lines[4].includes(",'+SUM(A1),"));
+  assert.equal(lines[8].split(',')[col('status')], 'ERROR');
+  assert.equal(lines[8].split(',')[col('candle_issues')], '', 'unknown candle quality stays empty, never false');
+  assert.doesNotMatch(csv, /x-api-key|backendKey/);
+  assert.equal(cov.csvCell(-1.5), '-1.5', 'a number is a number, not a defused text');
+  assert.equal(cov.csvCell('-1.5'), "'-1.5");
+});
+
+require('node:test')('coverage monitor: hostile backend strings are escaped everywhere they are drawn', () => {
+  const data = cov.combinePages(covMixed());
+  const row = data.rows[3];
+  row.reasons = [COV_HOSTILE]; row.primaryReason = COV_HOSTILE;
+  row.spreads.ivMinusRv20Pp.missing = [{ operand: COV_HOSTILE, reason: COV_HOSTILE }];
+  row.rv20.lastCertified = { value: 0.2, sessionDate: COV_HOSTILE, revision: 1 }; row.rv20.value = null;
+  data.sources.ivPilot.reason = COV_HOSTILE; data.sources.ivPilot.available = false;
+  data.warnings.push(COV_HOSTILE);
+  for (const out of [cov.renderTable(data.rows, { key: 'spread20', dir: 'asc' }, null), cov.renderSummary(data)]) {
+    assert.doesNotMatch(out, /<img/);
+    assert.match(out, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  }
+});
+
+function covDetail(mutate) {
+  const row = covRow('AAPL', 0, { iv: 0.3, basis: 'EXPLORATORY', status: 'UNAVAILABLE', reasons: ['RV20_NOT_FINAL'] });
+  row.rv20.lastCertified = { value: 0.21, sessionDate: '2026-10-22', revision: 1 };
+  row.rv20.certified.priceAdjustment = 'SUSPECT_JUMP';
+  const sessions = Array.from({ length: 61 }, (_, i) => ({ sessionDate: '2026-08-' + String(i % 28 + 1).padStart(2, '0'),
+    available: true, valid: true, validated: true, reason: null, sessionKind: 'REGULAR' }));
+  Object.assign(sessions[60], { sessionDate: '2026-10-23' });
+  Object.assign(sessions[56], { sessionDate: '2026-10-19', available: false, valid: false, validated: false, reason: 'NO_STORED_CANDLE' });
+  Object.assign(sessions[57], { sessionDate: '2026-10-20', valid: false, validated: false, reason: 'NOT_POSITIVE_PRICE' });
+  Object.assign(sessions[58], { sessionDate: '2026-10-21', validated: false, reason: 'UNVERIFIED', finalityLevel: 'OBSERVED_ONCE',
+    distinctAcquisitions: 1, spanMs: 0 });
+  Object.assign(sessions[59], { sessionDate: '2026-10-22', validated: false, reason: 'NOT_REGULAR_SESSION', sessionKind: 'UNKNOWN',
+    sessionKindBasis: 'POLICY_SYMBOL_NOT_COVERED' });
+  Object.assign(sessions[60], { validated: false, reason: 'UNVERIFIED', sessionKind: 'UNKNOWN' });
+  const d = { ok: true, version: 'VOLATILITY_COVERAGE_V1', readOnly: true, notForTrading: true, executionAuthorized: false,
+    symbol: 'AAPL', universePosition: 0, sources: covSources(), row,
+    rvDiagnostics: { sessions, missingSessions: ['2026-10-19'], corporateActions: { status: 'NOT_PROVIDED' } },
+    pendingSessions: { rv20: [], rv60: [] }, storedRv: null, historicalCertified: { available: true }, iv: { pilotRow: null, census: null } };
+  if (mutate) mutate(d);
+  return d;
+}
+
+require('node:test')('coverage monitor detail: absent, invalid, not final and not REGULAR stay four facts; history stays apart', () => {
+  const out = cov.renderDetail(covDetail(), null);
+  assert.match(out, /2026-10-19 · ASSENTE · <code>NO_STORED_CANDLE<\/code>/);
+  assert.match(out, /2026-10-20 · PRESENTE, STRUTTURALMENTE NON VALIDA · <code>NOT_POSITIVE_PRICE<\/code>/);
+  assert.match(out, /2026-10-21 · VALIDA, FINALITÀ INSUFFICIENTE · <code>UNVERIFIED<\/code>[^<]*<span class="sub">[^<]*<\/span> · finalità OBSERVED_ONCE · acquisizioni distinte 1/);
+  assert.match(out, /2026-10-22 · NON REGULAR · <code>NOT_REGULAR_SESSION<\/code>/);
+  assert.match(out, /2026-10-23 · VALIDA, FINALITÀ INSUFFICIENTE \+ NON REGULAR/);
+  assert.match(out, /Sedute non validate \(5 di 21\)/);
+  assert.match(out, /Sedute non validate \(5 di 61\)/);
+  assert.match(out, /RV certificata storica: 21\.00% al 2026-10-22 \(rev\. 1\) · <span class="warn">la RV certificata corrente NON è disponibile<\/span> · mai usata per lo spread corrente/);
+  assert.match(out, /BLOCCO AZIONI SOCIETARIE/);
+  assert.match(out, /diagnostica numerica, mai confrontata con la IV/);
+  assert.match(out, /Sedute assenti dallo store: 2026-10-19/);
+  assert.match(out, /Nessuna stima di quanti giorni servano/);
+  assert.doesNotMatch(out, /\d+ (giorni|sedute) (in più|ancora)|basta(no)? attendere/i, 'never "X more days fix it"');
+  const sessionsUnknown = cov.renderDetail(covDetail(d => { d.rvDiagnostics = null; }), null);
+  assert.match(sessionsUnknown, /Elenco sedute non verificabile/);
+  assert.deepEqual(cov.sessionFacts({ sessionDate: 'x' }), null);
+  assert.deepEqual(cov.sessionFacts({ sessionDate: '2026-10-23', available: true, valid: true, validated: false, reason: null,
+    sessionKind: 'REGULAR' }).facts, ['VALIDA, NON VALIDATA'], 'a valid unvalidated session with no stated cause is not given one');
+});
+
+require('node:test')('coverage monitor detail: IV Ref only from the pilot; IV Market informational, never a substitute', () => {
+  const cache = { AAPL: { iv: 0.55, source: 'TASTYTRADE', updatedAt: Date.parse('2026-10-24T14:00:00Z') } };
+  const noRef = covDetail(d => { d.row.ivRef.value = null; d.row.ivRef.status = 'UNSUPPORTED'; d.row.ivRef.reason = 'CHAIN_NO_REGULAR'; });
+  const out = cov.renderDetail(noRef, cache);
+  assert.match(out, /Valore: <strong>—<\/strong> · stato UNSUPPORTED · <code>CHAIN_NO_REGULAR<\/code>/);
+  assert.match(out, /metrica non supportata per questo simbolo/);
+  assert.match(out, /IV Market \(IV index Tastytrade dello scanner, solo informativa, mai usata negli spread\): 55\.00%/);
+  const table = cov.renderTable([noRef.row], null, cache);
+  assert.match(table, /<strong>—<\/strong><div class="sub">UNSUPPORTED<\/div><div class="sub mkt">IV Market 55\.00% \(informativa\)<\/div>/);
+  assert.equal(cov.ivMarketOf('AAPL', { AAPL: { iv: 0 } }), null);
+  assert.equal(cov.ivMarketOf('AAPL', { AAPL: { iv: '0.5' } }), null);
+  assert.equal(cov.ivMarketOf('AAPL', null), null);
+  for (const unsafe of [d => { d.executionAuthorized = true; }, d => { d.readOnly = false; }, d => { d.version = 'X'; },
+    d => { d.row.symbol = 'MSFT'; }, d => { d.row.status = 'GREAT'; }, d => { d.ok = false; }])
+    assert.throws(() => cov.renderDetail(covDetail(unsafe), null), /COVERAGE_DETAIL_INVALID_RESPONSE/);
+});
+
+require('node:test')('coverage monitor: reason codes stay visible with a readable text; unknown codes are not given a meaning', () => {
+  assert.equal(cov.reasonText('RV60_GAP_IN_WINDOW'), 'RV60: una seduta di borsa della finestra non è nello store');
+  assert.equal(cov.reasonText('RV20_SPLIT_UNVERIFIED'), 'RV20: salto di prezzo compatibile con uno split non verificato: finestra bloccata');
+  assert.equal(cov.reasonText('NOT_REGULAR_SESSION'), 'seduta non riconosciuta come REGULAR dalla policy');
+  assert.equal(cov.reasonText('SOMETHING_NEW'), 'codice del motore, senza descrizione in questo pannello');
+  assert.equal(cov.reasonText('toString'), 'codice del motore, senza descrizione in questo pannello', 'no prototype key is a reason');
+  assert.equal(cov.reasonText('UNVERIFIED_NO_JUMP_DETECTED'),
+    'nessuna azione elencata, esaustività non garantita, nessun salto sospetto: NON è una verifica');
+  const table = cov.renderTable(cov.combinePages(covMixed()).rows, null, null);
+  assert.match(table, /<code>RV20_INSUFFICIENT_CLOSES<\/code>|<code>NOT_IN_IV_PILOT<\/code>/);
+});
+
+// The browser lifecycle, as for the RV panel: a manual run reads pages in order with the pinned digest, a closed
+// panel never advances, a timer never fires a second read, and nothing but GET with the session key is sent.
+async function testCoverageLifecycle() {
+  const roots = [], hosts = [], requests = [], timeouts = [], blobs = [];
+  let launcher = null;
+  const element = () => ({
+    style: {}, handlers: {}, attrs: {}, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false,
+    addEventListener(type, fn) { this.handlers[type] = fn; },
+    setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k] ?? null; },
+    focus() {}, remove() { this.removed = true; }, click() { return this.handlers.click && this.handlers.click({ target: this }); },
+  });
+  const document = {
+    readyState: 'complete',
+    getElementById(id) { return id === 'apex-vol-coverage-launcher' ? launcher : null; },
+    createElement(tag) {
+      const el = element();
+      if (tag === 'a') el.click = () => { el.clicked = true; };
+      if (tag === 'div') {
+        const fields = Object.fromEntries(['run', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+          'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element()]));
+        const root = { fields, appended: [], getElementById(id) { return fields[id]; },
+          querySelector(sel) { assert.equal(sel, '.shade'); return fields.shade; }, appendChild(x) { this.appended.push(x); } };
+        el.attachShadow = () => root;
+        roots.push(root); hosts.push(el);
+      }
+      return el;
+    },
+    body: { appendChild(el) { if (el.id === 'apex-vol-coverage-launcher') launcher = el; } },
+  };
+  const context = {
+    module: { exports: {} }, document, BACKEND: devBackend, S: { backendKey: 'fixture-only-api-key' }, AbortController,
+    window: { location: { hostname: 'deploy-preview-552--spontaneous-queijadas-118823.netlify.app' } },
+    setTimeout(fn) { timeouts.push(fn); return timeouts.length; }, clearTimeout() {},
+    fetch(url, options) { return new Promise(resolve => requests.push({ url, options, resolve })); },
+    Blob: function (parts, options) { blobs.push({ parts, options }); },
+    URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL() {} },
+  };
+  vm.runInNewContext(covSource, context, { filename: 'volatility-coverage-monitor.js' });
+  assert.ok(launcher, 'the launcher mounts on the exact preview hostname with the DEV backend');
+  const ok = body => ({ ok: true, status: 200, json: async () => body });
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const universe = covUniverse(60), pages = covPages(universe);
+
+  launcher.click();
+  const first = roots[0].fields;
+  first.csv.handlers.click();
+  assert.equal(blobs.length, 0, 'no export before a complete read');
+  const firstRun = first.run.click();
+  await first.run.click();
+  assert.equal(requests.length, 1, 'a second click while running adds no request');
+  assert.equal(requests[0].url, devBackend + '/debug/volatility-carry/coverage?offset=0&limit=25');
+  assert.equal(requests[0].options.method, 'GET');
+  assert.equal(requests[0].options.headers['x-api-key'], 'fixture-only-api-key');
+  first.close.click();
+  assert.equal(requests[0].options.signal.aborted, true, 'close aborts the run');
+  requests[0].resolve(ok(pages[0]));
+  await firstRun;
+  assert.equal(requests.length, 1, 'a closed panel never asks for page 2');
+
+  launcher.click();
+  const second = roots[1].fields;
+  const secondRun = second.run.click();
+  for (let i = 0; i < 3; i++) {
+    assert.equal(requests.length, 2 + i);
+    if (i > 0) assert.equal(requests[1 + i].url, devBackend + '/debug/volatility-carry/coverage?offset=' + i * 25 +
+      '&limit=25&universeDigest=' + COV_DIGEST, 'pages 2…n pin the digest of page 1');
+    requests[1 + i].resolve(ok(pages[i]));
+    await tick(); await tick();
+  }
+  await secondRun;
+  assert.equal(requests.length, 4, 'exactly one request per page');
+  assert.match(second.state.textContent, /Completato: 60 titoli in 3 pagine/);
+  assert.equal(second.filters.hidden, false);
+  assert.equal(second.csv.disabled, false);
+  assert.match(second.table.innerHTML, /U059/);
+  for (const fn of timeouts.splice(0)) fn();
+  await tick();
+  assert.equal(requests.length, 4, 'no timer ever starts another read: there is no polling');
+  assert.equal(requests[1].options.signal.aborted, true, 'a late per-page timer only aborts its own, finished run');
+
+  second.search.value = 'U05';
+  second.search.handlers.input();
+  assert.match(second.count.textContent, /^10 di 60 titoli mostrati\.$/);
+  second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-sort' ? 'spread20' : null) }) } });
+  assert.match(second.table.innerHTML, /aria-sort="ascending"/);
+  second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-sort' ? 'spread20' : null) }) } });
+  assert.match(second.table.innerHTML, /aria-sort="descending"/);
+
+  second.csv.handlers.click();
+  assert.equal(blobs.length, 1);
+  assert.match(blobs[0].parts[0], /^symbol,universe_position,status,/);
+  assert.doesNotMatch(blobs[0].parts[0], /fixture-only-api-key/);
+  assert.equal(roots[1].appended[0].download, 'volatility-coverage-2026-10-23-cccccccc.csv');
+
+  const detailRun = second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-symbol' ? 'U007' : null) }) } });
+  assert.equal(requests.length, 5);
+  assert.equal(requests[4].url, devBackend + '/debug/volatility-carry/coverage/U007');
+  requests[4].resolve({ ok: false, status: 404, json: async () => ({ ok: false, error: 'COVERAGE_SYMBOL_NOT_IN_UNIVERSE' }) });
+  await detailRun; await tick(); await tick();
+  assert.match(second.detail.innerHTML, /COVERAGE_HTTP_404: COVERAGE_SYMBOL_NOT_IN_UNIVERSE/);
+
+  const thirdRun = second.run.click();
+  requests[5].resolve({ ok: false, status: 404, json: async () => { throw SyntaxError('Unexpected token <'); } });
+  await thirdRun;
+  assert.match(second.state.textContent, /Endpoint non ancora disponibile sul backend DEV/);
+  assert.equal(second.state.className, 'error');
+  assert.ok(requests.every(r => r.options.method === 'GET' && r.url.startsWith(devBackend + '/debug/volatility-carry/coverage')));
+  second.shade.click();
+  assert.equal(hosts[1].removed, true);
+
+  // Closed while its LAST page is in flight: the late page must not complete the closed run, nor leave data that a
+  // reopened panel could export.
+  launcher.click();
+  const third = roots[2].fields;
+  const lastPageRun = third.run.click();
+  third.close.click();
+  requests[6].resolve(ok(covPages(covUniverse(3))[0]));
+  await lastPageRun; await tick();
+  assert.equal(third.summary.innerHTML, '');
+  assert.doesNotMatch(third.state.textContent, /Completato/);
+  launcher.click();
+  roots[3].fields.csv.handlers.click();
+  assert.equal(blobs.length, 1, 'nothing from the closed run is exportable');
+  roots[3].fields.close.click();
+
+  const productionContext = Object.assign({}, context, { BACKEND: 'https://apex-tastytrade-backend-production.up.railway.app' });
+  launcher = null;
+  vm.runInNewContext(covSource, productionContext, { filename: 'volatility-coverage-monitor.js' });
+  assert.equal(launcher, null, 'no launcher against the production backend');
+}
+// A lifecycle that never settles would let the process exit 0 with its later assertions unrun: completion is checked.
+let coverageLifecycleDone = false;
+testCoverageLifecycle().then(() => { coverageLifecycleDone = true; }, error => {
+  console.error('volatility coverage lifecycle failed:', error);
+  process.exitCode = 1;
+});
+process.on('exit', () => {
+  if (!coverageLifecycleDone && !process.exitCode) {
+    console.error('volatility coverage lifecycle did not complete');
+    process.exitCode = 1;
+  }
+});
