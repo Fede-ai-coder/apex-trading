@@ -119,7 +119,11 @@ no storage, no polling, and no change to `index.html` or `js/**`. Load it from t
 
 Then click **IV − RV · DEV** and **Analizza universo**. The panel reads `GET /debug/volatility-carry/coverage` 25 symbols
 at a time, in sequence. From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
-session date or IV date changes midway is refused. A timeout of 20 s applies to each page. Clicking a symbol reads
+session date or IV date changes midway is refused. The read is **not an atomic snapshot**: each page is computed at
+its own reference instant (its `generatedAt`). The CSV gives every row the instant of its page (`page_generated_at`:
+the same for all the rows of a page, not the moment each symbol was read), and a change of the IV pilot state
+(`IV_PILOT_CHANGED_DURING_READ`) or of another source's state between pages is shown as a warning. A timeout of 20 s
+applies to each page. Clicking a symbol reads
 `GET /debug/volatility-carry/coverage/:symbol` once. These endpoints come from the matching `apex-backend` change; until
 that change runs on DEV, the panel says *Endpoint non ancora disponibile*.
 
@@ -135,6 +139,9 @@ What it shows (every value is the backend's):
   equal, grey not available: the colours show the sign only and are not trading signals.
 - For each unavailable spread, the missing operand (`IV_REF`, `RV20`, `RV60`, `TIMING`) and the engine's own code, with
   a readable explanation. Unknown codes are shown as they are, without an invented meaning.
+- For each row, how its sources were read: census *found / absent from the universe / not read / read error*, RV daily
+  store *read / not read / read error*, evidence *available / not available / truncated*. A read error marks the row
+  `ERROR` and is never shown as a missing value.
 - Detail: the counts of each 21 / 61-session window, and every session in it that is not validated. *Absent*, *present
   but structurally invalid*, *valid but not final* and *not REGULAR* are kept as separate facts. The detail also shows
   the corporate-action status and the IV timing and census. It never estimates how many days would make a window valid.

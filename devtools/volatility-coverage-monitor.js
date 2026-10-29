@@ -67,6 +67,9 @@
     IV_OBSERVATION_TIME_INVALID: 'orario di osservazione IV non valido',
     CANDLE_READ_FAILED: 'lettura delle candele fallita',
     OBSERVATIONS_NOT_RELIABLE: 'evidenze di acquisizione troncate o illeggibili: nessuna seduta validata',
+    NO_OBSERVATIONS_FILE: 'file delle evidenze di acquisizione assente: nessuna seduta può essere validata',
+    CENSUS_READ_FAILED: 'lettura del census fallita: non si può dire perché il simbolo non ha IV Ref',
+    RV_DAILY_READ_FAILED: 'lettura delle RV storiche fallita: lo storico certificato non è noto',
     RV_DIAGNOSTICS_FAILED: 'diagnostica RV fallita',
     STORED_RV_FAILED: 'calcolo RV dallo store fallito',
     PRELIMINARY_COMPARISON_FAILED: 'confronto preliminare IV − RV fallito',
@@ -120,18 +123,25 @@
     if (!Array.isArray(pages) || !pages.length || pages.length > MAX_PAGES) throw Error('COVERAGE_PAGES_INVALID');
     const first = pages[0];
     const digest = first && first.universe && first.universe.digest;
-    const rows = [], seen = new Set(), warnings = [];
+    const rows = [], seen = new Set(), warnings = [], pageGeneratedAt = {};
+    const warn = w => { if (!warnings.includes(w)) warnings.push(w); };
+    // Pages are computed one after the other, not as one atomic snapshot. Every page reads the whole IV pilot, so its
+    // digest says whether all IV Refs come from one pilot state; any other change of the sources' state is stated too.
+    const pilotDigest = p => (p.sources && p.sources.ivPilot ? p.sources.ivPilot.digest : undefined);
+    const withoutDigest = p => JSON.stringify(Object.assign({}, p.sources, p.sources && p.sources.ivPilot
+      ? { ivPilot: Object.assign({}, p.sources.ivPilot, { digest: null }) } : {}));
     let offset = 0;
     for (const page of pages) {
       checkPage(page, offset, digest);
       if (page.asOfSessionDate !== first.asOfSessionDate || page.ivAsOfDate !== first.ivAsOfDate)
         throw Error('COVERAGE_DATES_CHANGED_DURING_READ');
-      if (JSON.stringify(page.sources) !== JSON.stringify(first.sources) &&
-          !warnings.includes('SOURCES_CHANGED_DURING_READ')) warnings.push('SOURCES_CHANGED_DURING_READ');
+      if (pilotDigest(page) !== pilotDigest(first)) warn('IV_PILOT_CHANGED_DURING_READ');
+      if (withoutDigest(page) !== withoutDigest(first)) warn('SOURCES_CHANGED_DURING_READ');
       for (const row of page.rows) {
         if (seen.has(row.symbol)) throw Error('COVERAGE_DUPLICATE_SYMBOL');
         seen.add(row.symbol);
         rows.push(row);
+        pageGeneratedAt[row.symbol] = page.generatedAt;   // the page's reference instant, not the symbol's own read
       }
       offset += page.rows.length;
     }
@@ -139,12 +149,15 @@
     if (last.nextOffset !== null || rows.length !== first.universe.count) throw Error('COVERAGE_UNIVERSE_INCOMPLETE');
     return {
       universe: first.universe, asOfSessionDate: first.asOfSessionDate, ivAsOfDate: first.ivAsOfDate,
-      generatedFrom: first.generatedAt, generatedTo: last.generatedAt, sources: first.sources, warnings, rows,
+      generatedFrom: first.generatedAt, generatedTo: last.generatedAt, sources: first.sources, warnings, rows, pageGeneratedAt,
+      atomic: pages.every(p => p.snapshot && p.snapshot.atomic === true),
     };
   }
 
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
   const spreadOf = (row, n) => num(row.spreads['ivMinusRv' + n + 'Pp'].valuePp);
+  // Every metric available = both spreads computed. A read error on another source (status ERROR) does not undo that.
+  const complete = row => spreadOf(row, 20) !== null && spreadOf(row, 60) !== null;
   const hasProblem = row => row.status === 'ERROR' || row.status === 'STALE' || !row.candleQuality ||
     row.candleQuality.issues === true || Object.keys(row.errors || {}).length > 0;
   function summarize(rows) {
@@ -159,7 +172,7 @@
         s[key].any++;
         if (Object.prototype.hasOwnProperty.call(s[key], row[key].basis)) s[key][row[key].basis]++;
       }
-      if (row.status === 'COMPLETE') s.complete++;
+      if (complete(row)) s.complete++;
       for (const n of [20, 60]) {
         const v = spreadOf(row, n);
         if (v === null) continue;
@@ -178,7 +191,7 @@
     IVREF_YES: r => num(r.ivRef.value) !== null, IVREF_NO: r => num(r.ivRef.value) === null,
     RV20_YES: r => num(r.rv20.value) !== null, RV20_NO: r => num(r.rv20.value) === null,
     RV60_YES: r => num(r.rv60.value) !== null, RV60_NO: r => num(r.rv60.value) === null,
-    COMPLETE: r => r.status === 'COMPLETE', INCOMPLETE: r => r.status !== 'COMPLETE', PROBLEMS: hasProblem,
+    COMPLETE: complete, INCOMPLETE: r => !complete(r), PROBLEMS: hasProblem,
   };
   const SPREAD = {
     IV_GT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) > 0,
@@ -272,16 +285,20 @@
     ['rv60_last_certified', r => r.rv60.lastCertified ? num(r.rv60.lastCertified.value) : null],
     ['rv60_last_certified_session', r => r.rv60.lastCertified ? r.rv60.lastCertified.sessionDate : null],
     ['candle_issues', r => r.candleQuality ? r.candleQuality.issues : null],
+    ['census_state', r => r.ivRef.censusState], ['historical_state', r => (r.historicalCertified || {}).state],
+    ['evidence_available', r => (r.evidence || {}).available], ['evidence_error', r => (r.evidence || {}).error],
+    ['errors', r => Object.entries(r.errors || {}).map(([k, v]) => k + ': ' + v).join(' | ')],
   ];
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
-      'iv_market_updated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
+      'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
       lines.push(CSV_COLUMNS.map(c => csvCell(c[1](row))).concat([
         csvCell(m ? m.value : null), csvCell(m ? m.source : null),
         csvCell(m && m.updatedAt !== null ? new Date(m.updatedAt).toISOString() : null),
+        csvCell(data.pageGeneratedAt ? data.pageGeneratedAt[row.symbol] : null),
         csvCell(data.generatedFrom), csvCell(data.generatedTo), csvCell(data.universe.source), csvCell(data.universe.digest),
       ]).join(','));
     }
@@ -303,17 +320,24 @@
     const src = data.sources || {};
     const state = x => !x ? 'non riportato' : x.error ? 'ERRORE: ' + x.error : x.available ? 'disponibile'
       : (x.enabled === false ? 'disabilitato' : 'non disponibile') + (x.reason ? ' (' + x.reason + ')' : '');
+    const evidenceState = x => !x ? 'non riportato' : x.error ? 'ERRORE: ' + x.error : x.available === true ? 'disponibili'
+      : x.available === false ? 'non disponibili' + (x.reason ? ' (' + x.reason + ')' : '') : 'stato non dichiarato';
     return '<div class="stats">' + cards.map(([name, value]) => '<div class="metric"><span>' + esc(name) +
       '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal +
-      '<p class="note">C/P/E = certificata / preliminare / esplorativa. Dati insufficienti = almeno una finestra senza alcuna RV.' +
+      '<p class="note">C/P/E = certificata / preliminare / esplorativa. Completi = entrambi gli spread calcolati, anche' +
+      ' se la riga ha un errore di lettura su un’altra fonte. Dati insufficienti = almeno una finestra senza alcuna RV.' +
       ' Problemi candele = righe escluse dallo store (flag <code>issues</code> del backend). Conteggi delle sole righe lette.</p>' +
       '<p class="note">Universo <code>' + esc(data.universe.source) + '</code> · ' + esc(data.universe.count) +
       ' titoli · digest <code>' + esc(String(data.universe.digest).slice(0, 12)) + '…</code> · RV al ' +
       esc(data.asOfSessionDate) + ' · IV del ' + esc(data.ivAsOfDate) + ' (NY) · letto ' + esc(data.generatedFrom) +
       ' → ' + esc(data.generatedTo) + '</p>' +
       '<p class="note">Fonti: pilot IV ' + esc(state(src.ivPilot)) + ' · census ' + esc(state(src.census)) +
-      ' · RV storiche ' + esc(state(src.rvDaily)) + ' · evidenze ' + esc(!src.observations ? 'non riportato'
-        : src.observations.available ? 'disponibili' : 'ERRORE: ' + src.observations.error) + '</p>' +
+      ' · RV storiche ' + esc(state(src.rvDaily)) + ' · evidenze ' + esc(evidenceState(src.observations)) +
+      (src.ivPilot && src.ivPilot.digest ? ' · stato pilot IV <code>' + esc(String(src.ivPilot.digest).slice(0, 12)) + '…</code>' : '') +
+      '</p>' + (data.atomic ? '' : '<p class="note">Lettura NON atomica: ogni pagina è calcolata a un proprio istante di' +
+      ' riferimento (<code>generatedAt</code> della pagina, colonna <code>page_generated_at</code> nel CSV: lo stesso per' +
+      ' tutte le righe della pagina, non l’istante di lettura del singolo simbolo); stessa data RV e IV su tutte le pagine' +
+      ' verificata.</p>') +
       (data.warnings.length ? '<p class="error">Attenzione: ' + esc(data.warnings.join(', ')) + '</p>' : '');
   }
 
@@ -368,6 +392,20 @@
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
       (body || '<tr><td colspan="13">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
+
+  // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
+  function censusText(iv, errors) {
+    switch (iv.censusState) {
+      case 'FOUND': return iv.census ? esc(iv.census.status) + ' · ' + (iv.census.fresh ? 'fresco' : 'NON fresco') + ' · ' +
+        esc(iv.census.checkedAt || '—') : 'trovato';
+      case 'NOT_IN_UNIVERSE': return 'simbolo assente dall’universo persistito';
+      case 'NOT_READ': return 'non letto' + (iv.censusReason ? ' (' + esc(iv.censusReason) + ')' : '');
+      case 'ERROR': return '<span class="error">ERRORE di lettura</span>' + (errors && errors.census ? ' · ' + esc(errors.census) : '');
+      default: return 'stato non riportato';
+    }
+  }
+  const stateText = x => !x ? 'non riportato' : x.state === 'READ' ? 'lette' : x.state === 'ERROR' ? 'ERRORE di lettura'
+    : x.state === 'NOT_READ' ? 'non lette' + (x.reason ? ' (' + x.reason + ')' : '') : 'stato non riportato';
 
   // One session of a window, in the backend's own terms. The four facts are kept apart and can co-occur.
   function sessionFacts(s) {
@@ -442,8 +480,7 @@
       esc(iv.settlementType || '—') + '</p><p>Snapshot del ' + esc(iv.asOfDate || '—') + ' · osservata ' + esc(iv.observedAt || '—') +
       ' · freschezza: ' + (timing.length ? timing.map(m => reasonHtml(m.reason)).join(' · ') : num(iv.value) !== null ? 'compatibile con la RV' : '—') +
       (r.asOf.datesDiffer ? ' · <span class="warn">data IV ≠ data RV (' + esc(r.asOf.ivAsOfDate) + ' / ' + esc(r.asOf.rvSessionDate) + ')</span>' : '') + '</p>' +
-      (iv.census ? '<p>Census: ' + esc(iv.census.status) + ' · ' + (iv.census.fresh ? 'fresco' : 'NON fresco') + ' · ' +
-        esc(iv.census.checkedAt || '—') + '</p>' : '<p>Census: non letto o simbolo assente dall’universo persistito</p>') +
+      '<p>Census: ' + censusText(iv, r.errors) + '</p>' +
       (market ? '<p class="mkt">IV Market (IV index Tastytrade dello scanner, solo informativa, mai usata negli spread): ' +
         esc(formatPct(market.value)) + (market.updatedAt !== null ? ' · ' + esc(new Date(market.updatedAt).toISOString()) : '') + '</p>' : '') +
       '<h4>Spread IV − RV (punti percentuali)</h4><ul class="reasons">' + spreadLine('IV − RV20', r.spreads.ivMinusRv20Pp) +
@@ -457,6 +494,9 @@
       (diag && Array.isArray(diag.missingSessions) && diag.missingSessions.length ? '<p>Sedute assenti dallo store: ' +
         esc(diag.missingSessions.join(', ')) + '</p>' : '') +
       (hist.available === false ? '<p>RV storiche: non disponibili · ' + reasonHtml(hist.reason) + '</p>' : '') +
+      '<p>Stato delle letture: RV storiche ' + esc(stateText(r.historicalCertified)) + ' · evidenze ' +
+      (r.evidence ? (r.evidence.available ? 'disponibili' : 'non disponibili' + (r.evidence.error ? ' · ' + reasonHtml(r.evidence.error) : '')) +
+        (r.evidence.truncated ? ' · <span class="warn">troncate</span>' : '') : 'non riportate') + '</p>' +
       (Object.keys(r.errors || {}).length ? '<p class="error">Errori: ' + esc(Object.entries(r.errors).map(([k, v]) => k + ': ' + v).join(' · ')) + '</p>' : '') +
       '<p class="note">Nessuna stima di quanti giorni servano: una seduta si valida con evidenze di finalità, policy REGULAR e ' +
       'controlli sulle azioni societarie, non con il solo passare del tempo.</p>';

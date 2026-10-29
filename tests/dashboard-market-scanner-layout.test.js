@@ -409,19 +409,22 @@ function covRow(symbol, position, o) {
       source: 'TASTYTRADE_SELECTED_REGULAR_EXPIRY_IV', version: 'SELECTED_REGULAR_IV_V1', pilotMember: iv !== null,
       asOfDate: '2026-10-24', observedAt: iv === null ? null : '2026-10-24T15:00:00.000Z',
       selectedExpiration: iv === null ? null : '2026-12-04', selectedDte: iv === null ? null : 41,
-      settlementType: iv === null ? null : 'PM', census: null },
+      settlementType: iv === null ? null : 'PM', census: null, censusState: 'NOT_READ', censusReason: 'CENSUS_DISABLED' },
     rv20: covWindow(20, o.rv20 === undefined ? 0.2 : o.rv20, o.basis || 'EXPLORATORY', o.rv20Extra),
     rv60: covWindow(60, o.rv60 === undefined ? 0.25 : o.rv60, o.basis || 'EXPLORATORY', o.rv60Extra),
     spreads: { ivMinusRv20Pp: spread(o.s20), ivMinusRv60Pp: spread(o.s60) },
     candleQuality: o.candleQuality === undefined ? { storedCandles: 289, structurallyValidCandles: 289, excludedRows: 0,
       excludedByReason: {}, duplicateSessions: 0, lastWindowPresentNotValid: 0, issues: false } : o.candleQuality,
     sessionPolicy: { certifiedCovered: false, certifiedBasis: null, preliminaryCovered: false, storedPolicyStatus: null },
+    evidence: { available: false, error: 'NO_OBSERVATIONS_FILE', truncated: false },
+    historicalCertified: { state: 'NOT_READ', reason: 'RV_DAILY_DISABLED' },
     errors: o.errors || {},
   };
 }
 const covSources = () => ({ candles: { source: 'APEX_TT_CANDLE_STORE_1D', readOnly: true },
-  observations: { available: true, error: null },
-  ivPilot: { enabled: true, available: true, reason: null, error: null, members: 3, version: 'SELECTED_REGULAR_IV_V1' },
+  observations: { available: true, reason: null, error: null },
+  ivPilot: { enabled: true, available: true, reason: null, error: null, members: 3, digest: 'e'.repeat(64),
+    version: 'SELECTED_REGULAR_IV_V1' },
   census: { enabled: true, available: true, reason: null, error: null },
   rvDaily: { enabled: false, available: false, reason: 'RV_DAILY_DISABLED', error: null } });
 function covPages(symbols, rowFor) {
@@ -430,6 +433,7 @@ function covPages(symbols, rowFor) {
     const rows = symbols.slice(offset, offset + 25).map((s, i) => (rowFor ? rowFor(s, offset + i) : covRow(s, offset + i)));
     pages.push({ ok: true, version: 'VOLATILITY_COVERAGE_V1', readOnly: true, notForTrading: true, executionAuthorized: false,
       generatedAt: '2026-10-24T22:00:0' + pages.length + '.000Z', asOfSessionDate: '2026-10-23', ivAsOfDate: '2026-10-24',
+      snapshot: { atomic: false, scope: 'PAGE' },
       universe: { source: 'default:APEX_SCANNER_UNIVERSE', count: symbols.length, digest: COV_DIGEST },
       offset, limit: 25, returned: rows.length,
       nextOffset: offset + rows.length < symbols.length ? offset + rows.length : null, sources: covSources(), rows });
@@ -541,6 +545,13 @@ require('node:test')('coverage monitor: every filter, exactly', () => {
   assert.equal(pick({ availability: 'INCOMPLETE' }), 'DDD,EEE,FFF,GGG,HHH,III');
   assert.equal(pick({ availability: 'RV60_NO' }), 'EEE,HHH,III');
   assert.equal(pick({ availability: 'PROBLEMS' }), 'FFF,GGG,HHH');
+  const erred = rows.map(r => (r.symbol === 'AAA' ? Object.assign({}, r, { status: 'ERROR', errors: { census: 'SQLITE_CORRUPT' } }) : r));
+  assert.equal(cov.filterRows(erred, { availability: 'COMPLETE' }).map(r => r.symbol).join(','), 'AAA,BBB,CCC',
+    'both spreads computed: complete, whatever another source\'s read error did to the status');
+  assert.deepEqual([cov.summarize(erred).complete, cov.summarize(erred).errors], [3, 2]);
+  const partial = covRow('PPP', 0, { iv: 0.3, basis: 'CERTIFIED', s20: 1.5, status: 'PARTIAL' });
+  assert.deepEqual([cov.filterRows([partial], { availability: 'COMPLETE' }).length, cov.filterRows([partial], { availability: 'INCOMPLETE' }).length,
+    cov.summarize([partial]).complete], [0, 1, 0], 'one spread of two is not complete');
   assert.equal(pick({ spread: 'IV_GT_RV20' }), 'AAA,CCC');
   assert.equal(pick({ spread: 'IV_LT_RV20' }), 'BBB');
   assert.equal(pick({ spread: 'IV_GT_RV60' }), 'AAA');
@@ -569,8 +580,9 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'rv60', 'rv60_basis', 'rv60_validated', 'rv60_required', 'rv60_missing', 'rv60_certified_reasons',
     'iv_minus_rv20_pp', 'iv_minus_rv20_basis', 'iv_minus_rv20_missing', 'iv_minus_rv60_pp', 'iv_minus_rv60_basis',
     'iv_minus_rv60_missing', 'rv_session_date', 'iv_rv_dates_differ', 'rv20_last_certified', 'rv20_last_certified_session',
-    'rv60_last_certified', 'rv60_last_certified_session', 'candle_issues', 'iv_market_informational', 'iv_market_source',
-    'iv_market_updated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
+    'rv60_last_certified', 'rv60_last_certified_session', 'candle_issues', 'census_state', 'historical_state',
+    'evidence_available', 'evidence_error', 'errors', 'iv_market_informational', 'iv_market_source',
+    'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
   const col = name => header.indexOf(name);
   const bbb = lines[2].split(',');
   assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
@@ -584,6 +596,10 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   assert.ok(lines[4].includes(",'+SUM(A1),"));
   assert.equal(lines[8].split(',')[col('status')], 'ERROR');
   assert.equal(lines[8].split(',')[col('candle_issues')], '', 'unknown candle quality stays empty, never false');
+  assert.equal(lines[8].split(',')[col('errors')], 'candles: SQLITE_BUSY');
+  assert.deepEqual([bbb[col('census_state')], bbb[col('historical_state')], bbb[col('evidence_available')], bbb[col('evidence_error')]],
+    ['NOT_READ', 'NOT_READ', 'false', 'NO_OBSERVATIONS_FILE']);
+  assert.equal(bbb[col('page_generated_at')], '2026-10-24T22:00:00.000Z', 'each row carries the reference instant of its page');
   assert.doesNotMatch(csv, /x-api-key|backendKey/);
   assert.equal(cov.csvCell(-1.5), '-1.5', 'a number is a number, not a defused text');
   assert.equal(cov.csvCell('-1.5'), "'-1.5");
@@ -674,6 +690,47 @@ require('node:test')('coverage monitor: reason codes stay visible with a readabl
     'nessuna azione elencata, esaustività non garantita, nessun salto sospetto: NON è una verifica');
   const table = cov.renderTable(cov.combinePages(covMixed()).rows, null, null);
   assert.match(table, /<code>RV20_INSUFFICIENT_CLOSES<\/code>|<code>NOT_IN_IV_PILOT<\/code>/);
+});
+
+require('node:test')('coverage monitor: a read is not atomic, and it says when the IV pilot or a source changed', () => {
+  const universe = covUniverse(60);
+  const data = cov.combinePages(covPages(universe));
+  assert.deepEqual([data.atomic, data.warnings], [false, []]);
+  assert.equal(data.pageGeneratedAt.U000, '2026-10-24T22:00:00.000Z');
+  assert.equal(data.pageGeneratedAt.U030, '2026-10-24T22:00:01.000Z');
+  assert.equal(data.pageGeneratedAt.U059, '2026-10-24T22:00:02.000Z');
+  assert.match(cov.renderSummary(data), /Lettura NON atomica: ogni pagina è calcolata a un proprio istante di riferimento/);
+  assert.match(cov.renderSummary(data), /non l’istante di lettura del singolo simbolo/);
+  const pilot = covPages(universe); pilot[2].sources.ivPilot.digest = 'f'.repeat(64);
+  assert.deepEqual(cov.combinePages(pilot).warnings, ['IV_PILOT_CHANGED_DURING_READ'], 'a new pilot state alone is named as such');
+  const both = covPages(universe); both[1].sources.ivPilot.digest = 'f'.repeat(64); both[1].sources.census.error = 'boom';
+  assert.deepEqual(cov.combinePages(both).warnings, ['IV_PILOT_CHANGED_DURING_READ', 'SOURCES_CHANGED_DURING_READ']);
+  const atomic = covPages(universe); atomic.forEach(p => { p.snapshot.atomic = true; });
+  assert.doesNotMatch(cov.renderSummary(cov.combinePages(atomic)), /Lettura NON atomica/, 'the note follows what the pages declare');
+});
+
+require('node:test')('coverage monitor: source states are shown as read, never as "missing"', () => {
+  const data = cov.combinePages(covMixed());
+  const text = obs => { data.sources.observations = obs; return cov.renderSummary(data); };
+  assert.match(text({ available: false, reason: 'NO_OBSERVATIONS_FILE', error: null }), /evidenze non disponibili \(NO_OBSERVATIONS_FILE\)/);
+  assert.match(text({ available: null, reason: null, error: null }), /evidenze stato non dichiarato/);
+  assert.match(text({ available: false, reason: null, error: 'disk I/O error' }), /evidenze ERRORE: disk I\/O error/);
+  assert.match(text({ available: true, reason: null, error: null }), /evidenze disponibili/);
+  const detailFor = (mutate) => cov.renderDetail(covDetail(mutate), null);
+  assert.match(detailFor(d => { d.row.ivRef.censusState = 'ERROR'; d.row.errors = { census: 'SQLITE_CORRUPT' }; }),
+    /Census: <span class="error">ERRORE di lettura<\/span> · SQLITE_CORRUPT/);
+  assert.match(detailFor(d => { d.row.ivRef.censusState = 'NOT_IN_UNIVERSE'; }), /Census: simbolo assente dall’universo persistito/);
+  assert.match(detailFor(d => { d.row.ivRef.censusState = 'NOT_READ'; d.row.ivRef.censusReason = 'CENSUS_DISABLED'; }),
+    /Census: non letto \(CENSUS_DISABLED\)/);
+  assert.match(detailFor(d => { d.row.ivRef.censusState = 'FOUND';
+    d.row.ivRef.census = { status: 'REGULAR_AVAILABLE', fresh: true, checkedAt: '2026-10-24T12:00:00.000Z' }; }),
+  /Census: REGULAR_AVAILABLE · fresco · 2026-10-24T12:00:00.000Z/);
+  assert.match(detailFor(d => { d.row.ivRef.censusState = undefined; }), /Census: stato non riportato/);
+  assert.match(detailFor(d => { d.row.historicalCertified = { state: 'ERROR', reason: 'RV_DAILY_READ_FAILED' }; }),
+    /Stato delle letture: RV storiche ERRORE di lettura/);
+  assert.match(detailFor(), /RV storiche non lette \(RV_DAILY_DISABLED\) · evidenze non disponibili · <code>NO_OBSERVATIONS_FILE<\/code>/);
+  assert.match(detailFor(d => { d.row.evidence = { available: true, error: null, truncated: true }; }), /evidenze disponibili · <span class="warn">troncate<\/span>/);
+  assert.equal(cov.reasonText('CENSUS_READ_FAILED'), 'lettura del census fallita: non si può dire perché il simbolo non ha IV Ref');
 });
 
 // The browser lifecycle, as for the RV panel: a manual run reads pages in order with the pinned digest, a closed
