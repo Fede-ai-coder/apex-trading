@@ -456,13 +456,15 @@ const covMixed = () => covPages(['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG'
   III: { rv60: null, reasons: ['NOT_IN_IV_PILOT', 'RV60_INSUFFICIENT_CLOSES'] },
 })[s]));
 
-require('node:test')('coverage monitor: GET only, no storage, no polling, not loaded by index.html', () => {
+require('node:test')('coverage monitor: GET only, no storage, no polling; index.html fetches it only from the DEV launcher', () => {
   assert.doesNotMatch(covSource, /method:\s*['"](POST|PUT|PATCH|DELETE)['"]/);
   assert.doesNotMatch(covSource, /localStorage|sessionStorage|indexedDB|document\.cookie/);
   assert.doesNotMatch(covSource, /setInterval|new WebSocket|EventSource|subscribe/i);
   assert.equal((covSource.match(/fetch\(/g) || []).length, 1, 'one fetch call site: fetchJson');
   assert.match(covSource, /method: 'GET', cache: 'no-store'/);
-  assert.doesNotMatch(html, /devtools\/volatility-coverage-monitor\.js/);
+  assert.equal(html.split('devtools/volatility-coverage-monitor.js').length - 1, 1,
+    'index.html names the module once, in the DEV launcher (asserted with the launcher, at the end of this file)');
+  assert.doesNotMatch(html, /<script[^>]*volatility-coverage-monitor/, '…and never in a script tag');
   assert.equal((html.match(/<script\b/gi) || []).length, 115);
   // The RV panel's gate plus one exact host, the dev-clean branch deploy, so the panel can be used every day on the
   // stable DEV URL. Every row states both gates, so neither can widen without failing here.
@@ -886,4 +888,198 @@ process.on('exit', () => {
     console.error('volatility coverage lifecycle did not complete');
     process.exitCode = 1;
   }
+});
+
+// The fixed DEV button. The launcher at the end of the inline script in index.html is the only place the page fetches
+// the coverage module. It runs here as the browser runs it: after the real js/config/backend-config.js, in the same
+// global scope, over a fake DOM that records every element, script, listener, timer, storage access and network call.
+// Same file once more, for the ratcheted suite file count.
+const LAUNCHER_START = '(function apexVolCoverageLauncher() {';
+const launcherAt = html.indexOf(LAUNCHER_START);
+const launcherSource = html.slice(launcherAt, html.indexOf('\n})();\n', launcherAt) + '\n})();\n'.length);
+const backendConfigSource = fs.readFileSync(path.join(__dirname, '..', 'js', 'config', 'backend-config.js'), 'utf8');
+const launcherProdBackend = 'https://apex-tastytrade-backend-production.up.railway.app';
+const DEV_CLEAN = 'dev-clean--spontaneous-queijadas-118823.netlify.app';
+const PREVIEW = 'deploy-preview-553--spontaneous-queijadas-118823.netlify.app';
+function launcherPage(hostname, options) {
+  options = options || {};
+  const calls = [], scripts = [], listeners = [], mounted = [], roots = [];
+  const element = tag => ({
+    tag, id: '', type: '', src: '', textContent: '', innerHTML: '', value: '', disabled: false, hidden: false,
+    removed: false, style: {}, handlers: {}, attrs: {},
+    addEventListener(type, fn) { this.handlers[type] = fn; },
+    setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k] ?? null; },
+    focus() {}, remove() { this.removed = true; },
+    click() { return this.handlers.click && this.handlers.click({ target: this }); },
+  });
+  const document = {
+    readyState: options.readyState || 'complete',
+    addEventListener(type, fn, opts) { listeners.push({ type, fn, opts }); },
+    getElementById(id) { return mounted.find(el => el.id === id && !el.removed) || null; },
+    createElement(tag) {
+      const el = element(tag);
+      if (tag === 'div') el.attachShadow = () => {
+        const fields = Object.fromEntries(['run', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+          'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
+        const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
+        roots.push(root);
+        return root;
+      };
+      return el;
+    },
+    head: { appendChild(el) { scripts.push(el); } },
+    body: { appendChild(el) { mounted.push(el); } },
+  };
+  const spy = name => function () { calls.push(name); };
+  const location = { hostname };
+  const sandbox = {
+    console: { log() {} }, location, window: { location }, document, S: { backendKey: 'fixture-only-api-key' },
+    AbortController, clearTimeout() {},
+    fetch: options.fetch || spy('fetch'), setTimeout: options.setTimeout || spy('setTimeout'),
+    XMLHttpRequest: spy('XMLHttpRequest'), WebSocket: spy('WebSocket'), EventSource: spy('EventSource'),
+    setInterval: spy('setInterval'),
+  };
+  for (const name of ['localStorage', 'sessionStorage', 'indexedDB'])
+    Object.defineProperty(sandbox, name, { get() { calls.push(name); return undefined; } });
+  if (options.override !== undefined) sandbox.window.__APEX_BACKEND_URL__ = options.override;
+  const context = vm.createContext(sandbox);
+  vm.runInContext(backendConfigSource, context, { filename: 'backend-config.js' });
+  const loadModule = () => vm.runInContext(covSource, context, { filename: 'volatility-coverage-monitor.js' });
+  if (options.moduleFirst) loadModule();
+  vm.runInContext(launcherSource, context, { filename: 'index.html#apexVolCoverageLauncher' });
+  return { context, calls, scripts, listeners, mounted, roots, loadModule, backend: vm.runInContext('BACKEND', context),
+    boot: () => document.getElementById('apex-vol-coverage-boot'),
+    launcher: () => document.getElementById('apex-vol-coverage-launcher') };
+}
+
+require('node:test')('coverage launcher: a button only on an authorised DEV host whose BACKEND is the DEV backend', () => {
+  for (const [hostname, override, expected] of [
+    ['localhost', undefined, true], ['127.0.0.1', undefined, true], [DEV_CLEAN, undefined, true], [PREVIEW, undefined, true],
+    ['deploy-preview-1--spontaneous-queijadas-118823.netlify.app', undefined, true],
+    // Production and look-alikes. backend-config resolves the DEV backend for most of them; the hostname refuses them.
+    ['spontaneous-queijadas-118823.netlify.app', undefined, false], ['main--spontaneous-queijadas-118823.netlify.app', undefined, false],
+    ['claude-volatility-coverage-launcher--spontaneous-queijadas-118823.netlify.app', undefined, false],
+    ['x' + DEV_CLEAN, undefined, false], [DEV_CLEAN + '.evil.example', undefined, false], [PREVIEW + '.evil.example', undefined, false],
+    ['evil.' + PREVIEW, undefined, false],
+    ['deploy-preview-x--spontaneous-queijadas-118823.netlify.app', undefined, false], ['evil-deploy-preview.netlify.app', undefined, false],
+    ['apex.example.com', undefined, false], ['', undefined, false],
+    // Accidental overrides of the backend URL: neither the DEV backend on another host, nor another backend on a DEV host.
+    ['spontaneous-queijadas-118823.netlify.app', devBackend, false], ['apex.example.com', devBackend + '/', false],
+    [DEV_CLEAN, launcherProdBackend, false], [PREVIEW, launcherProdBackend, false], ['localhost', launcherProdBackend, false],
+    [DEV_CLEAN, 'https://evil.example', false], [DEV_CLEAN, devBackend + '/', true],
+  ]) {
+    const page = launcherPage(hostname, { override });
+    const label = (hostname || '(empty hostname)') + (override === undefined ? '' : ' with override ' + override);
+    assert.equal(!!page.boot(), expected, (expected ? 'button: ' : 'no button: ') + label);
+    assert.equal(!!page.boot(), cov.devContext(hostname, page.backend), 'the launcher and the module agree: ' + label);
+    assert.equal(page.scripts.length, 0, 'nothing fetched before a click: ' + label);
+    assert.deepStrictEqual(page.calls, [], 'no request, timer or storage access: ' + label);
+  }
+  for (const hostname of ['main--spontaneous-queijadas-118823.netlify.app', DEV_CLEAN + '.evil.example', 'evil-deploy-preview.netlify.app'])
+    assert.equal(launcherPage(hostname).backend, devBackend, 'backend-config resolves DEV; the hostname refuses: ' + hostname);
+  assert.equal(launcherPage('spontaneous-queijadas-118823.netlify.app').backend, launcherProdBackend);
+  assert.equal(launcherPage('spontaneous-queijadas-118823.netlify.app', { override: devBackend }).backend, devBackend,
+    'the production override really reaches the DEV backend, and still gets no button');
+  // Control: the recorders record, so the empty lists above are measurements.
+  const control = launcherPage('localhost');
+  vm.runInContext("fetch('/x'); setTimeout(function () {}); void localStorage;", control.context);
+  assert.deepStrictEqual(control.calls, ['fetch', 'setTimeout', 'localStorage']);
+});
+
+require('node:test')('coverage launcher: the first click fetches the module once and opens the panel; the backend is read only from «Analizza universo»', async () => {
+  const requests = [], timers = [];
+  const page = launcherPage(DEV_CLEAN, {
+    fetch: (url, options) => new Promise(resolve => requests.push({ url, options, resolve })),
+    setTimeout: fn => { timers.push(fn); return timers.length; },
+  });
+  const boot = page.boot();
+  assert.equal(boot.type, 'button');
+  assert.equal(boot.textContent, 'IV − RV · DEV');
+  boot.click();
+  assert.equal(page.scripts.length, 1, 'the first click fetches the module');
+  assert.equal(page.scripts[0].src, './devtools/volatility-coverage-monitor.js', '…from the same origin');
+  assert.equal(boot.disabled, true);
+  assert.equal(boot.textContent, 'IV − RV · caricamento…');
+  boot.click();
+  assert.equal(page.scripts.length, 1, 'a click while it loads fetches nothing more');
+  page.loadModule();  // the browser runs the fetched module, then fires load
+  page.scripts[0].onload();
+  const launcher = page.launcher();
+  assert.ok(launcher, 'the module mounted its own launcher');
+  assert.equal(boot.removed, true, '…which takes the place of this button');
+  assert.equal(launcher.style.cssText, boot.style.cssText, '…in the same place, with the same look');
+  assert.equal(launcher.textContent, 'IV − RV · DEV');
+  assert.equal(launcher.attrs['aria-label'], boot.attrs['aria-label']);
+  assert.equal(page.roots.length, 1, 'the click that fetched the module also opened the panel');
+  assert.equal(requests.length, 0, 'opening the panel reads nothing from the backend');
+  assert.equal(timers.length, 0, '…and starts no timer');
+  const panel = page.roots[0].fields;
+  const run = panel.run.click();  // «Analizza universo»
+  assert.equal(requests.length, 1, 'the first backend request comes from «Analizza universo»');
+  assert.equal(requests[0].url, devBackend + '/debug/volatility-carry/coverage?offset=0&limit=25');
+  assert.equal(requests[0].options.method, 'GET');
+  panel.close.click();
+  requests[0].resolve({ ok: true, status: 200, json: async () => covPages(covUniverse(3))[0] });
+  await run;
+  launcher.click();
+  assert.equal(page.roots.length, 2, 'later clicks go to the module launcher and reopen the panel');
+  assert.equal(page.scripts.length, 1, '…never fetch the module again');
+  assert.equal(requests.length, 1, '…and read nothing by themselves');
+  assert.deepStrictEqual(page.calls, []);
+});
+
+require('node:test')('coverage launcher: a failed fetch is reported and retried only on a click; a module that does not mount opens nothing', () => {
+  const page = launcherPage(PREVIEW);
+  const boot = page.boot();
+  boot.click();
+  page.scripts[0].onerror();
+  assert.equal(page.scripts[0].removed, true, 'the failed script element is removed');
+  assert.equal(boot.disabled, false);
+  assert.equal(boot.textContent, 'IV − RV · caricamento fallito, riprova');
+  assert.equal(page.scripts.length, 1, 'no retry by itself');
+  boot.click();
+  assert.equal(page.scripts.length, 2, 'a click retries');
+  page.scripts[1].onload();  // loaded, yet no launcher: the module refused this page
+  assert.equal(boot.removed, false);
+  assert.equal(boot.disabled, true);
+  assert.equal(boot.textContent, 'IV − RV · pannello non disponibile');
+  boot.click();
+  assert.equal(page.scripts.length, 2, 'a refusal is final: nothing is fetched again');
+  assert.equal(page.roots.length, 0, 'no panel');
+  assert.deepStrictEqual(page.calls, []);
+});
+
+require('node:test')('coverage launcher: a module already loaded from the Console is reused, not fetched again', () => {
+  const page = launcherPage('localhost', { moduleFirst: true });
+  const boot = page.boot();
+  assert.ok(boot && page.launcher(), 'both buttons exist until the first click');
+  boot.click();
+  assert.equal(page.scripts.length, 0, 'nothing fetched');
+  assert.equal(boot.removed, true);
+  assert.equal(page.roots.length, 1, 'the loaded module opened its panel');
+  assert.deepStrictEqual(page.calls, []);
+});
+
+require('node:test')('coverage launcher: waits for DOMContentLoaded while the document loads, and mounts one button', () => {
+  const page = launcherPage(DEV_CLEAN, { readyState: 'loading' });
+  assert.equal(page.boot(), null, 'nothing is mounted while the document loads');
+  assert.equal(page.listeners.length, 1);
+  assert.equal(page.listeners[0].type, 'DOMContentLoaded');
+  assert.equal(page.listeners[0].opts.once, true);
+  page.listeners[0].fn();
+  page.listeners[0].fn();
+  assert.equal(page.mounted.filter(el => el.id === 'apex-vol-coverage-boot').length, 1, 'one button');
+  assert.equal(launcherPage('spontaneous-queijadas-118823.netlify.app', { readyState: 'loading' }).listeners.length, 0,
+    'production registers no listener at all');
+});
+
+require('node:test')('coverage launcher: one block, the last statement of the inline script, with no request, storage or timer API', () => {
+  assert.equal(html.split(LAUNCHER_START).length - 1, 1, 'one launcher');
+  assert.ok(html.endsWith(launcherSource + '\n</script>\n</body>\n</html>\n'), 'the last statement of the inline script');
+  assert.doesNotMatch(launcherSource,
+    /fetch|XMLHttpRequest|WebSocket|EventSource|localStorage|sessionStorage|indexedDB|cookie|setTimeout|setInterval|__APEX_BACKEND_URL__/);
+  assert.equal(launcherSource.split("createElement('script')").length - 1, 1, 'one script element, created on the click');
+  assert.ok(launcherSource.includes("script.src = './devtools/volatility-coverage-monitor.js';"), 'the one module path');
+  assert.equal(vm.runInNewContext(backendConfigSource + '\nDEV_BACKEND;', { console: { log() {} }, window: {}, location: { hostname: '' } }),
+    devBackend, 'DEV_BACKEND, which the launcher compares BACKEND with, is the backend the module pins');
 });

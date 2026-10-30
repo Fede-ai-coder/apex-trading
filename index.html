@@ -25444,6 +25444,58 @@ try {
     'never auto-runs, never uploads on startup/Portfolio/Journal open.');
 } catch (e) {}
 
+// Volatility Coverage & Spread Monitor launcher: DEV only, read-only. The button is mounted only when the hostname
+// is an authorised DEV host (localhost, 127.0.0.1, the dev-clean branch deploy, a deploy preview) AND BACKEND is
+// DEV_BACKEND, so an override of the backend URL cannot enable it on another host. The panel module is fetched on the
+// first click only, and checks both again before it mounts. Nothing here reads storage, calls the backend or sets a timer.
+(function apexVolCoverageLauncher() {
+  try {
+    var host = String(location.hostname || '');
+    var devHost = host === 'localhost' || host === '127.0.0.1' ||
+      host === 'dev-clean--spontaneous-queijadas-118823.netlify.app' ||
+      /^deploy-preview-[0-9]+--spontaneous-queijadas-118823\.netlify\.app$/.test(host);
+    if (!devHost || BACKEND !== DEV_BACKEND) return;
+  } catch (e) { return; }
+  function mount() {
+    if (document.getElementById('apex-vol-coverage-boot')) return;
+    var boot = document.createElement('button');
+    boot.id = 'apex-vol-coverage-boot';
+    boot.type = 'button';
+    boot.textContent = 'IV − RV · DEV';
+    boot.setAttribute('aria-label', 'Apri Volatility Coverage & Spread Monitor DEV');
+    boot.style.cssText = 'position:fixed;bottom:17px;right:150px;z-index:2147482990;' +
+      'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
+      'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
+    // Once the module has mounted its own launcher, that launcher takes this button's place and opens the panel.
+    function handOver() {
+      var launcher = document.getElementById('apex-vol-coverage-launcher');
+      if (!launcher) return false;
+      boot.remove();
+      launcher.click();
+      return true;
+    }
+    boot.addEventListener('click', function () {
+      if (handOver() || boot.disabled) return;
+      boot.disabled = true;
+      boot.textContent = 'IV − RV · caricamento…';
+      var script = document.createElement('script');
+      script.src = './devtools/volatility-coverage-monitor.js';
+      script.onload = function () {
+        if (!handOver()) boot.textContent = 'IV − RV · pannello non disponibile';
+      };
+      script.onerror = function () {
+        script.remove();
+        boot.disabled = false;
+        boot.textContent = 'IV − RV · caricamento fallito, riprova';
+      };
+      document.head.appendChild(script);
+    });
+    document.body.appendChild(boot);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
+  else mount();
+})();
+
 </script>
 </body>
 </html>
