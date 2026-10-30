@@ -2,7 +2,7 @@
 
 This is an **on-demand panel in the existing APEX DEV session**; it uses the already-loaded `S.backendKey` in memory. It never requests, prints, stores or exports the key. No backend flags are modified and no market data acquisitions are started.
 
-The frontend's historical extraction contracts pin every byte of `index.html`. Because a new dashboard button would invalidate those signed reconstruction points, this diagnostic currently uses an **explicit, on-demand launcher** until a separately reviewed change introduces a legitimate extensibility point.
+The frontend's historical extraction contracts pin every byte of `index.html`: they accept a changed document only together with an update of the document blob pinned in `tests/lib/portfolio-unrealized-pnl-undo.js`. A dashboard button is therefore a reviewed change to `index.html` and that pin. This diagnostic makes no such change and uses an **explicit, on-demand launcher**.
 
 ## Open in APEX DEV
 
@@ -110,8 +110,11 @@ authenticated GET**, does not save tokens, and makes no trading decision.
 ## Volatility Coverage & Spread Monitor (DEV)
 
 `devtools/volatility-coverage-monitor.js` is a second on-demand, **read-only** panel, under the same rules as the RV
-panel above: the same DEV host and backend gate, the session's `S.backendKey` sent only as a request header, GET only,
-no storage, no polling, and no change to `index.html` or `js/**`. Load it from the Console of the deploy preview:
+panel above: the session's `S.backendKey` sent only as a request header, GET only, no storage, no polling. The module
+itself changes neither `index.html` nor `js/**`. Its gate is the RV panel's (exact hostname and exact DEV backend URL)
+plus one exact host, the dev-clean branch deploy `dev-clean--spontaneous-queijadas-118823.netlify.app`, so it can be used
+every day on the stable DEV URL; the production hostname and every other branch deploy are refused. Load it from the
+Console of an authorised DEV host:
 
 ```js
 (()=>{if(document.getElementById('apex-vol-coverage-launcher'))return;const s=document.createElement('script');s.src='/devtools/volatility-coverage-monitor.js';document.head.appendChild(s);})();

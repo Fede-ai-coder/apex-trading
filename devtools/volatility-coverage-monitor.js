@@ -19,6 +19,7 @@
   function devContext(hostname, backend) {
     const host = String(hostname || '');
     const allowedHost = host === 'localhost' || host === '127.0.0.1' ||
+      host === 'dev-clean--spontaneous-queijadas-118823.netlify.app' ||
       /^deploy-preview-[0-9]+--spontaneous-queijadas-118823\.netlify\.app$/.test(host);
     return allowedHost && backend === SCRIPT_BACKEND;
   }

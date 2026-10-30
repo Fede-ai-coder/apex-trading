@@ -464,12 +464,24 @@ require('node:test')('coverage monitor: GET only, no storage, no polling, not lo
   assert.match(covSource, /method: 'GET', cache: 'no-store'/);
   assert.doesNotMatch(html, /devtools\/volatility-coverage-monitor\.js/);
   assert.equal((html.match(/<script\b/gi) || []).length, 115);
-  for (const [host, backend] of [
-    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', devBackend], ['localhost', devBackend],
-    ['127.0.0.1', devBackend], ['spontaneous-queijadas-118823.netlify.app', devBackend],
-    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app.evil.example', devBackend],
-    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', 'https://apex-tastytrade-backend-production.up.railway.app'],
-  ]) assert.equal(cov.devContext(host, backend), rv.devContext(host, backend), 'same DEV gate as the RV panel: ' + host);
+  // The RV panel's gate plus one exact host, the dev-clean branch deploy, so the panel can be used every day on the
+  // stable DEV URL. Every row states both gates, so neither can widen without failing here.
+  const DEV_CLEAN_HOST = 'dev-clean--spontaneous-queijadas-118823.netlify.app';
+  const prodBackend = 'https://apex-tastytrade-backend-production.up.railway.app';
+  for (const [host, backend, expected] of [
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', devBackend, true], ['localhost', devBackend, true],
+    ['127.0.0.1', devBackend, true], [DEV_CLEAN_HOST, devBackend, true],
+    ['spontaneous-queijadas-118823.netlify.app', devBackend, false],
+    ['main--spontaneous-queijadas-118823.netlify.app', devBackend, false],
+    ['x' + DEV_CLEAN_HOST, devBackend, false], [DEV_CLEAN_HOST + '.evil.example', devBackend, false],
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app.evil.example', devBackend, false],
+    ['deploy-preview-552--spontaneous-queijadas-118823.netlify.app', prodBackend, false],
+    [DEV_CLEAN_HOST, prodBackend, false], ['localhost', prodBackend, false],
+  ]) {
+    assert.equal(cov.devContext(host, backend), expected, 'coverage gate: ' + host + ' with ' + backend);
+    assert.equal(rv.devContext(host, backend), expected && host !== DEV_CLEAN_HOST,
+      'RV gate: the same, except the dev-clean branch deploy: ' + host + ' with ' + backend);
+  }
 });
 
 require('node:test')('coverage monitor: every universe symbol once, one digest, one RV date and one IV date', () => {
