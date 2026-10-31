@@ -633,7 +633,7 @@
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, detailCurrent = null, busy = false, data = null;
-    const view = { search: '', availability: '', spread: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
+    const view = { search: '', availability: '', spread: '', dividend: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
     function close() {
       if (current) current.abort();
