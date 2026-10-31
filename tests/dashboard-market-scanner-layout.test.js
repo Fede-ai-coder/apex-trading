@@ -747,6 +747,38 @@ require('node:test')('coverage monitor: source states are shown as read, never a
   assert.equal(cov.reasonText('CENSUS_READ_FAILED'), 'lettura del census fallita: non si può dire perché il simbolo non ha IV Ref');
 });
 
+
+require('node:test')('coverage monitor: persisted DEV 1D checkpoint is distinct from global OHLC and certified RV', () => {
+  const v = {
+    ok:true,readOnly:true,version:'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1',
+    mode:'canary',enabled:false,killSwitch:{enabled:false},
+    stateFile:{source:'FILE_READ_ONLY'},totals:{insertedTotal:7,providerAttemptsTotal:9},
+    counts:{recoverableSessions:527,due:216,parked:0},
+    timestamps:{lastSuccessfulRecoveryAt:'2026-10-31T16:46:51.410Z'},
+    lastCompletedNyseSession:'2026-10-30',generatedAt:'2026-10-31T16:48:00.000Z',
+    blockedReason:'KILL_SWITCH_OFF'
+  };
+  const html = cov.renderRecoveryStatus(v);
+  assert.match(html,/Controller <strong>SPENTO<\/strong>/);
+  assert.match(html,/Candele inserite \(checkpoint\)/);
+  assert.match(html,/>7<\/strong>/);
+  assert.match(html,/Sedute recuperabili \(checkpoint\)/);
+  assert.match(html,/527/);
+  assert.match(html,/NON all’audit OHLC globale/);
+  assert.match(html,/NON certificano RV/);
+  assert.doesNotMatch(html,/backup verificato/i);
+  const notPersisted = cov.renderRecoveryStatus({...v,stateFile:{source:'NOT_LOADED'}});
+  assert.match(notPersisted,/nessun checkpoint verificabile/);
+  assert.doesNotMatch(notPersisted,/>7<\/strong>/, 'unloaded checkpoint cannot claim previous writes');
+  assert.match(notPersisted,/<strong>—<\/strong>/, 'unknown is not zero');
+  for (const broken of [null,{}, {...v,readOnly:false}, {...v,version:'UNTRUSTED'},
+    {...v,killSwitch:{enabled:'true'}}, {...v,ok:false}])
+    assert.match(cov.renderRecoveryStatus(broken),/non verificabile/);
+  const xss = cov.renderRecoveryStatus({...v,blockedReason:'<img src=x onerror=alert(1)>'});
+  assert.doesNotMatch(xss,/<img/);
+  assert.match(xss,/&lt;img src=x onerror=alert\(1\)&gt;/);
+});
+
 // The browser lifecycle, as for the RV panel: a manual run reads pages in order with the pinned digest, a closed
 // panel never advances, a timer never fires a second read, and nothing but GET with the session key is sent.
 async function testCoverageLifecycle() {
@@ -765,7 +797,7 @@ async function testCoverageLifecycle() {
       const el = element();
       if (tag === 'a') el.click = () => { el.clicked = true; };
       if (tag === 'div') {
-        const fields = Object.fromEntries(['run', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element()]));
         const root = { fields, appended: [], getElementById(id) { return fields[id]; },
           querySelector(sel) { assert.equal(sel, '.shade'); return fields.shade; }, appendChild(x) { this.appended.push(x); } };
@@ -870,7 +902,40 @@ async function testCoverageLifecycle() {
   launcher.click();
   roots[3].fields.csv.handlers.click();
   assert.equal(blobs.length, 1, 'nothing from the closed run is exportable');
-  roots[3].fields.close.click();
+  // The recovery checkpoint is not fetched by panel open or universe analysis.
+  // It is fetched only on its separate button, once, via the same authenticated
+  // GET helper; a stale response after close cannot update the reopened panel.
+  const fourth = roots[3].fields;
+  assert.equal(fourth.recovery.innerHTML, '');
+  const recoveryRun = fourth['recovery-run'].click();
+  assert.equal(requests.length, 8);
+  assert.equal(requests[7].url, devBackend + '/dev/market/candles/store/recovery-always-on?offset=0&limit=1');
+  assert.equal(requests[7].options.method, 'GET');
+  assert.equal(requests[7].options.headers['x-api-key'], 'fixture-only-api-key');
+  await fourth['recovery-run'].click();
+  assert.equal(requests.length, 8, 'an in-flight read is joined/refused, not duplicated');
+  requests[7].resolve(ok({
+    ok:true,readOnly:true,version:'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1',
+    mode:'canary',enabled:false,killSwitch:{enabled:false},
+    stateFile:{source:'FILE_READ_ONLY'},
+    totals:{insertedTotal:7,providerAttemptsTotal:9},
+    counts:{recoverableSessions:527,due:216,parked:0},
+    timestamps:{lastSuccessfulRecoveryAt:'2026-10-31T16:46:51.410Z'},
+    generatedAt:'2026-10-31T16:49:00Z',
+    lastCompletedNyseSession:'2026-10-30'
+  }));
+  await recoveryRun;
+  assert.match(fourth.recovery.innerHTML,/Acquisizione e salvataggio 1D/);
+  assert.match(fourth.recovery.innerHTML,/527/);
+  assert.equal(fourth['recovery-run'].disabled,false);
+  const lateRun = fourth['recovery-run'].click();
+  assert.equal(requests.length,9);
+  fourth.close.click();
+  assert.equal(requests[8].options.signal.aborted,true);
+  requests[8].resolve(ok({ok:true,readOnly:true,version:'BAD'}));
+  await lateRun;
+  assert.doesNotMatch(fourth.recovery.innerHTML,/non verificabile/,
+    'a response after close cannot overwrite the previous rendered checkpoint');
 
   const productionContext = Object.assign({}, context, { BACKEND: 'https://apex-tastytrade-backend-production.up.railway.app' });
   launcher = null;
@@ -919,7 +984,7 @@ function launcherPage(hostname, options) {
     createElement(tag) {
       const el = element(tag);
       if (tag === 'div') el.attachShadow = () => {
-        const fields = Object.fromEntries(['run', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
         const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
         roots.push(root);

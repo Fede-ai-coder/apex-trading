@@ -15,6 +15,8 @@
   const STATUSES = ['COMPLETE', 'PARTIAL', 'UNAVAILABLE', 'STALE', 'ERROR'];
   const SCRIPT_BACKEND = 'https://apex-tastytrade-backend-dev-production.up.railway.app';
   const TIMEOUT_MS = 20000;
+  const RECOVERY_PATH = '/dev/market/candles/store/recovery-always-on';
+  const RECOVERY_VERSION = 'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1';
 
   function devContext(hostname, backend) {
     const host = String(hostname || '');
@@ -342,6 +344,48 @@
       (data.warnings.length ? '<p class="error">Attenzione: ' + esc(data.warnings.join(', ')) + '</p>' : '');
   }
 
+  // The 1D controller checkpoint is a separate, persisted source: it does not
+  // certify RV20/60 or measure the full-scanner OHLC coverage.
+  function renderRecoveryStatus(v) {
+    if (!v || v.ok !== true || v.readOnly !== true || v.version !== RECOVERY_VERSION ||
+        !v.killSwitch || typeof v.killSwitch.enabled !== 'boolean' ||
+        typeof v.enabled !== 'boolean')
+      return '<p class="error">Checkpoint recupero 1D non verificabile.</p>';
+    const safeCount = n => Number.isSafeInteger(n) && n >= 0 ? String(n) : '—';
+    const file = v.stateFile || {};
+    const persisted = file.source === 'FILE_READ_ONLY' || file.source === 'LOADED';
+    const source = persisted ? 'checkpoint su volume DEV' :
+      file.source === 'MEMORY_SHADOW' ? 'solo memoria (shadow)' : 'nessun checkpoint verificabile';
+    const totals = persisted ? (v.totals || {}) : {};
+    const counts = persisted ? (v.counts || {}) : {};
+    const stamps = persisted ? (v.timestamps || {}) : {};
+    const mode = ['canary', 'live', 'shadow'].includes(v.mode) ? v.mode : 'sconosciuta';
+    const on = v.enabled === true && v.killSwitch.enabled === true;
+    const target = typeof v.lastCompletedNyseSession === 'string' &&
+      DAY.test(v.lastCompletedNyseSession) ? v.lastCompletedNyseSession : '—';
+    const lastSuccess = typeof stamps.lastSuccessfulRecoveryAt === 'string' &&
+      !Number.isNaN(Date.parse(stamps.lastSuccessfulRecoveryAt))
+      ? stamps.lastSuccessfulRecoveryAt : '—';
+    const cards = [
+      ['Candele inserite (checkpoint)', safeCount(totals.insertedTotal)],
+      ['Tentativi provider registrati', safeCount(totals.providerAttemptsTotal)],
+      ['Sedute recuperabili (checkpoint)', safeCount(counts.recoverableSessions)],
+      ['Simboli DUE', safeCount(counts.due)],
+      ['Simboli PARKED', safeCount(counts.parked)]
+    ];
+    return '<section aria-label="Stato recupero candele 1D"><h3>Acquisizione e salvataggio 1D · DEV</h3>' +
+      '<p>Controller <strong>' + (on ? 'ATTIVO' : 'SPENTO') + '</strong> · modalità ' + esc(mode) +
+      ' · fonte ' + esc(source) + ' · seduta inventariata ' + esc(target) + '</p>' +
+      '<div class="stats">' + cards.map(([key, value]) =>
+        '<div class="metric"><span>' + esc(key) + '</span><strong>' + esc(value) + '</strong></div>').join('') +
+      '</div><p class="note">Ultimo inserimento: ' + esc(lastSuccess) +
+      ' · lettura: ' + esc(v.generatedAt || '—') +
+      '. I conteggi appartengono al checkpoint del controller, NON all’audit OHLC globale e NON certificano RV.' +
+      ' Questa lettura non acquisisce dati, non verifica backup e non dimostra capacità DXLink dell’account.</p>' +
+      (v.blockedReason ? '<p class="note">Ultimo blocco: <code>' + esc(v.blockedReason) + '</code></p>' : '') +
+      '</section>';
+  }
+
   function rvCell(w) {
     const cov = w.coverage;
     return '<div><strong>' + esc(formatPct(w.value)) + '</strong>' + (w.basis ? ' <span class="badge b-' +
@@ -529,13 +573,14 @@
     trigger.style.cssText = 'position:fixed;bottom:17px;right:150px;z-index:2147482990;' +
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
-    let host = null, current = null, detailCurrent = null, busy = false, data = null;
+    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
     const view = { search: '', availability: '', spread: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
     function close() {
       if (current) current.abort();
       if (detailCurrent) detailCurrent.abort();
-      current = null; detailCurrent = null; busy = false; data = null;
+      if (recoveryCurrent) recoveryCurrent.abort();
+      current = null; detailCurrent = null; recoveryCurrent = null; busy = false; data = null;
       if (host) { host.remove(); host = null; }
       trigger.focus();
     }
@@ -579,9 +624,10 @@
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
         '<button type="button" id="run">Analizza universo</button> ' +
+        '<button type="button" id="recovery-run">Stato recupero candele 1D</button> ' +
         '<button type="button" id="csv" disabled>Esporta CSV</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
-        '<div id="summary"></div><div class="filters" id="filters" hidden>' +
+        '<div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
         '<input id="search" type="search" placeholder="Cerca simbolo" aria-label="Cerca simbolo">' +
         '<select id="availability" aria-label="Disponibilità"><option value="">Disponibilità: tutte</option>' +
         '<option value="IVREF_YES">IV Ref disponibile</option><option value="IVREF_NO">IV Ref mancante</option>' +
@@ -599,6 +645,7 @@
         '<p id="count" class="note"></p><div id="table"></div><div id="detail"></div></section>';
       const $ = id => root.getElementById(id);
       const run = $('run'), csv = $('csv'), state = $('state'), detail = $('detail');
+      const recovery = $('recovery'), recoveryRun = $('recovery-run');
       $('close').addEventListener('click', close);
       root.querySelector('.shade').addEventListener('click', close);
       function draw() {
@@ -643,6 +690,38 @@
           if (detailCurrent === controller) detailCurrent = null;
         }
       }
+      // A second explicit click performs ONE authenticated GET; never run
+      // this read automatically on open or during the coverage analysis.
+      recoveryRun.addEventListener('click', async () => {
+        if (recoveryCurrent) return;
+        if (typeof S === 'undefined' || !S.backendKey) {
+          recovery.textContent = 'Effettua il login APEX per leggere il checkpoint DEV.';
+          return;
+        }
+        const controller = new AbortController();
+        recoveryCurrent = controller;
+        const runHost = host;
+        recoveryRun.disabled = true;
+        const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        recovery.innerHTML = '<p class="info">Lettura checkpoint 1D dal backend DEV…</p>';
+        try {
+          const result = await fetchJson(BACKEND + RECOVERY_PATH + '?offset=0&limit=1',
+            S.backendKey, controller.signal);
+          if (recoveryCurrent !== controller || host !== runHost) return;
+          recovery.innerHTML = renderRecoveryStatus(result);
+        } catch (error) {
+          if (recoveryCurrent !== controller || host !== runHost) return;
+          recovery.innerHTML = '<p class="error">' + esc(controller.signal.aborted
+            ? 'Lettura checkpoint annullata o scaduta.'
+            : (error && error.message) || 'Checkpoint 1D non disponibile.') + '</p>';
+        } finally {
+          clearTimeout(timeout);
+          if (recoveryCurrent === controller && host === runHost) {
+            recoveryCurrent = null;
+            recoveryRun.disabled = false;
+          }
+        }
+      });
       csv.addEventListener('click', () => {
         if (!data) return;
         const blob = new Blob([toCsv(data, ivCache())], { type: 'text/csv;charset=utf-8' });
@@ -719,7 +798,7 @@
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, renderTable, sessionFacts, renderDetail,
-      fetchJson, PAGE_SIZE, TIMEOUT_MS };
+      fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
