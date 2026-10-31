@@ -984,7 +984,7 @@ function launcherPage(hostname, options) {
     createElement(tag) {
       const el = element(tag);
       if (tag === 'div') el.attachShadow = () => {
-        const fields = Object.fromEntries(['run', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
         const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
         roots.push(root);
