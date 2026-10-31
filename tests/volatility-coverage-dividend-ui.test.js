@@ -138,3 +138,12 @@ test('API page and detail of old backend still validate; additive data does not 
   assert.equal(ui.checkPage(updated,0),updated);
   assert.deepEqual(ui.filterRows(page.rows,{}),page.rows);
 });
+
+test('cross-page audit source changes are never presented as fully reconciled totals',()=>{
+  const data=dataset();
+  data.warnings=['SOURCES_CHANGED_DURING_READ'];
+  const html=ui.dividendAuditSummary(data);
+  assert.match(html,/Audit incompleto o non uniforme/);
+  assert.match(html,/parziali/);
+  assert.match(html,/NON significa data ex-dividendo verificata/);
+});
