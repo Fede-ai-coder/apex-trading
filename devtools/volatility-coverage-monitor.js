@@ -660,7 +660,7 @@
         '.metric{background:#1b3442;padding:8px 9px;border-radius:7px;min-width:118px}' +
         '.metric span,.metric strong{display:block}.metric span{font-size:11px;color:#b6cbd3}' +
         '.metric strong{font-size:19px;margin-top:2px}.scroll{overflow:auto;max-height:62vh}' +
-        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1400px}' +
+        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1550px}' +
         'th,td{padding:8px;border-bottom:1px solid #36505e;vertical-align:top}' +
         'th{color:#fff}thead th{background:#213744;position:sticky;top:0;z-index:1}' +
         '.sort,.sym{background:none;padding:0;color:#9fe3d8;font-weight:600;font-size:12px}' +
@@ -674,6 +674,7 @@
         'color:#d9e6eb;border:1px solid #36505e;border-radius:6px;padding:7px;font-size:12px}' +
         '.reasons{margin:4px 0 4px 18px;padding:0}code{overflow-wrap:anywhere;color:#e4edf1}' +
         '#detail{border-top:1px solid #36505e;margin-top:14px}.nw{white-space:nowrap}' +
+        '.audit-summary,.audit-detail{border:1px solid #395462;border-radius:8px;padding:9px 12px;margin:10px 0}' +
         '</style><div class="shade"></div><section class="panel" role="dialog" aria-modal="true"' +
         ' aria-label="Volatility Coverage and Spread Monitor"><header><h2>Volatility Coverage &amp; Spread Monitor · DEV</h2>' +
         '<button class="close" type="button" id="close">Chiudi</button></header>' +
@@ -696,6 +697,10 @@
         '<option value="IV_GT_RV20">IV &gt; RV20</option><option value="IV_LT_RV20">IV &lt; RV20</option>' +
         '<option value="IV_GT_RV60">IV &gt; RV60</option><option value="IV_LT_RV60">IV &lt; RV60</option>' +
         '<option value="ANY_POSITIVE">Almeno uno spread positivo</option><option value="ANY_NEGATIVE">Almeno uno spread negativo</option></select>' +
+        '<select id="dividend" aria-label="Audit dividendi"><option value="">Audit dividendi: tutti</option>' +
+        '<option value="FINDINGS">Con rilievi</option><option value="COMPATIBLE">Compatibili</option>' +
+        '<option value="REVIEW">Da approfondire</option><option value="NO_FINDINGS">Nessun rilievo (audit completo)</option>' +
+        '<option value="UNAVAILABLE">Audit parziale o non disponibile</option></select>' +
         '<select id="status" aria-label="Stato"><option value="">Stato: tutti</option>' +
         STATUSES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select>' +
         '<select id="reason" aria-label="Codice motivo"><option value="">Motivo: tutti</option></select></div>' +
@@ -710,7 +715,7 @@
         $('count').textContent = rows.length + ' di ' + data.rows.length + ' titoli mostrati.';
         $('table').innerHTML = renderTable(rows, view.sort, ivCache());
       }
-      for (const id of ['search', 'availability', 'spread', 'status', 'reason']) {
+      for (const id of ['search', 'availability', 'spread', 'dividend', 'status', 'reason']) {
         $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { view[id] = $(id).value; draw(); });
       }
       $('table').addEventListener('click', event => {
@@ -821,7 +826,8 @@
   }
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, summarize, filterRows, sortRows, reasonCodes, reasonText,
-      formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, renderTable, sessionFacts, renderDetail,
+      formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
+      dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, PAGE_SIZE, TIMEOUT_MS };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
