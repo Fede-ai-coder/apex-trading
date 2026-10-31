@@ -349,6 +349,32 @@
   }
 
   // ── rendering ──────────────────────────────────────────────────────────────────────────────────────────────────
+  function dividendAuditSummary(data) {
+    const src = data.sources?.dividendAudit;
+    const state = src && AUDIT_STATES.includes(src.state) ? src.state : 'NOT_REPORTED';
+    const sourceTotal = Number.isSafeInteger(src?.evidenceCount) && src.evidenceCount >= 0 ? src.evidenceCount : null;
+    const known = data.rows.map(dividendAuditOf).filter(a => a.total !== null);
+    const total = known.reduce((v,a) => v + a.total, 0);
+    const compatible = known.reduce((v,a) => v + a.counts.DIVIDEND_COMPATIBLE, 0);
+    const review = known.reduce((v,a) => v + dividendReviewCount(a), 0);
+    const allComplete = state === 'COMPLETE' && known.length === data.rows.length &&
+      known.every(a => a.state === 'COMPLETE');
+    const period = src?.evidenceDate ? ' · riferimento ' + esc(src.evidenceDate) : '';
+    const completed = src?.completedDay ? ' · completata ' + esc(src.completedDay) : '';
+    const values = known.length ?
+      '<p>Rilievi dei titoli nel monitor' + (allComplete ? '' : ' (parziali)') + ': <strong>' + esc(total) +
+      '</strong> · compatibili <strong>' + esc(compatible) + '</strong> · da approfondire <strong>' +
+      esc(review) + '</strong> · copertura ' + esc(known.length) + '/' + esc(data.rows.length) + ' titoli.</p>' :
+      '<p>Evidenze per simbolo non disponibili: nessun conteggio dedotto.</p>';
+    return '<section class="audit-summary" aria-label="Audit dividendi informativo">' +
+      '<h3>Audit dividendi · diagnostica separata</h3><p>Stato: <strong>' +
+      esc(dividendAuditLabel(state)) + '</strong>' + period + completed +
+      (sourceTotal !== null ? ' · ' + esc(sourceTotal) + ' rilievi nello storico audit complessivo' : '') +
+      '</p>' + values +
+      (!allComplete ? '<p class="warn">Audit incompleto o non uniforme: questi conteggi non provano la copertura definitiva dell’universo.</p>' : '') +
+      '<p class="note">Compatibilità numerica NON significa data ex-dividendo verificata, prezzo corretto o RV20/RV60 certificata.</p>' +
+      '</section>';
+  }
   function renderSummary(data) {
     const s = summarize(data.rows);
     const split = w => w.any + ' <span class="sub">(C ' + w.CERTIFIED + ' · P ' + w.PRELIMINARY + ' · E ' + w.EXPLORATORY + ')</span>';
@@ -366,7 +392,7 @@
     const evidenceState = x => !x ? 'non riportato' : x.error ? 'ERRORE: ' + x.error : x.available === true ? 'disponibili'
       : x.available === false ? 'non disponibili' + (x.reason ? ' (' + x.reason + ')' : '') : 'stato non dichiarato';
     return '<div class="stats">' + cards.map(([name, value]) => '<div class="metric"><span>' + esc(name) +
-      '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal +
+      '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal + dividendAuditSummary(data) +
       '<p class="note">C/P/E = certificata / preliminare / esplorativa. Completi = entrambi gli spread calcolati, anche' +
       ' se la riga ha un errore di lettura su un’altra fonte. Dati insufficienti = almeno una finestra senza alcuna RV.' +
       ' Problemi candele = righe escluse dallo store (flag <code>issues</code> del backend). Conteggi delle sole righe lette.</p>' +
@@ -413,6 +439,17 @@
     return '<span class="nw">RV ' + esc(a.rvSessionDate || '—') + '</span>' + (a.ivAsOfDate ? '<div class="sub nw">IV ' + esc(a.ivAsOfDate) +
       (a.datesDiffer ? ' <span class="warn">≠ data RV</span>' : '') + '</div>' : '');
   }
+  function dividendAuditCell(row) {
+    const a = dividendAuditOf(row);
+    if (a.total === null) return '<span class="na">—</span><div class="sub">' +
+      esc(dividendAuditLabel(a.state)) + '</div>';
+    const compatible = a.counts.DIVIDEND_COMPATIBLE, review = dividendReviewCount(a);
+    return '<strong>' + esc(a.total) + '</strong> <span class="sub">rilievi' +
+      (a.state === 'IN_PROGRESS' ? ' finora' : '') + '</span>' +
+      (compatible ? '<div class="sub">compatibili ' + esc(compatible) + '</div>' : '') +
+      (review ? '<div class="warn">da verificare ' + esc(review) + '</div>' : '') +
+      (a.state === 'IN_PROGRESS' ? '<div class="warn">scansione non completata</div>' : '');
+  }
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
   function renderTable(rows, sort, ivCache) {
     const head = ['Titolo', 'IV Ref', 'RV20', 'RV60'].map(h => '<th scope="col">' + esc(h) + '</th>').join('') +
@@ -422,7 +459,7 @@
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
       }).join('') +
-      ['Copertura RV20', 'Copertura RV60', 'Mancanti 20', 'Mancanti 60', 'Motivo', 'Riferimento', 'Stato']
+      ['Copertura RV20', 'Copertura RV60', 'Mancanti 20', 'Mancanti 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
       esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td><td>' + rvCell(r.rv20) +
@@ -430,10 +467,10 @@
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
-      asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(r.status) +
+      dividendAuditCell(r) + '</td><td>' + asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(r.status) +
       '</span></td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="13">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="14">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
