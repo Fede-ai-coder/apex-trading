@@ -358,7 +358,8 @@
     const compatible = known.reduce((v,a) => v + a.counts.DIVIDEND_COMPATIBLE, 0);
     const review = known.reduce((v,a) => v + dividendReviewCount(a), 0);
     const allComplete = state === 'COMPLETE' && known.length === data.rows.length &&
-      known.every(a => a.state === 'COMPLETE');
+      known.every(a => a.state === 'COMPLETE') &&
+      !(data.warnings || []).includes('SOURCES_CHANGED_DURING_READ');
     const period = src?.evidenceDate ? ' · riferimento ' + esc(src.evidenceDate) : '';
     const completed = src?.completedDay ? ' · completata ' + esc(src.completedDay) : '';
     const values = known.length ?
