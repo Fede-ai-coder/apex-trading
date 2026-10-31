@@ -537,6 +537,30 @@
           (s.regularForm && s.regularForm.state ? ' · forma Regular ' + esc(s.regularForm.state) : '') + '</li>').join('') +
         '</ul></details>' : '<p>Tutte le ' + esc(n + 1) + ' sedute della finestra sono validate.</p>');
   }
+  function renderDividendDetail(detail) {
+    const a=dividendAuditOf({dividendAudit:detail?.dividendAudit});
+    const raw=detail?.dividendAudit;
+    const source=detail?.sources?.dividendAudit;
+    const date=a.evidenceDate ? ' · riferimento ' + esc(a.evidenceDate) : '';
+    const total=a.total === null ? 'Conteggi non disponibili' : esc(a.total) + ' rilievi' +
+      (a.state === 'IN_PROGRESS' ? ' rilevati finora' : '');
+    const findings=Array.isArray(raw?.findings) ? raw.findings.slice(0,50) : [];
+    const list=a.total === null ? '' : findings.length ? '<ul class="reasons">' + findings.map(f =>
+      '<li><code>' + esc(f.timestamp ?? '—') + '</code> · <strong>' + esc(f.status ?? '—') +
+      '</strong>' + (f.reason ? ' · ' + esc(f.reason) : '') +
+      (num(f.amount) !== null ? ' · importo ' + esc(f.amount) : '') +
+      (f.eventDate ? ' · evento provider ' + esc(f.eventDate) : '') +
+      (f.dateSemantics ? ' · <code>' + esc(f.dateSemantics) + '</code>' : '') + '</li>').join('') + '</ul>' :
+      '<p>Nessun rilievo elencato per il simbolo' +
+      (a.state === 'COMPLETE' ? ' nel ciclo completato.' : ' finora.') + '</p>';
+    return '<section class="audit-detail"><h4>Audit dividendi · solo diagnostica</h4>' +
+      '<p>Stato: <strong>' + esc(dividendAuditLabel(a.state)) + '</strong>' + date + ' · ' + total + '</p>' +
+      (!raw && source?.state ? '<p class="sub">Fonte: ' + esc(dividendAuditLabel(source.state)) + '</p>' : '') +
+      (a.state !== 'COMPLETE' ? '<p class="warn">Storico non attestato come completo: dati mancanti non equivalgono a zero eventi.</p>' : '') +
+      list + (raw?.findingsTruncated === true ? '<p class="warn">Elenco limitato ai primi 50 rilievi per simbolo.</p>' : '') +
+      '<p class="note">DIVIDEND_COMPATIBLE significa soltanto compatibilità numerica: la data ex-dividendo NON è verificata.' +
+      ' L’audit NON modifica OHLC, finalità RV o spread.</p></section>';
+  }
   function renderDetail(detail, ivCache) {
     if (!detail || detail.ok !== true || detail.version !== VERSION || detail.readOnly !== true ||
         detail.executionAuthorized !== false || !detail.row || detail.row.symbol !== detail.symbol ||
@@ -567,7 +591,7 @@
       spreadLine('IV − RV60', r.spreads.ivMinusRv60Pp) + '</ul>' +
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
-      '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
+      renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
         ') · sedute duplicate ' + esc(cq.duplicateSessions) + '</p>' : '<p class="warn">Non verificabile.</p>') +
