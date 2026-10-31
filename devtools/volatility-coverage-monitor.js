@@ -13,6 +13,31 @@
   const SYMBOL = /^[A-Z0-9][A-Z0-9.\-]{0,15}$/;
   const DAY = /^\d{4}-\d{2}-\d{2}$/;
   const STATUSES = ['COMPLETE', 'PARTIAL', 'UNAVAILABLE', 'STALE', 'ERROR'];
+  const AUDIT_STATES = ['COMPLETE', 'IN_PROGRESS', 'NOT_RECORDED', 'DISABLED', 'ERROR'];
+  const AUDIT_REVIEW = ['INVALID_DATA', 'UNRESOLVED', 'IN_RANGE_UNDETERMINED', 'NO_EVENT'];
+  const AUDIT_STATE_TEXT = {
+    COMPLETE: 'storico completato',
+    IN_PROGRESS: 'scansione in corso',
+    NOT_RECORDED: 'evidenze non registrate',
+    DISABLED: 'audit disabilitato',
+    ERROR: 'evidenze non leggibili',
+  };
+  // Audit compatibility is NEVER an ex-dividend-date verification, price correction or RV certification.
+  function dividendAuditOf(row) {
+    const raw = row && row.dividendAudit;
+    if (!raw || !AUDIT_STATES.includes(raw.state)) return { state: 'NOT_REPORTED', counts: null, total: null };
+    const reported = raw.state === 'COMPLETE' || raw.state === 'IN_PROGRESS';
+    const counts = raw.counts;
+    const valid = reported && Number.isSafeInteger(raw.total) && raw.total >= 0 && counts &&
+      ['DIVIDEND_COMPATIBLE', ...AUDIT_REVIEW].every(k => Number.isSafeInteger(counts[k]) && counts[k] >= 0) &&
+      Object.values(counts).every(v => Number.isSafeInteger(v) && v >= 0) &&
+      Object.values(counts).reduce((a, b) => a + b, 0) === raw.total;
+    return {state: reported && !valid ? 'ERROR' : raw.state,
+      counts: valid ? counts : null, total: valid ? raw.total : null,
+      evidenceDate: raw.evidenceDate ?? null, completedDay: raw.completedDay ?? null};
+  }
+  const dividendReviewCount = a => a.counts ? AUDIT_REVIEW.reduce((sum, key) => sum + a.counts[key], 0) : null;
+  const dividendAuditLabel = state => AUDIT_STATE_TEXT[state] || 'non riportato';
   const SCRIPT_BACKEND = 'https://apex-tastytrade-backend-dev-production.up.railway.app';
   const TIMEOUT_MS = 20000;
 
@@ -194,6 +219,13 @@
     RV60_YES: r => num(r.rv60.value) !== null, RV60_NO: r => num(r.rv60.value) === null,
     COMPLETE: complete, INCOMPLETE: r => !complete(r), PROBLEMS: hasProblem,
   };
+  const DIVIDEND_FILTER = {
+    FINDINGS: r => dividendAuditOf(r).total > 0,
+    COMPATIBLE: r => (dividendAuditOf(r).counts?.DIVIDEND_COMPATIBLE ?? 0) > 0,
+    REVIEW: r => (dividendReviewCount(dividendAuditOf(r)) ?? 0) > 0,
+    NO_FINDINGS: r => { const a = dividendAuditOf(r); return a.state === 'COMPLETE' && a.total === 0; },
+    UNAVAILABLE: r => { const a = dividendAuditOf(r); return a.state !== 'COMPLETE'; },
+  };
   const SPREAD = {
     IV_GT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) > 0,
     IV_LT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) < 0,
@@ -209,7 +241,8 @@
       (!opt.availability || (AVAILABILITY[opt.availability] && AVAILABILITY[opt.availability](r))) &&
       (!opt.spread || (SPREAD[opt.spread] && SPREAD[opt.spread](r))) &&
       (!opt.status || r.status === opt.status) &&
-      (!opt.reason || r.reasons.includes(opt.reason)));
+      (!opt.reason || r.reasons.includes(opt.reason)) &&
+      (!opt.dividend || (DIVIDEND_FILTER[opt.dividend] && DIVIDEND_FILTER[opt.dividend](r))));
   }
   const SORT_KEYS = {
     position: r => r.universePosition, symbol: r => r.symbol, status: r => STATUSES.indexOf(r.status),
@@ -288,6 +321,15 @@
     ['candle_issues', r => r.candleQuality ? r.candleQuality.issues : null],
     ['census_state', r => r.ivRef.censusState], ['historical_state', r => (r.historicalCertified || {}).state],
     ['evidence_available', r => (r.evidence || {}).available], ['evidence_error', r => (r.evidence || {}).error],
+    ['dividend_audit_state', r => dividendAuditOf(r).state],
+    ['dividend_audit_date', r => dividendAuditOf(r).evidenceDate],
+    ['dividend_audit_completed_day', r => dividendAuditOf(r).completedDay],
+    ['dividend_audit_total', r => dividendAuditOf(r).total],
+    ['dividend_compatible', r => dividendAuditOf(r).counts?.DIVIDEND_COMPATIBLE],
+    ['dividend_invalid_data', r => dividendAuditOf(r).counts?.INVALID_DATA],
+    ['dividend_unresolved', r => dividendAuditOf(r).counts?.UNRESOLVED],
+    ['dividend_in_range_undetermined', r => dividendAuditOf(r).counts?.IN_RANGE_UNDETERMINED],
+    ['dividend_no_event', r => dividendAuditOf(r).counts?.NO_EVENT],
     ['errors', r => Object.entries(r.errors || {}).map(([k, v]) => k + ': ' + v).join(' | ')],
   ];
   function toCsv(data, ivCache) {
