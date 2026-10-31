@@ -65,6 +65,11 @@ jobs:
             node --check "$f"
           done
 
+      - name: Dividend audit coverage monitor (Node ${{ matrix.node }})
+        run: |
+          node --check devtools/volatility-coverage-monitor.js
+          node tests/volatility-coverage-dividend-ui.test.js
+
       - name: JSON parses
         run: |
           node -e "JSON.parse(require('fs').readFileSync('config/risk-models/portfolio-stress-test-v1.json','utf8'))"
