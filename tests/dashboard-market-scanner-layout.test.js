@@ -638,7 +638,9 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'iv_minus_rv20_pp', 'iv_minus_rv20_basis', 'iv_minus_rv20_missing', 'iv_minus_rv60_pp', 'iv_minus_rv60_basis',
     'iv_minus_rv60_missing', 'rv_session_date', 'iv_rv_dates_differ', 'rv20_last_certified', 'rv20_last_certified_session',
     'rv60_last_certified', 'rv60_last_certified_session', 'candle_issues', 'census_state', 'historical_state',
-    'evidence_available', 'evidence_error', 'errors', 'iv_market_informational', 'iv_market_source',
+    'evidence_available', 'evidence_error', 'dividend_audit_state', 'dividend_audit_date', 'dividend_audit_completed_day',
+    'dividend_audit_total', 'dividend_compatible', 'dividend_invalid_data', 'dividend_unresolved',
+    'dividend_in_range_undetermined', 'dividend_no_event', 'errors', 'iv_market_informational', 'iv_market_source',
     'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
   const col = name => header.indexOf(name);
   const bbb = lines[2].split(',');
@@ -840,7 +842,7 @@ async function testCoverageLifecycle() {
       const el = element();
       if (tag === 'a') el.click = () => { el.clicked = true; };
       if (tag === 'div') {
-        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element()]));
         const root = { fields, appended: [], getElementById(id) { return fields[id]; },
           querySelector(sel) { assert.equal(sel, '.shade'); return fields.shade; }, appendChild(x) { this.appended.push(x); } };
@@ -1027,7 +1029,7 @@ function launcherPage(hostname, options) {
     createElement(tag) {
       const el = element(tag);
       if (tag === 'div') el.attachShadow = () => {
-        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread',
+        const fields = Object.fromEntries(['run', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
         const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
         roots.push(root);
