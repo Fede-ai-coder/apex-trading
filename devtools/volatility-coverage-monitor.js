@@ -161,11 +161,19 @@
   const spreadOf = (row, n) => num(row.spreads['ivMinusRv' + n + 'Pp'].valuePp);
   // Every metric available = both spreads computed. A read error on another source (status ERROR) does not undo that.
   const complete = row => spreadOf(row, 20) !== null && spreadOf(row, 60) !== null;
+  // One complete stored 1D window can produce a spread without repeated provider acquisitions.
+  // Certification is different: it includes additional finality and adjustment safeguards.
+  const certifiedPair = row => complete(row) && [20, 60].every(n =>
+    row.spreads['ivMinusRv' + n + 'Pp'].basis === 'RV_CERTIFIED');
+  const dxlinkPair = row => complete(row) && !certifiedPair(row) && [20, 60].every(n =>
+    ['RV_CERTIFIED', 'RV_PRELIMINARY'].includes(row.spreads['ivMinusRv' + n + 'Pp'].basis)) &&
+    [20, 60].some(n => row.spreads['ivMinusRv' + n + 'Pp'].basis === 'RV_PRELIMINARY');
   const hasProblem = row => row.status === 'ERROR' || row.status === 'STALE' || !row.candleQuality ||
     row.candleQuality.issues === true || Object.keys(row.errors || {}).length > 0;
   function summarize(rows) {
     const basis = () => ({ any: 0, CERTIFIED: 0, PRELIMINARY: 0, EXPLORATORY: 0 });
     const s = { total: rows.length, ivRef: 0, rv20: basis(), rv60: basis(), complete: 0,
+      certifiedPairs: 0, dxlinkPairs: 0,
       ivAboveRv20: 0, ivBelowRv20: 0, ivEqualRv20: 0, ivAboveRv60: 0, ivBelowRv60: 0, ivEqualRv60: 0,
       insufficientData: 0, candleIssues: 0, stale: 0, errors: 0 };
     for (const row of rows) {
@@ -176,6 +184,8 @@
         if (Object.prototype.hasOwnProperty.call(s[key], row[key].basis)) s[key][row[key].basis]++;
       }
       if (complete(row)) s.complete++;
+      if (certifiedPair(row)) s.certifiedPairs++;
+      if (dxlinkPair(row)) s.dxlinkPairs++;
       for (const n of [20, 60]) {
         const v = spreadOf(row, n);
         if (v === null) continue;
@@ -194,7 +204,8 @@
     IVREF_YES: r => num(r.ivRef.value) !== null, IVREF_NO: r => num(r.ivRef.value) === null,
     RV20_YES: r => num(r.rv20.value) !== null, RV20_NO: r => num(r.rv20.value) === null,
     RV60_YES: r => num(r.rv60.value) !== null, RV60_NO: r => num(r.rv60.value) === null,
-    COMPLETE: complete, INCOMPLETE: r => !complete(r), PROBLEMS: hasProblem,
+    COMPLETE: complete, INCOMPLETE: r => !complete(r),
+    CERTIFIED_PAIR: certifiedPair, DXLINK_PAIR: dxlinkPair, PROBLEMS: hasProblem,
   };
   const SPREAD = {
     IV_GT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) > 0,
@@ -241,8 +252,9 @@
   }
   const formatPct = v => (num(v) === null ? '—' : (100 * v).toFixed(2) + '%');
   const spreadClass = v => { const x = num(v); return x === null ? 'na' : x > 0 ? 'pos' : x < 0 ? 'neg' : 'zero'; };
-  const BASIS_LABEL = { CERTIFIED: 'CERTIFICATA', PRELIMINARY: 'PRELIMINARE', EXPLORATORY: 'ESPLORATIVA',
-    RV_CERTIFIED: 'su RV certificata', RV_PRELIMINARY: 'su RV preliminare' };
+  const BASIS_LABEL = { CERTIFIED: 'CERTIFICATA APEX', PRELIMINARY: 'DA STORE 1D · non certificata',
+    EXPLORATORY: 'ESPLORATIVA · non confrontabile',
+    RV_CERTIFIED: 'su RV certificata APEX', RV_PRELIMINARY: 'su RV da store 1D non certificata' };
 
   // IV Market: the scanner's Tastytrade IV index, when the page already holds it. Informational ONLY: it is never an
   // operand of a spread and never stands in for a missing IV Ref.
@@ -314,7 +326,8 @@
     const split = w => w.any + ' <span class="sub">(C ' + w.CERTIFIED + ' · P ' + w.PRELIMINARY + ' · E ' + w.EXPLORATORY + ')</span>';
     const cards = [
       ['Titoli', s.total], ['IV Ref disponibile', s.ivRef], ['RV20 disponibile', split(s.rv20)],
-      ['RV60 disponibile', split(s.rv60)], ['Completi (IV Ref + RV20 + RV60)', s.complete],
+      ['RV60 disponibile', split(s.rv60)], ['Entrambi gli spread disponibili', s.complete],
+      ['Entrambi certificati APEX', s.certifiedPairs], ['Con RV da store 1D', s.dxlinkPairs],
       ['IV > RV20', s.ivAboveRv20], ['IV < RV20', s.ivBelowRv20], ['IV > RV60', s.ivAboveRv60], ['IV < RV60', s.ivBelowRv60],
       ['Dati insufficienti', s.insufficientData], ['Problemi candele', s.candleIssues], ['Stale', s.stale], ['Errori', s.errors],
     ];
@@ -327,9 +340,13 @@
       : x.available === false ? 'non disponibili' + (x.reason ? ' (' + x.reason + ')' : '') : 'stato non dichiarato';
     return '<div class="stats">' + cards.map(([name, value]) => '<div class="metric"><span>' + esc(name) +
       '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal +
-      '<p class="note">C/P/E = certificata / preliminare / esplorativa. Completi = entrambi gli spread calcolati, anche' +
-      ' se la riga ha un errore di lettura su un’altra fonte. Dati insufficienti = almeno una finestra senza alcuna RV.' +
-      ' Problemi candele = righe escluse dallo store (flag <code>issues</code> del backend). Conteggi delle sole righe lette.</p>' +
+      '<p class="note">C/P/E = certificata APEX / da store 1D senza certificazione / esplorativa non confrontabile.' +
+      ' Spread disponibili = entrambi i confronti IV−RV calcolati, anche se la certificazione APEX non è completata.' +
+      ' Con RV da store 1D = almeno uno spread non certificato, ricavato da chiusure presenti e strutturalmente utilizzabili:' +
+      ' non occorrono due acquisizioni per mostrare il valore. La certificazione APEX è un controllo distinto' +
+      ' su finalità e azioni societarie; i valori da store non autorizzano trading automatico.' +
+      ' Dati insufficienti = almeno una finestra senza RV numerica. Problemi candele = righe escluse dallo store' +
+      ' (flag <code>issues</code>). Conteggi delle sole righe lette.</p>' +
       '<p class="note">Universo <code>' + esc(data.universe.source) + '</code> · ' + esc(data.universe.count) +
       ' titoli · digest <code>' + esc(String(data.universe.digest).slice(0, 12)) + '…</code> · RV al ' +
       esc(data.asOfSessionDate) + ' · IV del ' + esc(data.ivAsOfDate) + ' (NY) · letto ' + esc(data.generatedFrom) +
@@ -403,8 +420,14 @@
     return '<span class="sp na">—</span>' + miss.map(m => '<div class="sub">manca ' + esc(m.operand) + ': <code>' +
       esc(m.reason) + '</code></div>').join('');
   }
-  const coverageCell = w => w.coverage ? esc(w.coverage.validated) + '/' + esc(w.coverage.required) : '—/' + esc(w.closesRequired);
+  // APEX-validated sessions and physically present sessions are different facts.
+  const coverageCell = w => w.coverage
+    ? '<div>presenti ' + esc(w.coverage.present) + '/' + esc(w.coverage.required) + '</div>' +
+      '<div class="sub">validate APEX ' + esc(w.coverage.validated) + '/' + esc(w.coverage.required) + '</div>'
+    : '<div>presenti —/' + esc(w.closesRequired) + '</div><div class="sub">validazione non verificabile</div>';
   const missingCell = w => w.coverage ? esc(w.coverage.missing) : '—';
+  const statusLabel = r => r.status === 'COMPLETE'
+    ? certifiedPair(r) ? 'SPREAD CERTIFICATI' : 'SPREAD DISPONIBILI' : r.status;
   function ivRefCell(iv, market) {
     const head = num(iv.value) !== null ? '<strong>' + esc(formatPct(iv.value)) + '</strong><div class="sub">scad. ' +
       esc(iv.selectedExpiration || '—') + ' · ' + esc(iv.selectedDte == null ? '—' : iv.selectedDte) + ' DTE</div>'
@@ -424,7 +447,7 @@
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
       }).join('') +
-      ['Copertura RV20', 'Copertura RV60', 'Mancanti 20', 'Mancanti 60', 'Motivo', 'Riferimento', 'Stato']
+      ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
       esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td><td>' + rvCell(r.rv20) +
@@ -432,8 +455,9 @@
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
-      asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(r.status) +
-      '</span></td></tr>').join('');
+      asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) +
+      '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
+        '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
       (body || '<tr><td colspan="13">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
@@ -516,7 +540,9 @@
       ' · valore esatto <code>' + esc(sp.valuePp) + '</code>' : '— ' + (sp.missing || []).map(m => 'manca ' + esc(m.operand) + ': ' +
       reasonHtml(m.reason) + (m.preliminaryReason ? ' · preliminare: ' + reasonHtml(m.preliminaryReason) : '')).join(' · ')) + '</li>';
     const cq = r.candleQuality;
-    return '<h3>' + esc(r.symbol) + ' · <span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(r.status) + '</span></h3>' +
+    return '<h3>' + esc(r.symbol) + ' · <span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) + '</span></h3>' +
+      (r.status === 'COMPLETE' && !certifiedPair(r) ? '<p class="warn">Entrambi gli spread sono calcolabili' +
+        ' dallo store 1D, ma non certificati APEX. La doppia acquisizione non è necessaria per visualizzarli.</p>' : '') +
       '<ul class="reasons">' + (r.reasons.map(c => '<li>' + reasonHtml(c) + '</li>').join('') || '<li>nessun motivo</li>') + '</ul>' +
       '<h4>IV Ref (scadenza Regular selezionata ~40 DTE)</h4>' +
       '<p>Valore: <strong>' + esc(formatPct(iv.value)) + '</strong> · stato ' + esc(iv.status) + (iv.reason ? ' · ' + reasonHtml(iv.reason) : '') +
@@ -633,7 +659,10 @@
         '<option value="IVREF_YES">IV Ref disponibile</option><option value="IVREF_NO">IV Ref mancante</option>' +
         '<option value="RV20_YES">RV20 disponibile</option><option value="RV20_NO">RV20 mancante</option>' +
         '<option value="RV60_YES">RV60 disponibile</option><option value="RV60_NO">RV60 mancante</option>' +
-        '<option value="COMPLETE">Completi</option><option value="INCOMPLETE">Incompleti</option>' +
+        '<option value="COMPLETE">Entrambi gli spread disponibili</option>' +
+        '<option value="CERTIFIED_PAIR">Entrambi certificati APEX</option>' +
+        '<option value="DXLINK_PAIR">Con RV da store 1D (non certificata)</option>' +
+        '<option value="INCOMPLETE">Spread non entrambi disponibili</option>' +
         '<option value="PROBLEMS">Solo problematici (errore, stale, candele)</option></select>' +
         '<select id="spread" aria-label="Spread"><option value="">Spread: tutti</option>' +
         '<option value="IV_GT_RV20">IV &gt; RV20</option><option value="IV_LT_RV20">IV &lt; RV20</option>' +

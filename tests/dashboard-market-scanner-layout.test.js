@@ -398,7 +398,7 @@ function covRow(symbol, position, o) {
   const iv = o.iv === undefined ? null : o.iv;
   const spread = v => v === null || v === undefined
     ? { valuePp: null, basis: null, missing: [{ operand: 'IV_REF', reason: iv === null ? 'NOT_IN_IV_PILOT' : 'X' }] }
-    : { valuePp: v, basis: 'RV_CERTIFIED', missing: [] };
+    : { valuePp: v, basis: o.basis === 'PRELIMINARY' ? 'RV_PRELIMINARY' : 'RV_CERTIFIED', missing: [] };
   const reasons = o.reasons || (iv === null ? ['NOT_IN_IV_PILOT'] : []);
   return {
     symbol, universePosition: position, status: o.status || (iv === null ? 'UNAVAILABLE' : 'COMPLETE'),
@@ -517,8 +517,49 @@ require('node:test')('coverage monitor: the counters are counts of the rows read
   const s = cov.summarize(cov.combinePages(covMixed()).rows);
   assert.deepEqual(s, { total: 9, ivRef: 3,
     rv20: { any: 7, CERTIFIED: 2, PRELIMINARY: 1, EXPLORATORY: 4 }, rv60: { any: 6, CERTIFIED: 2, PRELIMINARY: 1, EXPLORATORY: 3 },
-    complete: 3, ivAboveRv20: 2, ivBelowRv20: 1, ivEqualRv20: 0, ivAboveRv60: 1, ivBelowRv60: 1, ivEqualRv60: 1,
+    complete: 3, certifiedPairs: 2, dxlinkPairs: 1,
+    ivAboveRv20: 2, ivBelowRv20: 1, ivEqualRv20: 0, ivAboveRv60: 1, ivBelowRv60: 1, ivEqualRv60: 1,
     insufficientData: 3, candleIssues: 1, stale: 1, errors: 1 });
+});
+
+require('node:test')('coverage monitor: stored 1D spreads work without two acquisitions but never masquerade as certified', () => {
+  const data = cov.combinePages(covMixed());
+  const [certified, , fromStore] = data.rows;
+  const cards = cov.renderSummary(data);
+  const table = cov.renderTable([certified, fromStore], null, null);
+  assert.match(cards, /Entrambi gli spread disponibili/);
+  assert.match(cards, /Entrambi certificati APEX/);
+  assert.match(cards, /Con RV da store 1D/);
+  assert.match(cards, /non occorrono due acquisizioni per mostrare il valore/);
+  assert.match(cards, /non autorizzano trading automatico/);
+  assert.match(table, /SPREAD CERTIFICATI/);
+  assert.match(table, /SPREAD DISPONIBILI/);
+  assert.match(table, /non certificati APEX/);
+  assert.match(table, /DA STORE 1D · non certificata/);
+  assert.match(table, /presenti 21\/21/);
+  assert.match(table, /validate APEX 0\/21/);
+  assert.match(table, /Non validate 20/);
+  assert.doesNotMatch(table, /Copertura RV20|Mancanti 20/);
+  assert.equal(fromStore.status, 'COMPLETE', 'backend contract is not redefined');
+  assert.equal(fromStore.spreads.ivMinusRv20Pp.basis, 'RV_PRELIMINARY');
+  assert.equal(fromStore.spreads.ivMinusRv60Pp.basis, 'RV_PRELIMINARY');
+  const csv = cov.toCsv(data, null);
+  assert.match(csv, /RV_PRELIMINARY/);
+  const missing = covRow('AAA', 0, { iv: 0.25, basis: 'PRELIMINARY', s20: 1, s60: 2 });
+  missing.rv20.coverage.present = 19;
+  missing.rv20.coverage.validated = 0;
+  const missingTable = cov.renderTable([missing], null, null);
+  assert.match(missingTable, /presenti 19\/21/);
+  assert.match(missingTable, /validate APEX 0\/21/);
+  assert.doesNotMatch(missingTable, /presenti 0\/21/);
+  const detail = covDetail(d => {
+    d.row.status = 'COMPLETE';
+    d.row.rv20.basis = 'PRELIMINARY';
+    d.row.rv60.basis = 'PRELIMINARY';
+    d.row.spreads.ivMinusRv20Pp = { valuePp: 1, basis: 'RV_PRELIMINARY', missing: [] };
+    d.row.spreads.ivMinusRv60Pp = { valuePp: 2, basis: 'RV_PRELIMINARY', missing: [] };
+  });
+  assert.match(cov.renderDetail(detail, null), /non certificati APEX/);
 });
 
 require('node:test')('coverage monitor: spreads keep the sign of the unrounded value; colours give the sign only', () => {
@@ -556,6 +597,8 @@ require('node:test')('coverage monitor: every filter, exactly', () => {
   assert.equal(pick({ availability: 'RV20_NO' }), 'EEE,HHH');
   assert.equal(pick({ availability: 'RV60_YES' }), 'AAA,BBB,CCC,DDD,FFF,GGG');
   assert.equal(pick({ availability: 'COMPLETE' }), 'AAA,BBB,CCC');
+  assert.equal(pick({ availability: 'CERTIFIED_PAIR' }), 'AAA,BBB');
+  assert.equal(pick({ availability: 'DXLINK_PAIR' }), 'CCC');
   assert.equal(pick({ availability: 'INCOMPLETE' }), 'DDD,EEE,FFF,GGG,HHH,III');
   assert.equal(pick({ availability: 'RV60_NO' }), 'EEE,HHH,III');
   assert.equal(pick({ availability: 'PROBLEMS' }), 'FFF,GGG,HHH');
