@@ -1,6 +1,9 @@
-// Volatility Coverage & Spread Monitor: DEV frontend only, READ-ONLY.
-// A manual click reads /debug/volatility-carry/coverage page by page (25 symbols, the universe pinned by the digest of
-// page 1), and one GET per symbol opened. No polling, storage, write, subscription or trading decision.
+// Volatility Coverage & Spread Monitor: DEV frontend only.
+// Opening the panel (and «Analizza universo») reads /debug/volatility-carry/coverage page by page (25 symbols, the
+// universe pinned by the digest of page 1), and one GET per symbol opened. After the first complete read the panel asks
+// the DEV backend, with ONE authenticated POST, to start — or reuse — the full-universe IV refresh job of that universe
+// digest; it then polls only that job's status (GET, cancelled on close) and re-reads the coverage once when the job
+// ends. The provider is reached by the backend job only. No storage, subscription or trading decision.
 // Every number is the backend's: the panel rounds only what it DISPLAYS (the CSV keeps full precision) and never fills
 // a missing value; null is shown as "—" next to the reason the backend gave. Colours give the SIGN of IV − RV only.
 (function () {
@@ -42,6 +45,43 @@
   const TIMEOUT_MS = 20000;
   const RECOVERY_PATH = '/dev/market/candles/store/recovery-always-on';
   const RECOVERY_VERSION = 'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1';
+  const REFRESH_PATH = '/debug/volatility-carry/iv-refresh';
+  const REFRESH_POLL_MS = 5000;                 // status only: a poll never starts an acquisition
+  const REFRESH_MAX_POLLS = 720;                // one hour of polling at most per panel opening
+  const JOB_STATES = ['RUNNING', 'COMPLETE', 'PARTIAL', 'FAILED', 'SUPERSEDED', 'INTERRUPTED'];
+  const JOB_STATE_TEXT = { RUNNING: 'acquisizione in corso', COMPLETE: 'acquisizione completata',
+    PARTIAL: 'acquisizione parziale (alcuni titoli in errore)', FAILED: 'acquisizione fallita',
+    SUPERSEDED: 'sostituita (universo cambiato)', INTERRUPTED: 'interrotta (durata massima superata)' };
+  const FRESHNESS_TEXT = { CURRENT_JOB: 'acquisita nel job corrente', CURRENT_JOB_NO_IV: 'job corrente: nessuna IV',
+    PREVIOUS_ONLY: 'non ancora aggiornata nel job corrente', NONE: 'mai acquisita' };
+  // A job object as the backend returns it, or null when it is not one: every field the panel shows is checked.
+  function checkRefreshJob(job) {
+    const p = job && job.progress;
+    const n = v => Number.isSafeInteger(v) && v >= 0;
+    return job && typeof job.jobId === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(job.jobId) && JOB_STATES.includes(job.state) &&
+      job.universe && DIGEST.test(String(job.universe.digest)) && p && ['total', 'processed', 'pending', 'retrying', 'done',
+      'failed', 'ivAvailable', 'ivUnavailable', 'errors'].every(k => n(p[k])) && p.processed <= p.total ? job : null;
+  }
+  // What the refresh did for THIS opening, in words: a reused job is never presented as a new acquisition.
+  function renderRefreshStatus(job, meta) {
+    meta = meta || {};
+    if (!job) return '<p class="error">' + esc(meta.error || 'Stato del refresh IV non verificabile.') + '</p>';
+    const p = job.progress;
+    const origin = meta.created ? 'Nuova acquisizione IV avviata.'
+      : meta.reused === 'ACTIVE' ? 'Acquisizione IV già in corso: pannello ricollegato allo stesso job.'
+      : meta.reused === 'RECENT' ? 'Nessuna nuova acquisizione: riuso del job concluso il ' + esc(job.finishedAt || '—') +
+        ' (concluso da meno dell’intervallo minimo del backend). Usa «Nuova acquisizione IV» per richiederne una.' : '';
+    return '<section class="refresh" aria-label="Refresh IV Ref intero universo"><p><strong>IV Ref intero universo · ' +
+      esc(JOB_STATE_TEXT[job.state] || job.state) + '</strong> · job <code>' + esc(job.jobId.slice(0, 8)) + '…</code> · richiesto ' +
+      esc(job.requestedAt || '—') + (job.finishedAt ? ' · concluso ' + esc(job.finishedAt) : '') + '</p>' +
+      (origin ? '<p class="info">' + origin + '</p>' : '') +
+      '<p>Elaborati <strong>' + esc(p.processed) + '/' + esc(p.total) + '</strong> · con IV valida <strong>' + esc(p.ivAvailable) +
+      '</strong> · senza IV ' + esc(p.ivUnavailable) + ' · errori ' + esc(p.errors) +
+      (p.retrying ? ' · in nuovo tentativo ' + esc(p.retrying) : '') + (p.pending ? ' · in attesa ' + esc(p.pending) : '') + '</p>' +
+      (job.state === 'RUNNING' && job.backoffUntil ? '<p class="warn">Limite del provider: pausa fino a ' + esc(job.backoffUntil) + '</p>' : '') +
+      '<p class="note">Processati = titoli con un esito (IV, nessuna IV o errore), non titoli con IV verificata. L’orario di acquisizione' +
+      ' è quello di APEX: Tastytrade non attesta quando ha aggiornato la singola IV.</p></section>';
+  }
 
   function devContext(hostname, backend) {
     const host = String(hostname || '');
@@ -156,8 +196,10 @@
     // Pages are computed one after the other, not as one atomic snapshot. Every page reads the whole IV pilot, so its
     // digest says whether all IV Refs come from one pilot state; any other change of the sources' state is stated too.
     const pilotDigest = p => (p.sources && p.sources.ivPilot ? p.sources.ivPilot.digest : undefined);
+    // A running refresh job progresses while the pages are read: stated by its own warnings, not as a source change.
     const withoutDigest = p => JSON.stringify(Object.assign({}, p.sources, p.sources && p.sources.ivPilot
-      ? { ivPilot: Object.assign({}, p.sources.ivPilot, { digest: null }) } : {}));
+      ? { ivPilot: Object.assign({}, p.sources.ivPilot, { digest: null }) } : {}, { ivRefresh: null }));
+    const refreshOf = p => (p.sources && p.sources.ivRefresh) || null;
     let offset = 0;
     for (const page of pages) {
       checkPage(page, offset, digest);
@@ -165,6 +207,9 @@
         throw Error('COVERAGE_DATES_CHANGED_DURING_READ');
       if (pilotDigest(page) !== pilotDigest(first)) warn('IV_PILOT_CHANGED_DURING_READ');
       if (withoutDigest(page) !== withoutDigest(first)) warn('SOURCES_CHANGED_DURING_READ');
+      const r0 = refreshOf(first), r1 = refreshOf(page);
+      if ((r0 && r0.jobId) !== (r1 && r1.jobId)) warn('IV_REFRESH_JOB_CHANGED_DURING_READ');
+      else if (r0 && r1 && JSON.stringify(r0.progress) !== JSON.stringify(r1.progress)) warn('IV_REFRESH_PROGRESSED_DURING_READ');
       for (const row of page.rows) {
         if (seen.has(row.symbol)) throw Error('COVERAGE_DUPLICATE_SYMBOL');
         seen.add(row.symbol);
@@ -178,6 +223,7 @@
     return {
       universe: first.universe, asOfSessionDate: first.asOfSessionDate, ivAsOfDate: first.ivAsOfDate,
       generatedFrom: first.generatedAt, generatedTo: last.generatedAt, sources: first.sources, warnings, rows, pageGeneratedAt,
+      ivRefresh: refreshOf(last),
       atomic: pages.every(p => p.snapshot && p.snapshot.atomic === true),
     };
   }
@@ -346,9 +392,34 @@
     ['dividend_no_event', r => dividendAuditOf(r).counts?.NO_EVENT],
     ['errors', r => Object.entries(r.errors || {}).map(([k, v]) => k + ': ' + v).join(' | ')],
   ];
+  // Acquisition provenance of refresh rows, appended after every pre-existing column. `iv_ref_from_current_job` says
+  // whether iv_ref is this job's own observation; the last earlier IV is exported separately, as history.
+  const acq = r => (r.ivRef && r.ivRef.acquisition) || {};
+  const ACQUISITION_COLUMNS = [
+    ['iv_mode', (r, d) => ((d.sources || {}).ivMode) || 'IV_PILOT'],
+    ['iv_refresh_job_id', (r, d) => acq(r).jobId ?? ((d.ivRefresh || {}).jobId ?? null)],
+    ['iv_refresh_job_state', (r, d) => acq(r).jobState ?? ((d.ivRefresh || {}).jobState ?? null)],
+    ['iv_refresh_snapshot_complete', (r, d) => (d.ivRefresh ? !['RUNNING'].includes(d.ivRefresh.jobState) &&
+      !(d.warnings || []).some(w => /^IV_REFRESH_/.test(w)) : null)],
+    ['iv_ref_from_current_job', r => (r.ivRef && r.ivRef.acquisition ? acq(r).freshness === 'CURRENT_JOB' : null)],
+    ['iv_freshness', r => acq(r).freshness ?? null],
+    ['iv_requested_at', r => acq(r).requestedAt ?? null], ['iv_fetched_at', r => acq(r).fetchedAt ?? null],
+    ['iv_provider_as_of', r => acq(r).providerAsOf ?? null], ['iv_provider_as_of_field', r => acq(r).providerAsOfField ?? null],
+    ['iv_chain_fetched_at', r => acq(r).chainFetchedAt ?? null], ['iv_error_class', r => acq(r).errorClass ?? null],
+    ['iv_selection_version', r => acq(r).selectionVersion ?? null], ['iv_policy_version', r => acq(r).policyVersion ?? null],
+    ['iv_timing_policy_version', r => acq(r).timingPolicyVersion ?? null],
+    ['iv_timing_comparable', r => (r.ivRef && r.ivRef.timing ? r.ivRef.timing.comparable : null)],
+    ['iv_timing_basis', r => (r.ivRef && r.ivRef.timing ? r.ivRef.timing.basis : null)],
+    ['iv_timing_reason', r => (r.ivRef && r.ivRef.timing ? r.ivRef.timing.reason : null)],
+    ['iv_provider_update_attested', r => (r.ivRef && r.ivRef.timing ? r.ivRef.timing.providerUpdateAttested : null)],
+    ['iv_last_successful', r => (acq(r).lastSuccessful ? num(acq(r).lastSuccessful.iv) : null)],
+    ['iv_last_successful_fetched_at', r => (acq(r).lastSuccessful ? acq(r).lastSuccessful.fetchedAt : null)],
+    ['iv_last_successful_job_id', r => (acq(r).lastSuccessful ? acq(r).lastSuccessful.jobId : null)],
+  ];
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
-      'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest']);
+      'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest'])
+      .concat(ACQUISITION_COLUMNS.map(c => c[0]));
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
@@ -357,7 +428,7 @@
         csvCell(m && m.updatedAt !== null ? new Date(m.updatedAt).toISOString() : null),
         csvCell(data.pageGeneratedAt ? data.pageGeneratedAt[row.symbol] : null),
         csvCell(data.generatedFrom), csvCell(data.generatedTo), csvCell(data.universe.source), csvCell(data.universe.digest),
-      ]).join(','));
+      ]).concat(ACQUISITION_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -420,6 +491,10 @@
       ' titoli · digest <code>' + esc(String(data.universe.digest).slice(0, 12)) + '…</code> · RV al ' +
       esc(data.asOfSessionDate) + ' · IV del ' + esc(data.ivAsOfDate) + ' (NY) · letto ' + esc(data.generatedFrom) +
       ' → ' + esc(data.generatedTo) + '</p>' +
+      '<p class="note">IV Ref: ' + (src.ivMode === 'FULL_UNIVERSE_REFRESH' ? 'refresh intero universo · job <code>' +
+        esc(String((data.ivRefresh || {}).jobId || '—').slice(0, 8)) + '…</code> · ' + esc((data.ivRefresh || {}).jobState || '—') +
+        ' · policy temporale ' + esc((data.ivRefresh || {}).timingPolicyVersion || '—')
+        : 'pilot IV (al massimo 20 titoli)') + '</p>' +
       '<p class="note">Fonti: pilot IV ' + esc(state(src.ivPilot)) + ' · census ' + esc(state(src.census)) +
       ' · RV storiche ' + esc(state(src.rvDaily)) + ' · evidenze ' + esc(evidenceState(src.observations)) +
       (src.ivPilot && src.ivPilot.digest ? ' · stato pilot IV <code>' + esc(String(src.ivPilot.digest).slice(0, 12)) + '…</code>' : '') +
@@ -501,7 +576,35 @@
     const head = num(iv.value) !== null ? '<strong>' + esc(formatPct(iv.value)) + '</strong><div class="sub">scad. ' +
       esc(iv.selectedExpiration || '—') + ' · ' + esc(iv.selectedDte == null ? '—' : iv.selectedDte) + ' DTE</div>'
       : '<strong>—</strong><div class="sub">' + esc(iv.status) + '</div>';
-    return head + (market ? '<div class="sub mkt">IV Market ' + esc(formatPct(market.value)) + ' (informativa)</div>' : '');
+    return head + acquisitionCell(iv) +
+      (market ? '<div class="sub mkt">IV Market ' + esc(formatPct(market.value)) + ' (informativa)</div>' : '');
+  }
+  function acquisitionDetail(iv) {
+    const a = iv && iv.acquisition;
+    if (!a) return '';
+    const t = iv.timing, last = a.lastSuccessful;
+    return '<p>Acquisizione: job <code>' + esc(String(a.jobId || '—')) + '</code> (' + esc(a.jobState || '—') + ') · ' +
+      esc(FRESHNESS_TEXT[a.freshness] || a.freshness || '—') + ' · richiesta ' + esc(a.requestedAt || '—') + ' · acquisita da APEX ' +
+      esc(a.fetchedAt || '—') + ' · dato del provider ' + (a.providerAsOf ? esc(a.providerAsOf) + ' (' + esc(a.providerAsOfField) + ')'
+        : 'non attestato da Tastytrade') + ' · struttura catena del ' + esc(a.chainFetchedAt || '—') +
+      (a.errorClass ? ' · errore ' + esc(a.errorClass) : '') + '</p>' +
+      (t ? '<p>Confronto IV−RV (' + esc(t.policyVersion) + '): ' + (t.comparable ? 'ammesso, ' + esc(t.basis)
+        : 'escluso, ' + reasonHtml(t.reason)) + ' · aggiornamento del provider non attestato</p>' : '') +
+      (last && a.freshness !== 'CURRENT_JOB' ? '<p class="warn">Ultima IV di un’acquisizione precedente: ' + esc(formatPct(last.iv)) +
+        ' del ' + esc(last.fetchedAt || '—') + ' (scad. ' + esc(last.selectedExpiration || '—') + ') · solo storica, esclusa dagli spread</p>' : '');
+  }
+  // Refresh rows only: whether the value is this job's, and the last earlier IV shown as HISTORY (never a value).
+  function acquisitionCell(iv) {
+    const a = iv && iv.acquisition;
+    if (!a) return '';
+    const last = a.lastSuccessful;
+    const history = a.freshness !== 'CURRENT_JOB' && last && num(last.iv) !== null
+      ? '<div class="sub warn">storica ' + esc(formatPct(last.iv)) + ' del ' + esc(last.fetchedAt || '—') +
+        ' · esclusa dagli spread</div>' : '';
+    const timing = iv.timing ? '<div class="sub">' + (iv.timing.comparable ? 'confrontabile con la RV (' +
+      esc(iv.timing.basis) + ')' : 'non confrontabile: ' + esc(iv.timing.reason)) + '</div>' : '';
+    return '<div class="sub">' + esc(FRESHNESS_TEXT[a.freshness] || a.freshness) +
+      (a.fetchedAt ? ' · acquisita ' + esc(a.fetchedAt) : '') + '</div>' + timing + history;
   }
   function asOfCell(a) {
     return '<span class="nw">RV ' + esc(a.rvSessionDate || '—') + '</span>' + (a.ivAsOfDate ? '<div class="sub nw">IV ' + esc(a.ivAsOfDate) +
@@ -655,7 +758,7 @@
       esc(iv.settlementType || '—') + '</p><p>Snapshot del ' + esc(iv.asOfDate || '—') + ' · osservata ' + esc(iv.observedAt || '—') +
       ' · freschezza: ' + (timing.length ? timing.map(m => reasonHtml(m.reason)).join(' · ') : num(iv.value) !== null ? 'compatibile con la RV' : '—') +
       (r.asOf.datesDiffer ? ' · <span class="warn">data IV ≠ data RV (' + esc(r.asOf.ivAsOfDate) + ' / ' + esc(r.asOf.rvSessionDate) + ')</span>' : '') + '</p>' +
-      '<p>Census: ' + censusText(iv, r.errors) + '</p>' +
+      '<p>Census: ' + censusText(iv, r.errors) + '</p>' + acquisitionDetail(iv) +
       (market ? '<p class="mkt">IV Market (IV index Tastytrade dello scanner, solo informativa, mai usata negli spread): ' +
         esc(formatPct(market.value)) + (market.updatedAt !== null ? ' · ' + esc(new Date(market.updatedAt).toISOString()) : '') + '</p>' : '') +
       '<h4>Spread IV − RV (punti percentuali)</h4><ul class="reasons">' + spreadLine('IV − RV20', r.spreads.ivMinusRv20Pp) +
@@ -677,10 +780,16 @@
       'controlli sulle azioni societarie, non con il solo passare del tempo.</p>';
   }
 
-  // ── network: GET only, the session's key only as a header, one bounded page at a time ───────────────────────────
-  async function fetchJson(url, apiKey, signal) {
-    const resp = await fetch(url, { method: 'GET', cache: 'no-store',
-      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' }, signal });
+  // ── network: the session's key only as a header, one bounded request at a time ─────────────────────────────────
+  // GET everywhere. The ONE write is the POST that starts or reuses the backend's IV refresh job: refused for any
+  // other URL, before any request is made.
+  async function fetchJson(url, apiKey, signal, postBody) {
+    if (postBody !== undefined && String(url).slice(-(REFRESH_PATH.length + 5)) !== REFRESH_PATH + '/jobs')
+      throw Error('COVERAGE_POST_NOT_ALLOWED');
+    const resp = await fetch(url, postBody === undefined ? { method: 'GET', cache: 'no-store',
+      headers: { 'x-api-key': apiKey, 'Accept': 'application/json' }, signal }
+      : { method: 'POST', cache: 'no-store', body: JSON.stringify(postBody),
+        headers: { 'x-api-key': apiKey, 'Accept': 'application/json', 'Content-Type': 'application/json' }, signal });
     let json = null;
     try { json = await resp.json(); } catch (_) { json = null; }
     if (resp.ok && json) return json;
@@ -704,13 +813,17 @@
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
+    let refreshCurrent = null, refreshTimer = null, refreshAttempted = false;
     const view = { search: '', availability: '', spread: '', dividend: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
     function close() {
       if (current) current.abort();
       if (detailCurrent) detailCurrent.abort();
       if (recoveryCurrent) recoveryCurrent.abort();
+      if (refreshCurrent) refreshCurrent.abort();
+      if (refreshTimer) clearTimeout(refreshTimer);
       current = null; detailCurrent = null; recoveryCurrent = null; busy = false; data = null;
+      refreshCurrent = null; refreshTimer = null; refreshAttempted = false;
       if (host) { host.remove(); host = null; }
       trigger.focus();
     }
@@ -750,15 +863,17 @@
         '</style><div class="shade"></div><section class="panel" role="dialog" aria-modal="true"' +
         ' aria-label="Volatility Coverage and Spread Monitor"><header><h2>Volatility Coverage &amp; Spread Monitor · DEV</h2>' +
         '<button class="close" type="button" id="close">Chiudi</button></header>' +
-        '<p class="note">Sola lettura, nessun polling. IV Ref = IV della scadenza Regular selezionata (~40 DTE) del pilot IV;' +
+        '<p class="note">IV Ref = IV della scadenza Standard/Regular più vicina a 40 DTE, acquisita dal job DEV dell’intero' +
+        ' universo (o dal pilot IV se il job non è disponibile);' +
         ' IV Market, IV30, IVR non la sostituiscono mai. Spread = 100 × (IV Ref − RV) in punti percentuali, arrotondati solo' +
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
         '<button type="button" id="run">Analizza universo</button> ' +
+        '<button type="button" id="refresh-run" disabled>Nuova acquisizione IV</button> ' +
         '<button type="button" id="recovery-run">Stato recupero candele 1D</button> ' +
         '<button type="button" id="csv" disabled>Esporta CSV</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
-        '<div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
+        '<div id="refresh"></div><div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
         '<input id="search" type="search" placeholder="Cerca simbolo" aria-label="Cerca simbolo">' +
         '<select id="availability" aria-label="Disponibilità"><option value="">Disponibilità: tutte</option>' +
         '<option value="IVREF_YES">IV Ref disponibile</option><option value="IVREF_NO">IV Ref mancante</option>' +
@@ -784,6 +899,76 @@
       const $ = id => root.getElementById(id);
       const run = $('run'), csv = $('csv'), state = $('state'), detail = $('detail');
       const recovery = $('recovery'), recoveryRun = $('recovery-run');
+      const refresh = $('refresh'), refreshRun = $('refresh-run');
+      const refreshIdle = () => !refreshCurrent && !refreshTimer;
+      // Start — or reuse — the backend refresh job of the universe just read. `force` asks for a NEW acquisition after a
+      // concluded one; the backend refuses duplicates (one running job per universe, and a minimum interval).
+      async function startRefresh(force) {
+        if (!refreshIdle() || !data || typeof S === 'undefined' || !S.backendKey) return;
+        const controller = new AbortController();
+        refreshCurrent = controller;
+        const runHost = host;
+        refreshRun.disabled = true;
+        const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        let job = null;
+        try {
+          const body = { universeDigest: data.universe.digest };
+          if (force) body.force = true;
+          const result = await fetchJson(BACKEND + REFRESH_PATH + '/jobs', S.backendKey, controller.signal, body);
+          if (refreshCurrent !== controller || host !== runHost) return;
+          job = checkRefreshJob(result.job);
+          refresh.innerHTML = renderRefreshStatus(job, { created: result.created === true, reused: result.reused });
+        } catch (error) {
+          if (refreshCurrent !== controller || host !== runHost) return;
+          refresh.innerHTML = '<p class="error">' + esc(controller.signal.aborted ? 'Richiesta di refresh IV annullata o scaduta.'
+            : 'Refresh IV non avviato: ' + ((error && error.message) || 'errore')) + ' I valori mostrati restano quelli già letti.</p>';
+        } finally {
+          clearTimeout(timeout);
+          if (refreshCurrent === controller && host === runHost) {
+            refreshCurrent = null;
+            if (job && job.state === 'RUNNING') schedulePoll(job.jobId, 0);
+            else refreshRun.disabled = !data;
+          }
+        }
+      }
+      // Status polling of one job: GET only, never an acquisition; stops on close, on error, at the end or after an hour.
+      function schedulePoll(jobId, count) {
+        const runHost = host;
+        if (count >= REFRESH_MAX_POLLS) {
+          refresh.innerHTML += '<p class="warn">Aggiornamento dello stato sospeso dopo un’ora: riapri il pannello per ricollegarti.</p>';
+          refreshRun.disabled = !data;
+          return;
+        }
+        refreshTimer = setTimeout(() => { refreshTimer = null; if (host === runHost) void pollRefresh(jobId, count + 1); }, REFRESH_POLL_MS);
+      }
+      async function pollRefresh(jobId, count) {
+        const controller = new AbortController();
+        refreshCurrent = controller;
+        const runHost = host;
+        const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        let job = null;
+        try {
+          const result = await fetchJson(BACKEND + REFRESH_PATH + '/jobs/' + encodeURIComponent(jobId), S.backendKey, controller.signal);
+          if (refreshCurrent !== controller || host !== runHost) return;
+          job = checkRefreshJob(result.job);
+          refresh.innerHTML = renderRefreshStatus(job, {});
+        } catch (error) {
+          if (refreshCurrent !== controller || host !== runHost) return;
+          refresh.innerHTML = '<p class="error">' + esc('Stato del refresh IV non leggibile: ' + ((error && error.message) || 'errore') +
+            '. Nessun nuovo tentativo automatico.') + '</p>';
+        } finally {
+          clearTimeout(timeout);
+          if (refreshCurrent === controller && host === runHost) {
+            refreshCurrent = null;
+            if (job && job.state === 'RUNNING') schedulePoll(jobId, count);
+            else {
+              refreshRun.disabled = !data;
+              if (job) void analyze();   // one re-read with the concluded job's results
+            }
+          }
+        }
+      }
+      refreshRun.addEventListener('click', () => startRefresh(true));
       $('close').addEventListener('click', close);
       root.querySelector('.shade').addEventListener('click', close);
       function draw() {
@@ -872,13 +1057,14 @@
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 0);
       });
-      run.addEventListener('click', async () => {
+      run.addEventListener('click', () => analyze());
+      async function analyze() {
         if (busy) return;
         if (typeof S === 'undefined' || !S.backendKey) {
           state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
           return;
         }
-        busy = true; run.disabled = true; csv.disabled = true; data = null;
+        busy = true; run.disabled = true; csv.disabled = true; data = null; refreshRun.disabled = true;
         $('summary').innerHTML = ''; $('table').innerHTML = ''; detail.innerHTML = ''; $('count').textContent = '';
         $('filters').hidden = true; state.className = 'info';
         const controller = new AbortController();
@@ -913,8 +1099,11 @@
           $('filters').hidden = false;
           draw();
           csv.disabled = false;
+          const withIv = data.rows.filter(r => num(r.ivRef.value) !== null).length;
           state.textContent = 'Completato: ' + data.rows.length + ' titoli in ' + pages.length +
-            ' pagine. Nessun valore stimato o sostituito.';
+            ' pagine · IV Ref presente per ' + withIv + '. Nessun valore stimato o sostituito.';
+          if (refreshIdle()) refreshRun.disabled = false;
+          if (!refreshAttempted) { refreshAttempted = true; void startRefresh(false); }
         } catch (error) {
           if (current !== controller || host !== runHost) return;
           state.textContent = signal.aborted ? 'Richiesta annullata o scaduta (' + TIMEOUT_MS / 1000 + ' s per pagina).'
@@ -926,9 +1115,11 @@
             run.disabled = false; busy = false; current = null;
           }
         }
-      });
+      }
       document.body.appendChild(host);
       run.focus();
+      // Opening the panel shows the latest available data at once; the refresh request follows the first complete read.
+      void analyze();
     }
     trigger.addEventListener('click', open);
     document.body.appendChild(trigger);
@@ -937,7 +1128,8 @@
     module.exports = { devContext, checkPage, combinePages, summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
-      fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS };
+      fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
+      REFRESH_PATH, REFRESH_POLL_MS, REFRESH_MAX_POLLS };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')

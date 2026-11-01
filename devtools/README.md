@@ -109,9 +109,11 @@ authenticated GET**, does not save tokens, and makes no trading decision.
 
 ## Volatility Coverage & Spread Monitor (DEV)
 
-`devtools/volatility-coverage-monitor.js` is a second on-demand, **read-only** panel, under the same rules as the RV
-panel above: the session's `S.backendKey` sent only as a request header, GET only, no storage, no polling. The module
-itself changes neither `index.html` nor `js/**`. Its gate is the RV panel's (exact hostname and exact DEV backend URL)
+`devtools/volatility-coverage-monitor.js` is a second on-demand DEV panel. It is **not entirely read-only**: besides its
+GET reads, each opening sends **one** authenticated POST that starts or reuses the backend's full-universe IV refresh
+job, and the backend runner then writes that job and its observations to the backend store. It places no order and
+makes no trading decision. The session's `S.backendKey` is sent only as a request header, nothing is stored in the
+browser, and there is no streaming. The module itself changes neither `index.html` nor `js/**`. Its gate is the RV panel's (exact hostname and exact DEV backend URL)
 plus one exact host, the dev-clean branch deploy `dev-clean--spontaneous-queijadas-118823.netlify.app`, so it can be used
 every day on the stable DEV URL; the production hostname and every other branch deploy are refused. Load it from the
 Console of an authorised DEV host:
@@ -120,8 +122,9 @@ Console of an authorised DEV host:
 (()=>{if(document.getElementById('apex-vol-coverage-launcher'))return;const s=document.createElement('script');s.src='/devtools/volatility-coverage-monitor.js';document.head.appendChild(s);})();
 ```
 
-Then click **IV − RV · DEV** and **Analizza universo**. The panel reads `GET /debug/volatility-carry/coverage` 25 symbols
-at a time, in sequence. From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
+Then click **IV − RV · DEV**. Opening the panel reads `GET /debug/volatility-carry/coverage` at once, 25 symbols at a
+time, in sequence; **Analizza universo** joins a read in progress and otherwise reads again, without a new POST.
+From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
 session date or IV date changes midway is refused. The read is **not an atomic snapshot**: each page is computed at
 its own reference instant (its `generatedAt`). The CSV gives every row the instant of its page (`page_generated_at`:
 the same for all the rows of a page, not the moment each symbol was read), and a change of the IV pilot state
@@ -130,11 +133,48 @@ applies to each page. Clicking a symbol reads
 `GET /debug/volatility-carry/coverage/:symbol` once. These endpoints come from the matching `apex-backend` change; until
 that change runs on DEV, the panel says *Endpoint non ancora disponibile*.
 
+### Full-universe IV refresh job (started or reused on opening)
+
+After the first complete read of an opening, the panel sends **one** authenticated
+`POST /debug/volatility-carry/iv-refresh/jobs` with `{"universeDigest": "<digest of the read>"}`. The module refuses a
+POST to any other URL before a request is made. The backend answers with the job it started or reused, and the panel
+says which:
+
+- a job of this digest that is `RUNNING` is reused (`reused: "ACTIVE"`): the panel reconnects to it;
+- a `COMPLETE`, `PARTIAL` or `FAILED` job of this digest is reused (`reused: "RECENT"`) only if its `finished_at` is
+  **less than 5 minutes** ago (the backend's `minRefreshIntervalMs`, set in `apex-backend` `server.js`). It is never
+  presented as a new acquisition;
+- otherwise — 5 minutes or more after `finished_at`, after an `INTERRUPTED` job, or with no earlier job — the backend
+  starts a **new acquisition of the whole universe** (HTTP 202). The first DEV job took about 10 minutes for 319 symbols.
+
+**Nuova acquisizione IV** sends the same POST with `force: true`. Within 60 seconds of a job's `finished_at` (the
+backend's `forceMinIntervalMs`) the backend answers **HTTP 200 reusing that `RECENT` job**, not necessarily HTTP 429;
+later it starts a new job, and a `RUNNING` job is reused even with `force`. The button is disabled while a job runs
+or a request is in flight, so a double click sends one request.
+
+While the job is `RUNNING`, the panel polls only `GET /debug/volatility-carry/iv-refresh/jobs/:jobId`, every 5 s, for
+at most one hour; polling stops when the panel is closed (in-flight requests are aborted), on the first error, and when
+the job ends. When the job ends, the panel reads the coverage again **once**; it sends no second POST. A 403/404 from an
+old or disabled backend is shown once, without a retry, and the values already read stay on screen. While the pages
+are read, a job that progresses or changes is stated as `IV_REFRESH_PROGRESSED_DURING_READ` or
+`IV_REFRESH_JOB_CHANGED_DURING_READ`.
+
+What a job acquires (backend `volatility-carry-iv-refresh-acquire.js`): the option-chain **structure** of a symbol
+may be reused for up to 24 hours (while it still has a future Regular expiry), but the Standard/Regular expiry nearest
+40 DTE is **selected again** with that day's New York date, and the **IV is requested again** from Tastytrade
+market-metrics on every job for every selected symbol, matched to that exact expiry only. `fetchedAt` is the time APEX
+fetched the value; it does **not** attest that Tastytrade recalculated that IV (`providerAsOf` stays empty and
+`providerUpdateAttested` is `false`). The `IV_RV_TIMING_V1` comparability verdict is based on `fetchedAt` and the
+market calendar only.
+
 What it shows (every value is the backend's):
 
-- **IV Ref**: the IV pilot's selected Regular expiry nearest 40 DTE, and nothing else. *IV Market* (the scanner's
-  Tastytrade IV index, when the page holds it) is shown apart as informational only. It never enters a spread and never
-  replaces a missing IV Ref.
+- **IV Ref**: the IV of the selected Standard/Regular expiry nearest 40 DTE, and nothing else. It comes from the
+  full-universe refresh job when the backend has one for the current universe digest (`ivMode: FULL_UNIVERSE_REFRESH`);
+  otherwise the IV pilot remains the fallback (`IV_PILOT`). Each refresh row says whether its IV belongs to the current
+  job, when APEX fetched it, and the `IV_RV_TIMING_V1` verdict; an IV of an earlier job is shown only as history,
+  excluded from the spreads. *IV Market* (the scanner's Tastytrade IV index, when the page holds it) is shown apart as
+  informational only. IV30 and IVR never stand in for it. It never enters a spread and never replaces a missing IV Ref.
 - **RV20 / RV60**: labelled *certificata*, *preliminare* or *esplorativa*. An exploratory RV is never compared with IV.
   The last certified RV of the daily store is shown separately and never used for the current spread.
 - **IV − RV20 / IV − RV60**: the backend's `100 × (ivRef − rv)` in percentage points, rounded to 2 decimals **only on
@@ -148,6 +188,12 @@ What it shows (every value is the backend's):
 - Detail: the counts of each 21 / 61-session window, and every session in it that is not validated. *Absent*, *present
   but structurally invalid*, *valid but not final* and *not REGULAR* are kept as separate facts. The detail also shows
   the corporate-action status and the IV timing and census. It never estimates how many days would make a window valid.
+
+The CSV has one row per symbol at full precision. The 22 acquisition-provenance columns (`iv_mode`,
+`iv_refresh_job_id` … `iv_last_successful_job_id`, including `iv_fetched_at`, `iv_provider_as_of`,
+`iv_timing_policy_version` and `iv_provider_update_attested`) are appended **after** every earlier column, which keep
+their positions. `iv_last_successful*` is the last successful IV of the symbol, kept apart from `iv_ref`;
+`iv_ref_from_current_job` says whether `iv_ref` is the current job's own observation.
 
 The summary counters are counts of the rows read. *Dati insufficienti* means at least one window without any RV.
 *Problemi candele* means the backend's `candleQuality.issues` flag.
