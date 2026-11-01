@@ -13,6 +13,31 @@
   const SYMBOL = /^[A-Z0-9][A-Z0-9.\-]{0,15}$/;
   const DAY = /^\d{4}-\d{2}-\d{2}$/;
   const STATUSES = ['COMPLETE', 'PARTIAL', 'UNAVAILABLE', 'STALE', 'ERROR'];
+  const AUDIT_STATES = ['COMPLETE', 'IN_PROGRESS', 'NOT_RECORDED', 'DISABLED', 'ERROR'];
+  const AUDIT_REVIEW = ['INVALID_DATA', 'UNRESOLVED', 'IN_RANGE_UNDETERMINED', 'NO_EVENT'];
+  const AUDIT_STATE_TEXT = {
+    COMPLETE: 'storico completato',
+    IN_PROGRESS: 'scansione in corso',
+    NOT_RECORDED: 'evidenze non registrate',
+    DISABLED: 'audit disabilitato',
+    ERROR: 'evidenze non leggibili',
+  };
+  // Audit compatibility is NEVER an ex-dividend-date verification, price correction or RV certification.
+  function dividendAuditOf(row) {
+    const raw = row && row.dividendAudit;
+    if (!raw || !AUDIT_STATES.includes(raw.state)) return { state: 'NOT_REPORTED', counts: null, total: null };
+    const reported = raw.state === 'COMPLETE' || raw.state === 'IN_PROGRESS';
+    const counts = raw.counts;
+    const valid = reported && Number.isSafeInteger(raw.total) && raw.total >= 0 && counts &&
+      ['DIVIDEND_COMPATIBLE', ...AUDIT_REVIEW].every(k => Number.isSafeInteger(counts[k]) && counts[k] >= 0) &&
+      Object.values(counts).every(v => Number.isSafeInteger(v) && v >= 0) &&
+      Object.values(counts).reduce((a, b) => a + b, 0) === raw.total;
+    return {state: reported && !valid ? 'ERROR' : raw.state,
+      counts: valid ? counts : null, total: valid ? raw.total : null,
+      evidenceDate: raw.evidenceDate ?? null, completedDay: raw.completedDay ?? null};
+  }
+  const dividendReviewCount = a => a.counts ? AUDIT_REVIEW.reduce((sum, key) => sum + a.counts[key], 0) : null;
+  const dividendAuditLabel = state => AUDIT_STATE_TEXT[state] || 'non riportato';
   const SCRIPT_BACKEND = 'https://apex-tastytrade-backend-dev-production.up.railway.app';
   const TIMEOUT_MS = 20000;
   const RECOVERY_PATH = '/dev/market/candles/store/recovery-always-on';
@@ -207,6 +232,13 @@
     COMPLETE: complete, INCOMPLETE: r => !complete(r),
     CERTIFIED_PAIR: certifiedPair, DXLINK_PAIR: dxlinkPair, PROBLEMS: hasProblem,
   };
+  const DIVIDEND_FILTER = {
+    FINDINGS: r => dividendAuditOf(r).total > 0,
+    COMPATIBLE: r => (dividendAuditOf(r).counts?.DIVIDEND_COMPATIBLE ?? 0) > 0,
+    REVIEW: r => (dividendReviewCount(dividendAuditOf(r)) ?? 0) > 0,
+    NO_FINDINGS: r => { const a = dividendAuditOf(r); return a.state === 'COMPLETE' && a.total === 0; },
+    UNAVAILABLE: r => { const a = dividendAuditOf(r); return a.state !== 'COMPLETE'; },
+  };
   const SPREAD = {
     IV_GT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) > 0,
     IV_LT_RV20: r => spreadOf(r, 20) !== null && spreadOf(r, 20) < 0,
@@ -222,7 +254,8 @@
       (!opt.availability || (AVAILABILITY[opt.availability] && AVAILABILITY[opt.availability](r))) &&
       (!opt.spread || (SPREAD[opt.spread] && SPREAD[opt.spread](r))) &&
       (!opt.status || r.status === opt.status) &&
-      (!opt.reason || r.reasons.includes(opt.reason)));
+      (!opt.reason || r.reasons.includes(opt.reason)) &&
+      (!opt.dividend || (DIVIDEND_FILTER[opt.dividend] && DIVIDEND_FILTER[opt.dividend](r))));
   }
   const SORT_KEYS = {
     position: r => r.universePosition, symbol: r => r.symbol, status: r => STATUSES.indexOf(r.status),
@@ -302,6 +335,15 @@
     ['candle_issues', r => r.candleQuality ? r.candleQuality.issues : null],
     ['census_state', r => r.ivRef.censusState], ['historical_state', r => (r.historicalCertified || {}).state],
     ['evidence_available', r => (r.evidence || {}).available], ['evidence_error', r => (r.evidence || {}).error],
+    ['dividend_audit_state', r => dividendAuditOf(r).state],
+    ['dividend_audit_date', r => dividendAuditOf(r).evidenceDate],
+    ['dividend_audit_completed_day', r => dividendAuditOf(r).completedDay],
+    ['dividend_audit_total', r => dividendAuditOf(r).total],
+    ['dividend_compatible', r => dividendAuditOf(r).counts?.DIVIDEND_COMPATIBLE],
+    ['dividend_invalid_data', r => dividendAuditOf(r).counts?.INVALID_DATA],
+    ['dividend_unresolved', r => dividendAuditOf(r).counts?.UNRESOLVED],
+    ['dividend_in_range_undetermined', r => dividendAuditOf(r).counts?.IN_RANGE_UNDETERMINED],
+    ['dividend_no_event', r => dividendAuditOf(r).counts?.NO_EVENT],
     ['errors', r => Object.entries(r.errors || {}).map(([k, v]) => k + ': ' + v).join(' | ')],
   ];
   function toCsv(data, ivCache) {
@@ -321,6 +363,33 @@
   }
 
   // ── rendering ──────────────────────────────────────────────────────────────────────────────────────────────────
+  function dividendAuditSummary(data) {
+    const src = data.sources?.dividendAudit;
+    const state = src && AUDIT_STATES.includes(src.state) ? src.state : 'NOT_REPORTED';
+    const sourceTotal = Number.isSafeInteger(src?.evidenceCount) && src.evidenceCount >= 0 ? src.evidenceCount : null;
+    const known = data.rows.map(dividendAuditOf).filter(a => a.total !== null);
+    const total = known.reduce((v,a) => v + a.total, 0);
+    const compatible = known.reduce((v,a) => v + a.counts.DIVIDEND_COMPATIBLE, 0);
+    const review = known.reduce((v,a) => v + dividendReviewCount(a), 0);
+    const allComplete = state === 'COMPLETE' && known.length === data.rows.length &&
+      known.every(a => a.state === 'COMPLETE') &&
+      !(data.warnings || []).includes('SOURCES_CHANGED_DURING_READ');
+    const period = src?.evidenceDate ? ' · riferimento ' + esc(src.evidenceDate) : '';
+    const completed = src?.completedDay ? ' · completata ' + esc(src.completedDay) : '';
+    const values = known.length ?
+      '<p>Rilievi dei titoli nel monitor' + (allComplete ? '' : ' (parziali)') + ': <strong>' + esc(total) +
+      '</strong> · compatibili <strong>' + esc(compatible) + '</strong> · da approfondire <strong>' +
+      esc(review) + '</strong> · copertura ' + esc(known.length) + '/' + esc(data.rows.length) + ' titoli.</p>' :
+      '<p>Evidenze per simbolo non disponibili: nessun conteggio dedotto.</p>';
+    return '<section class="audit-summary" aria-label="Audit dividendi informativo">' +
+      '<h3>Audit dividendi · diagnostica separata</h3><p>Stato: <strong>' +
+      esc(dividendAuditLabel(state)) + '</strong>' + period + completed +
+      (sourceTotal !== null ? ' · ' + esc(sourceTotal) + ' rilievi nello storico audit complessivo' : '') +
+      '</p>' + values +
+      (!allComplete ? '<p class="warn">Audit incompleto o non uniforme: questi conteggi non provano la copertura definitiva dell’universo.</p>' : '') +
+      '<p class="note">Compatibilità numerica NON significa data ex-dividendo verificata, prezzo corretto o RV20/RV60 certificata.</p>' +
+      '</section>';
+  }
   function renderSummary(data) {
     const s = summarize(data.rows);
     const split = w => w.any + ' <span class="sub">(C ' + w.CERTIFIED + ' · P ' + w.PRELIMINARY + ' · E ' + w.EXPLORATORY + ')</span>';
@@ -339,7 +408,7 @@
     const evidenceState = x => !x ? 'non riportato' : x.error ? 'ERRORE: ' + x.error : x.available === true ? 'disponibili'
       : x.available === false ? 'non disponibili' + (x.reason ? ' (' + x.reason + ')' : '') : 'stato non dichiarato';
     return '<div class="stats">' + cards.map(([name, value]) => '<div class="metric"><span>' + esc(name) +
-      '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal +
+      '</span><strong>' + (typeof value === 'number' ? esc(value) : value) + '</strong></div>').join('') + '</div>' + equal + dividendAuditSummary(data) +
       '<p class="note">C/P/E = certificata APEX / da store 1D senza certificazione / esplorativa non confrontabile.' +
       ' Spread disponibili = entrambi i confronti IV−RV calcolati, anche se la certificazione APEX non è completata.' +
       ' Con RV da store 1D = almeno uno spread non certificato, ricavato da chiusure presenti e strutturalmente utilizzabili:' +
@@ -438,6 +507,17 @@
     return '<span class="nw">RV ' + esc(a.rvSessionDate || '—') + '</span>' + (a.ivAsOfDate ? '<div class="sub nw">IV ' + esc(a.ivAsOfDate) +
       (a.datesDiffer ? ' <span class="warn">≠ data RV</span>' : '') + '</div>' : '');
   }
+  function dividendAuditCell(row) {
+    const a = dividendAuditOf(row);
+    if (a.total === null) return '<span class="na">—</span><div class="sub">' +
+      esc(dividendAuditLabel(a.state)) + '</div>';
+    const compatible = a.counts.DIVIDEND_COMPATIBLE, review = dividendReviewCount(a);
+    return '<strong>' + esc(a.total) + '</strong> <span class="sub">rilievi' +
+      (a.state === 'IN_PROGRESS' ? ' finora' : '') + '</span>' +
+      (compatible ? '<div class="sub">compatibili ' + esc(compatible) + '</div>' : '') +
+      (review ? '<div class="warn">da verificare ' + esc(review) + '</div>' : '') +
+      (a.state === 'IN_PROGRESS' ? '<div class="warn">scansione non completata</div>' : '');
+  }
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
   function renderTable(rows, sort, ivCache) {
     const head = ['Titolo', 'IV Ref', 'RV20', 'RV60'].map(h => '<th scope="col">' + esc(h) + '</th>').join('') +
@@ -447,7 +527,7 @@
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
       }).join('') +
-      ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Riferimento', 'Stato']
+      ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
       esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td><td>' + rvCell(r.rv20) +
@@ -455,11 +535,11 @@
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
-      asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) +
+      dividendAuditCell(r) + '</td><td>' + asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) +
       '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
         '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="13">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="14">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
@@ -526,6 +606,30 @@
           (s.regularForm && s.regularForm.state ? ' · forma Regular ' + esc(s.regularForm.state) : '') + '</li>').join('') +
         '</ul></details>' : '<p>Tutte le ' + esc(n + 1) + ' sedute della finestra sono validate.</p>');
   }
+  function renderDividendDetail(detail) {
+    const a=dividendAuditOf({dividendAudit:detail?.dividendAudit});
+    const raw=detail?.dividendAudit;
+    const source=detail?.sources?.dividendAudit;
+    const date=a.evidenceDate ? ' · riferimento ' + esc(a.evidenceDate) : '';
+    const total=a.total === null ? 'Conteggi non disponibili' : esc(a.total) + ' rilievi' +
+      (a.state === 'IN_PROGRESS' ? ' rilevati finora' : '');
+    const findings=Array.isArray(raw?.findings) ? raw.findings.slice(0,50) : [];
+    const list=a.total === null ? '' : findings.length ? '<ul class="reasons">' + findings.map(f =>
+      '<li><code>' + esc(f.timestamp ?? '—') + '</code> · <strong>' + esc(f.status ?? '—') +
+      '</strong>' + (f.reason ? ' · ' + esc(f.reason) : '') +
+      (num(f.amount) !== null ? ' · importo ' + esc(f.amount) : '') +
+      (f.eventDate ? ' · evento provider ' + esc(f.eventDate) : '') +
+      (f.dateSemantics ? ' · <code>' + esc(f.dateSemantics) + '</code>' : '') + '</li>').join('') + '</ul>' :
+      '<p>Nessun rilievo elencato per il simbolo' +
+      (a.state === 'COMPLETE' ? ' nel ciclo completato.' : ' finora.') + '</p>';
+    return '<section class="audit-detail"><h4>Audit dividendi · solo diagnostica</h4>' +
+      '<p>Stato: <strong>' + esc(dividendAuditLabel(a.state)) + '</strong>' + date + ' · ' + total + '</p>' +
+      (!raw && source?.state ? '<p class="sub">Fonte: ' + esc(dividendAuditLabel(source.state)) + '</p>' : '') +
+      (a.state !== 'COMPLETE' ? '<p class="warn">Storico non attestato come completo: dati mancanti non equivalgono a zero eventi.</p>' : '') +
+      list + (raw?.findingsTruncated === true ? '<p class="warn">Elenco limitato ai primi 50 rilievi per simbolo.</p>' : '') +
+      '<p class="note">DIVIDEND_COMPATIBLE significa soltanto compatibilità numerica: la data ex-dividendo NON è verificata.' +
+      ' L’audit NON modifica OHLC, finalità RV o spread.</p></section>';
+  }
   function renderDetail(detail, ivCache) {
     if (!detail || detail.ok !== true || detail.version !== VERSION || detail.readOnly !== true ||
         detail.executionAuthorized !== false || !detail.row || detail.row.symbol !== detail.symbol ||
@@ -558,7 +662,7 @@
       spreadLine('IV − RV60', r.spreads.ivMinusRv60Pp) + '</ul>' +
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
-      '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
+      renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
         ') · sedute duplicate ' + esc(cq.duplicateSessions) + '</p>' : '<p class="warn">Non verificabile.</p>') +
@@ -600,7 +704,7 @@
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
-    const view = { search: '', availability: '', spread: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
+    const view = { search: '', availability: '', spread: '', dividend: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
     function close() {
       if (current) current.abort();
@@ -628,7 +732,7 @@
         '.metric{background:#1b3442;padding:8px 9px;border-radius:7px;min-width:118px}' +
         '.metric span,.metric strong{display:block}.metric span{font-size:11px;color:#b6cbd3}' +
         '.metric strong{font-size:19px;margin-top:2px}.scroll{overflow:auto;max-height:62vh}' +
-        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1400px}' +
+        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1550px}' +
         'th,td{padding:8px;border-bottom:1px solid #36505e;vertical-align:top}' +
         'th{color:#fff}thead th{background:#213744;position:sticky;top:0;z-index:1}' +
         '.sort,.sym{background:none;padding:0;color:#9fe3d8;font-weight:600;font-size:12px}' +
@@ -642,6 +746,7 @@
         'color:#d9e6eb;border:1px solid #36505e;border-radius:6px;padding:7px;font-size:12px}' +
         '.reasons{margin:4px 0 4px 18px;padding:0}code{overflow-wrap:anywhere;color:#e4edf1}' +
         '#detail{border-top:1px solid #36505e;margin-top:14px}.nw{white-space:nowrap}' +
+        '.audit-summary,.audit-detail{border:1px solid #395462;border-radius:8px;padding:9px 12px;margin:10px 0}' +
         '</style><div class="shade"></div><section class="panel" role="dialog" aria-modal="true"' +
         ' aria-label="Volatility Coverage and Spread Monitor"><header><h2>Volatility Coverage &amp; Spread Monitor · DEV</h2>' +
         '<button class="close" type="button" id="close">Chiudi</button></header>' +
@@ -668,6 +773,10 @@
         '<option value="IV_GT_RV20">IV &gt; RV20</option><option value="IV_LT_RV20">IV &lt; RV20</option>' +
         '<option value="IV_GT_RV60">IV &gt; RV60</option><option value="IV_LT_RV60">IV &lt; RV60</option>' +
         '<option value="ANY_POSITIVE">Almeno uno spread positivo</option><option value="ANY_NEGATIVE">Almeno uno spread negativo</option></select>' +
+        '<select id="dividend" aria-label="Audit dividendi"><option value="">Audit dividendi: tutti</option>' +
+        '<option value="FINDINGS">Con rilievi</option><option value="COMPATIBLE">Compatibili</option>' +
+        '<option value="REVIEW">Da approfondire</option><option value="NO_FINDINGS">Nessun rilievo (audit completo)</option>' +
+        '<option value="UNAVAILABLE">Audit parziale o non disponibile</option></select>' +
         '<select id="status" aria-label="Stato"><option value="">Stato: tutti</option>' +
         STATUSES.map(s => '<option value="' + s + '">' + s + '</option>').join('') + '</select>' +
         '<select id="reason" aria-label="Codice motivo"><option value="">Motivo: tutti</option></select></div>' +
@@ -683,7 +792,7 @@
         $('count').textContent = rows.length + ' di ' + data.rows.length + ' titoli mostrati.';
         $('table').innerHTML = renderTable(rows, view.sort, ivCache());
       }
-      for (const id of ['search', 'availability', 'spread', 'status', 'reason']) {
+      for (const id of ['search', 'availability', 'spread', 'dividend', 'status', 'reason']) {
         $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { view[id] = $(id).value; draw(); });
       }
       $('table').addEventListener('click', event => {
@@ -826,7 +935,8 @@
   }
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, summarize, filterRows, sortRows, reasonCodes, reasonText,
-      formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, renderTable, sessionFacts, renderDetail,
+      formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
+      dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
