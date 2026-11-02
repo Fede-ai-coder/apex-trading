@@ -1558,7 +1558,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="14"/);
+  assert.match(ui.renderTable([],null,{}),/colspan="17"/,
+    'empty-row span covers all 17 columns, including IV20/IV40/IV60');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
