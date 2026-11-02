@@ -98,7 +98,9 @@ jobs:
           fail=0
           for f in tests/*.test.js; do
             if ! node "$f" > /tmp/out.log 2>&1; then
+              echo "FAILED_SUITE=$f"
               echo "::error file=$f::suite failed"
+              awk '/^not ok [0-9]+ - /{n=45} n>0{print;n--}' /tmp/out.log
               tail -40 /tmp/out.log
               fail=1
             fi
