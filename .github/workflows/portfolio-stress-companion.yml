@@ -91,6 +91,10 @@ jobs:
       - name: null safety
         run: node tests/portfolio-stress-null-safety.test.js
 
+      # Temporary focused diagnostic: show the COMPLETE TAP assertion, without the full suite's tail truncation.
+      - name: pinpoint Coverage monitor assertion (temporary diagnostic)
+        run: node tests/dashboard-market-scanner-layout.test.js
+
       # On node 22 the full suite must be GREEN — no exceptions, no allowances.
       - name: full frontend suite (node 22)
         if: matrix.node == '22'
