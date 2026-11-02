@@ -69,6 +69,11 @@
     const p = job.progress;
     const origin = meta.created ? 'Nuova acquisizione IV avviata.'
       : meta.reused === 'ACTIVE' ? 'Acquisizione IV già in corso: pannello ricollegato allo stesso job.'
+      // After «Nuova acquisizione IV» (force) the backend reuses a job finished less than 60 s ago: say so, without
+      // inviting the click that was just made. The panel's own opening keeps the ordinary reuse wording.
+      : meta.reused === 'RECENT' && meta.force ? 'Nessuna nuova acquisizione: l’ultima acquisizione IV è terminata da meno' +
+        ' di 60 secondi (job concluso il ' + esc(job.finishedAt || '—') + '). Per evitare richieste duplicate vengono' +
+        ' mostrati i risultati già disponibili; una nuova acquisizione potrà essere richiesta al termine di questo intervallo.'
       : meta.reused === 'RECENT' ? 'Nessuna nuova acquisizione: riuso del job concluso il ' + esc(job.finishedAt || '—') +
         ' (concluso da meno dell’intervallo minimo del backend). Usa «Nuova acquisizione IV» per richiederne una.' : '';
     return '<section class="refresh" aria-label="Refresh IV Ref intero universo"><p><strong>IV Ref intero universo · ' +
@@ -917,7 +922,7 @@
           const result = await fetchJson(BACKEND + REFRESH_PATH + '/jobs', S.backendKey, controller.signal, body);
           if (refreshCurrent !== controller || host !== runHost) return;
           job = checkRefreshJob(result.job);
-          refresh.innerHTML = renderRefreshStatus(job, { created: result.created === true, reused: result.reused });
+          refresh.innerHTML = renderRefreshStatus(job, { created: result.created === true, reused: result.reused, force: force === true });
         } catch (error) {
           if (refreshCurrent !== controller || host !== runHost) return;
           refresh.innerHTML = '<p class="error">' + esc(controller.signal.aborted ? 'Richiesta di refresh IV annullata o scaduta.'

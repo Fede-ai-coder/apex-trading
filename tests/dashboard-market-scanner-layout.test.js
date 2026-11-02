@@ -941,6 +941,9 @@ async function testCoverageLifecycle() {
   await tick(); await tick();
   assert.match(second.refresh.innerHTML, /Nessuna nuova acquisizione: riuso del job concluso il 2026-10-26T13:08:00\.000Z/,
     'a reused job is declared as such, never as a new acquisition');
+  // The panel OPENED (automatic request, no force): the ordinary reuse wording, never the post-force one.
+  assert.match(second.refresh.innerHTML, /Usa «Nuova acquisizione IV» per richiederne una\./, 'automatic reuse keeps its wording');
+  assert.doesNotMatch(second.refresh.innerHTML, /meno di 60 secondi|richieste duplicate/, 'the force-only wording is not shown on opening');
   assert.match(second.refresh.innerHTML, /Elaborati <strong>60\/60<\/strong> · con IV valida <strong>60<\/strong>/);
   assert.equal(second['refresh-run'].disabled, false, 'a new acquisition can be requested explicitly');
   assert.match(second.state.textContent, /Completato: 60 titoli in 3 pagine · IV Ref presente per \d+\./);
@@ -1082,6 +1085,13 @@ async function testCoverageLifecycle() {
   requests[16].resolve(ok({ ok: true, created: false, reused: 'RECENT', superseded: [], job: smallJob('COMPLETE', 3) }));
   await tick(); await tick();
   assert.match(fifth.refresh.innerHTML, /Nessuna nuova acquisizione/, 'a refused explicit request is declared, not hidden');
+  // The user has JUST pressed «Nuova acquisizione IV»: the panel says why nothing new started and never invites the same
+  // click again within the backend's 60 s duplicate guard.
+  assert.match(fifth.refresh.innerHTML, /Nessuna nuova acquisizione: l’ultima acquisizione IV è terminata da meno di 60 secondi/, 'the reason is stated');
+  assert.match(fifth.refresh.innerHTML, /\. Per evitare richieste duplicate vengono mostrati i risultati già disponibili;/);
+  assert.match(fifth.refresh.innerHTML, /al termine di questo intervallo/);
+  assert.doesNotMatch(fifth.refresh.innerHTML, /Usa «Nuova acquisizione IV»/, 'no invitation to press the same button again');
+  assert.doesNotMatch(fifth.refresh.innerHTML, /Nuova acquisizione IV avviata/, 'never presented as a new start');
   fifth.close.click();
 
   // An old or disabled backend: stated once, never retried, the already-read values stay.
@@ -1156,6 +1166,13 @@ require('node:test')('IV refresh: job shape is checked; status never presents a 
   const reused = cov.renderRefreshStatus({ ...job, state: 'COMPLETE', finishedAt: '2026-11-01T10:04:00.000Z' }, { reused: 'RECENT' });
   assert.match(reused, /Nessuna nuova acquisizione: riuso del job concluso il 2026-11-01T10:04:00\.000Z/);
   assert.doesNotMatch(reused, /Nuova acquisizione IV avviata/);
+  assert.match(reused, /Usa «Nuova acquisizione IV» per richiederne una\./, 'automatic reuse: the button may be suggested');
+  const forcedRecent = cov.renderRefreshStatus({ ...job, state: 'COMPLETE', finishedAt: '2026-11-01T10:04:00.000Z' },
+    { reused: 'RECENT', force: true });
+  assert.match(forcedRecent, /Nessuna nuova acquisizione: l’ultima acquisizione IV è terminata da meno di 60 secondi \(job concluso il 2026-11-01T10:04:00\.000Z\)/);
+  assert.doesNotMatch(forcedRecent, /Usa «Nuova acquisizione IV»|Nuova acquisizione IV avviata/);
+  assert.match(cov.renderRefreshStatus(job, { created: true, force: true }), /Nuova acquisizione IV avviata/, 'force that creates: a new start');
+  assert.match(cov.renderRefreshStatus(job, { reused: 'ACTIVE', force: true }), /ricollegato allo stesso job/, 'force on a running job: reconnected');
   assert.match(cov.renderRefreshStatus(job, { reused: 'ACTIVE' }), /ricollegato allo stesso job/);
   assert.match(cov.renderRefreshStatus(null, { error: '<b>x</b>' }), /&lt;b&gt;x&lt;\/b&gt;/);
   assert.match(cov.renderRefreshStatus({ ...job, backoffUntil: '2026-11-01T10:30:00.000Z' }, {}), /Limite del provider: pausa fino a 2026-11-01T10:30:00\.000Z/);
