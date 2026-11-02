@@ -767,7 +767,7 @@ require('node:test')('coverage monitor: tenor payload validation and hostile pro
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   const csv = cov.toCsv(cov.combinePages([page]), null);
-  assert.match(csv, /'<img src=x onerror=alert\(1\)>/, 'CSV preserves text but disarms any formula prefix');
+  assert.match(csv, /<img src=x onerror=alert\(1\)>/, 'CSV retains source text; HTML escaping applies only to rendered markup');
   const bad = covRow('AAPL', 0, { iv: 0.3 });
   bad.ivTenors = { ...row.ivTenors, iv60: { ...source, targetDte: 60, selectedDte: 0 } };
   assert.throws(() => cov.checkPage(covPages(['AAPL'], () => bad)[0], 0, COV_DIGEST), /COVERAGE_ROW_INCONSISTENT/);
