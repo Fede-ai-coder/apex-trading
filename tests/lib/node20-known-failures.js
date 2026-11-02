@@ -142,8 +142,12 @@ function runAll() {
       continue;
     }
     bad = 1;
+    console.log('FAILED_SUITE=' + file);
     console.log('::error file=' + file + '::' + verdict.reason);
-    console.log(output.split('\n').slice(-40).join('\n'));
+    const outputLines = output.split('\n');
+    const failedAssertion = outputLines.findIndex(line => /^not ok \d+ - /.test(line));
+    if (failedAssertion >= 0) console.log(outputLines.slice(failedAssertion, failedAssertion + 45).join('\n'));
+    console.log(outputLines.slice(-40).join('\n'));
   }
   return bad;
 }
