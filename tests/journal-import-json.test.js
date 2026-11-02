@@ -378,7 +378,8 @@ function xassert(cond, msg) { if (cond) { xPassed++; } else { xFailed++; console
   xassert(J(R('_jxiParseOptionTicker("ADBE/20X26P237.5:xcbf")')) === J({ root: 'ADBE', expiry: '2026-11-20', type: 'PUT', strike: 237.5 }), 'ticker: put with a decimal strike, November code X');
   xassert(R('_jxiParseOptionTicker("MU/20X26C1080:xcbf").strike') === 1080, 'ticker: four-digit strike');
   xassert(R('_jxiParseOptionTicker("SPY/18Z26C812:xcbf").expiry') === '2026-12-18' && R('_jxiParseOptionTicker("SPY/19G27P570:xcbf").expiry') === '2027-02-19', 'ticker: Z = Dec, G = Feb');
-  ['VWRL:xmil', 'ITALY-1.65-01DEC30', 'ADBE/15A27C305', 'ADBE/32F27C305', 'ADBE/15F27C0', '', null].forEach(v =>
+  xassert(J(R('_jxiParseOptionTicker("META_US/20X26P520:xcbf")')) === J({ root: 'META', expiry: '2026-11-20', type: 'PUT', strike: 520 }), 'ticker: country suffix _US is dropped from the root');
+  ['VWRL:xmil', 'ITALY-1.65-01DEC30', 'ADBE/15A27C305', 'META_/20X26P520:xcbf', 'META_USA/20X26P520:xcbf', 'ADBE/32F27C305', 'ADBE/15F27C0', '', null].forEach(v =>
     xassert(R('_jxiParseOptionTicker(' + J(v) + ')') === null, 'ticker: not an option → null (' + v + ')'));
 
   // ── a synthetic export in the broker's shape (header names are what the real file uses) ──
