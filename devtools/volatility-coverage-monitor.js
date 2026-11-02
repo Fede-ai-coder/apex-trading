@@ -99,6 +99,28 @@
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[c]);
   const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  // The backend's multi-tenor values are independent of legacy IV Ref. The nominal target is NOT the actual DTE.
+  const TENOR_TARGETS = Object.freeze([20, 40, 60]);
+  const TENOR_STATES = ['AVAILABLE', 'UNAVAILABLE', 'NOT_OBSERVED', 'NOT_YET_OBSERVED', 'NOT_CURRENT', 'ERROR'];
+  const TENOR_EXPIRATION_TYPES = ['Regular', 'Weekly', 'Quarterly', 'End-Of-Month'];
+  const tenorOf = (row, target) => row?.ivTenors?.['iv' + target] ?? null;
+  function validTenors(row) {
+    if (row.ivTenors === undefined) return true; // older backend / pilot / legacy job: no fabricated data
+    const t = row.ivTenors;
+    if (!t || typeof t !== 'object' || Array.isArray(t) || Object.keys(t).sort().join(',') !== 'iv20,iv40,iv60')
+      return false;
+    return TENOR_TARGETS.every(n => {
+      const v = t['iv' + n];
+      if (!v || v.targetDte !== n || !TENOR_STATES.includes(v.status) ||
+          !Array.isArray(v.sharedWithTargets) || v.sharedWithTargets.some(x => !TENOR_TARGETS.includes(x) || x === n) ||
+          (v.jobId != null && typeof v.jobId !== 'string')) return false;
+      if (v.status === 'AVAILABLE')
+        return num(v.value) !== null && v.value > 0 && Number.isSafeInteger(v.selectedDte) && v.selectedDte > 0 &&
+          DAY.test(String(v.selectedExpiration)) && TENOR_EXPIRATION_TYPES.includes(v.expirationType) &&
+          v.optionChainType === 'Standard' && v.reason == null;
+      return v.value === null && (v.reason === null || typeof v.reason === 'string');
+    });
+  }
 
   // ── reason codes: the technical code always stays visible, with a readable explanation ──────────────────────────
   const REASON_TEXT = {
@@ -158,6 +180,17 @@
     SUSPECT_JUMP: 'salto di prezzo sospetto senza fonte: bloccato',
     BLOCKED_UNVERIFIED_ACTION: 'azione societaria non verificata: bloccato',
     BLOCKED_COVERAGE_UNVERIFIED: 'fonte delle azioni societarie che non copre la finestra: bloccato',
+    TENOR_NOT_OBSERVED_IN_JOB: 'nessuna osservazione di questa scadenza nel job corrente',
+    IV_REFRESH_IN_PROGRESS: 'acquisizione del simbolo non ancora conclusa',
+    IV_REFRESH_JOB_NOT_CURRENT: 'acquisizione interrotta o sostituita: non è un valore corrente',
+    IV_REFRESH_TENOR_TABLE_MISSING: 'tabella delle IV per scadenza assente nello store',
+    IV_REFRESH_TENOR_READ_FAILED: 'errore di lettura delle IV per scadenza; IV Ref legacy separata',
+    IV_REFRESH_TENOR_IDENTITY_INVALID: 'identità o digest della riga tenor non coerente con il job',
+    IV_REFRESH_TENOR_OBSERVATION_INVALID: 'osservazione tenor persistita non valida',
+    CHAIN_INVALID_PROVIDER_DATA: 'struttura catena Standard non valida',
+    NO_STANDARD_EXPIRY: 'nessuna scadenza Standard utilizzabile',
+    NO_IV_FOR_SELECTED_EXPIRY: 'IV assente per la scadenza esatta selezionata',
+    AMBIGUOUS_IV_MATCH: 'più IV indistinguibili per la scadenza selezionata',
   };
   function reasonText(code) {
     if (typeof code !== 'string' || !code) return '';
@@ -185,7 +218,7 @@
       if (!row || typeof row.symbol !== 'string' || !SYMBOL.test(row.symbol) ||
           row.universePosition !== offset + i || !STATUSES.includes(row.status) || !row.ivRef ||
           !row.rv20 || !row.rv60 || !row.spreads || !row.spreads.ivMinusRv20Pp ||
-          !row.spreads.ivMinusRv60Pp || !Array.isArray(row.reasons) || !row.asOf)
+          !row.spreads.ivMinusRv60Pp || !Array.isArray(row.reasons) || !row.asOf || !validTenors(row))
         throw Error('COVERAGE_ROW_INCONSISTENT_AT_' + (offset + i));
     });
     return page;
@@ -421,10 +454,27 @@
     ['iv_last_successful_fetched_at', r => (acq(r).lastSuccessful ? acq(r).lastSuccessful.fetchedAt : null)],
     ['iv_last_successful_job_id', r => (acq(r).lastSuccessful ? acq(r).lastSuccessful.jobId : null)],
   ];
+  // Append after all existing columns so established CSV positions remain stable.
+  // Keep the backend decimals, dates and exact expiry metadata; never infer a tenor from IV Ref.
+  const TENOR_CSV_FIELDS = [
+    ['value', t => num(t.value)], ['status', t => t.status], ['reason', t => t.reason],
+    ['target_dte', t => t.targetDte], ['actual_dte', t => t.selectedDte],
+    ['expiration', t => t.selectedExpiration], ['expiration_type', t => t.expirationType],
+    ['option_chain_type', t => t.optionChainType], ['settlement_type', t => t.settlementType],
+    ['source', t => t.source], ['selection_version', t => t.selectionVersion],
+    ['policy_version', t => t.policyVersion], ['horizon_basis', t => t.horizonBasis],
+    ['job_id', t => t.jobId], ['as_of_date', t => t.asOfDate], ['observed_at', t => t.observedAt],
+    ['requested_at', t => t.requestedAt], ['provider_as_of', t => t.providerAsOf],
+    ['shared_with_targets', t => Array.isArray(t.sharedWithTargets) ? t.sharedWithTargets.join('|') : null],
+    ['chain_fetched_at', t => t.chainFetchedAt],
+  ];
+  const TENOR_CSV_COLUMNS = TENOR_TARGETS.flatMap(n => TENOR_CSV_FIELDS.map(([name, read]) => [
+    'iv' + n + '_' + name, row => { const t = tenorOf(row, n); return t ? read(t) : null; },
+  ]));
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
       'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest'])
-      .concat(ACQUISITION_COLUMNS.map(c => c[0]));
+      .concat(ACQUISITION_COLUMNS.map(c => c[0])).concat(TENOR_CSV_COLUMNS.map(c => c[0]));
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
@@ -433,7 +483,8 @@
         csvCell(m && m.updatedAt !== null ? new Date(m.updatedAt).toISOString() : null),
         csvCell(data.pageGeneratedAt ? data.pageGeneratedAt[row.symbol] : null),
         csvCell(data.generatedFrom), csvCell(data.generatedTo), csvCell(data.universe.source), csvCell(data.universe.digest),
-      ]).concat(ACQUISITION_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
+      ]).concat(ACQUISITION_COLUMNS.map(c => csvCell(c[1](row, data))))
+        .concat(TENOR_CSV_COLUMNS.map(c => csvCell(c[1](row)))).join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -584,6 +635,39 @@
     return head + acquisitionCell(iv) +
       (market ? '<div class="sub mkt">IV Market ' + esc(formatPct(market.value)) + ' (informativa)</div>' : '');
   }
+  // Display-only tenor cells. No relationship to IV−RV operands or trading signals.
+  function tenorCell(row, n) {
+    const t = tenorOf(row, n);
+    if (!t) return '<strong>—</strong><div class="sub">tenor non esposto</div>';
+    if (t.status !== 'AVAILABLE') return '<strong>—</strong><div class="sub">' + esc(t.status) + '</div>' +
+      (t.reason ? '<div class="sub">' + reasonHtml(t.reason) + '</div>' : '');
+    return '<strong>' + esc(formatPct(t.value)) + '</strong>' +
+      '<div class="sub">scad. ' + esc(t.selectedExpiration || '—') + ' · ' +
+      esc(t.selectedDte == null ? '—' : t.selectedDte) + ' DTE effettivi</div>' +
+      '<div class="sub">' + esc(t.expirationType || '—') + '</div>';
+  }
+  function renderTenorDetail(row) {
+    if (!row.ivTenors) return '';
+    const sections = TENOR_TARGETS.map(n => {
+      const t = tenorOf(row, n);
+      if (!t) return '';
+      const state = t.status === 'AVAILABLE' ? ' · ' + esc(formatPct(t.value)) : ' · —' +
+        (t.reason ? ' · ' + reasonHtml(t.reason) : '');
+      return '<li><strong>IV' + n + ' (target nominale ' + n + ' DTE)</strong>' + state +
+        ' · ' + esc(t.status) + ' · scadenza ' + esc(t.selectedExpiration || '—') +
+        ' · DTE effettivi ' + esc(t.selectedDte ?? '—') + ' · tipo ' + esc(t.expirationType || '—') +
+        ' · settlement ' + esc(t.settlementType || '—') +
+        ' · osservata ' + esc(t.observedAt || '—') +
+        ' · job <code>' + esc(t.jobId || '—') + '</code>' +
+        ' · source ' + esc(t.source || '—') + ' · selector ' + esc(t.selectionVersion || '—') +
+        ' · orizzonte ' + esc(t.horizonBasis || '—') +
+        (t.sharedWithTargets?.length ? ' · scadenza condivisa con IV' +
+          t.sharedWithTargets.map(x => esc(x)).join(', IV') : '') + '</li>';
+    }).join('');
+    return '<h4>IV20 / IV40 / IV60 · scadenze Standard (solo informative)</h4>' +
+      '<p class="note">Target nominali; verificare sempre i DTE effettivi. Non usate per gli spread IV−RV qui mostrati.</p>' +
+      '<ul class="reasons">' + sections + '</ul>';
+  }
   function acquisitionDetail(iv) {
     const a = iv && iv.acquisition;
     if (!a) return '';
@@ -628,7 +712,7 @@
   }
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
   function renderTable(rows, sort, ivCache) {
-    const head = ['Titolo', 'IV Ref', 'RV20', 'RV60'].map(h => '<th scope="col">' + esc(h) + '</th>').join('') +
+    const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20', 'RV60'].map(h => '<th scope="col">' + esc(h) + '</th>').join('') +
       SORTABLE.map(([key, label]) => {
         const active = sort && sort.key === key;
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
@@ -638,7 +722,8 @@
       ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
-      esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td><td>' + rvCell(r.rv20) +
+      esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td>' +
+      TENOR_TARGETS.map(n => '<td>' + tenorCell(r, n) + '</td>').join('') + '<td>' + rvCell(r.rv20) +
       '</td><td>' + rvCell(r.rv60) + '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
@@ -647,7 +732,7 @@
       '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
         '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="14">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="17">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
@@ -742,7 +827,7 @@
     if (!detail || detail.ok !== true || detail.version !== VERSION || detail.readOnly !== true ||
         detail.executionAuthorized !== false || !detail.row || detail.row.symbol !== detail.symbol ||
         !STATUSES.includes(detail.row.status) || !detail.row.ivRef || !detail.row.rv20 || !detail.row.rv60 ||
-        !detail.row.spreads || !Array.isArray(detail.row.reasons) || !detail.row.asOf)
+        !detail.row.spreads || !Array.isArray(detail.row.reasons) || !detail.row.asOf || !validTenors(detail.row))
       throw Error('COVERAGE_DETAIL_INVALID_RESPONSE');
     const r = detail.row, iv = r.ivRef, diag = detail.rvDiagnostics, market = ivMarketOf(r.symbol, ivCache);
     const hist = detail.historicalCertified || {};
@@ -763,7 +848,7 @@
       esc(iv.settlementType || '—') + '</p><p>Snapshot del ' + esc(iv.asOfDate || '—') + ' · osservata ' + esc(iv.observedAt || '—') +
       ' · freschezza: ' + (timing.length ? timing.map(m => reasonHtml(m.reason)).join(' · ') : num(iv.value) !== null ? 'compatibile con la RV' : '—') +
       (r.asOf.datesDiffer ? ' · <span class="warn">data IV ≠ data RV (' + esc(r.asOf.ivAsOfDate) + ' / ' + esc(r.asOf.rvSessionDate) + ')</span>' : '') + '</p>' +
-      '<p>Census: ' + censusText(iv, r.errors) + '</p>' + acquisitionDetail(iv) +
+      '<p>Census: ' + censusText(iv, r.errors) + '</p>' + acquisitionDetail(iv) + renderTenorDetail(r) +
       (market ? '<p class="mkt">IV Market (IV index Tastytrade dello scanner, solo informativa, mai usata negli spread): ' +
         esc(formatPct(market.value)) + (market.updatedAt !== null ? ' · ' + esc(new Date(market.updatedAt).toISOString()) : '') + '</p>' : '') +
       '<h4>Spread IV − RV (punti percentuali)</h4><ul class="reasons">' + spreadLine('IV − RV20', r.spreads.ivMinusRv20Pp) +
@@ -850,7 +935,7 @@
         '.metric{background:#1b3442;padding:8px 9px;border-radius:7px;min-width:118px}' +
         '.metric span,.metric strong{display:block}.metric span{font-size:11px;color:#b6cbd3}' +
         '.metric strong{font-size:19px;margin-top:2px}.scroll{overflow:auto;max-height:62vh}' +
-        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1550px}' +
+        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1880px}' +
         'th,td{padding:8px;border-bottom:1px solid #36505e;vertical-align:top}' +
         'th{color:#fff}thead th{background:#213744;position:sticky;top:0;z-index:1}' +
         '.sort,.sym{background:none;padding:0;color:#9fe3d8;font-weight:600;font-size:12px}' +
@@ -869,7 +954,8 @@
         ' aria-label="Volatility Coverage and Spread Monitor"><header><h2>Volatility Coverage &amp; Spread Monitor · DEV</h2>' +
         '<button class="close" type="button" id="close">Chiudi</button></header>' +
         '<p class="note">IV Ref = IV della scadenza Standard/Regular più vicina a 40 DTE, acquisita dal job DEV dell’intero' +
-        ' universo (o dal pilot IV se il job non è disponibile);' +
+        ' universo (o dal pilot IV se il job non è disponibile); IV20/40/60 sono target nominali separati, con DTE' +
+        ' effettivi e scadenza esposti, mai sostituti della IV Ref;' +
         ' IV Market, IV30, IVR non la sostituiscono mai. Spread = 100 × (IV Ref − RV) in punti percentuali, arrotondati solo' +
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
