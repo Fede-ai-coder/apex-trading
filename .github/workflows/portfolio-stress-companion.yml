@@ -91,10 +91,6 @@ jobs:
       - name: null safety
         run: node tests/portfolio-stress-null-safety.test.js
 
-      # Temporary focused diagnostic: show the COMPLETE TAP assertion, without the full suite's tail truncation.
-      - name: pinpoint Coverage monitor assertion (temporary diagnostic)
-        run: node tests/dashboard-market-scanner-layout.test.js
-
       # On node 22 the full suite must be GREEN — no exceptions, no allowances.
       - name: full frontend suite (node 22)
         if: matrix.node == '22'
@@ -102,9 +98,7 @@ jobs:
           fail=0
           for f in tests/*.test.js; do
             if ! node "$f" > /tmp/out.log 2>&1; then
-              echo "FAILED_SUITE=$f"
               echo "::error file=$f::suite failed"
-              awk '/^not ok [0-9]+ - /{n=45} n>0{print;n--}' /tmp/out.log
               tail -40 /tmp/out.log
               fail=1
             fi
