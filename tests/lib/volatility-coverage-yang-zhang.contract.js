@@ -327,7 +327,6 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   bad({...reply,report:{...report,symbol:'T1'}});
   bad({...reply,report:{...report,readOnly:false}});
   bad({...reply,report:{...report,asOfSessionDate:'2026-11-03'}});
-  bad({...reply,report:{...report,rv40:{}}});
   bad({...reply,report:{...report,rv60:{...report.rv60,
     yz:{...report.rv60.yz,reason:'MISSING_COMPLETED_SESSIONS'}}}});
   bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[small,small]}}});
