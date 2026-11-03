@@ -1,9 +1,10 @@
 // Volatility Coverage & Spread Monitor: DEV frontend only.
 // Opening the panel (and «Analizza universo») reads /debug/volatility-carry/coverage page by page (25 symbols, the
-// universe pinned by the digest of page 1), and one GET per symbol opened. After the first complete read the panel asks
-// the DEV backend, with ONE authenticated POST, to start — or reuse — the full-universe IV refresh job of that universe
-// digest; it then polls only that job's status (GET, cancelled on close) and re-reads the coverage once when the job
-// ends. The provider is reached by the backend job only. No storage, subscription or trading decision.
+// universe pinned by the digest of page 1), and one GET per symbol opened. While the panel is open and visible it
+// re-reads persisted Coverage via GET at most once per five-minute interval (or on resume after that interval).
+// A refresh job is started ONLY by the explicit «Nuova acquisizione IV» button. That manually started job is then
+// monitored via GET and triggers a single read-only Coverage update when it ends. No background provider acquisition
+// on opening, no persistence, subscription or trading decision.
 // Every number is the backend's: the panel rounds only what it DISPLAYS (the CSV keeps full precision) and never fills
 // a missing value; null is shown as "—" next to the reason the backend gave. Colours give the SIGN of IV − RV only.
 (function () {
@@ -47,6 +48,7 @@
   const RECOVERY_VERSION = 'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1';
   const REFRESH_PATH = '/debug/volatility-carry/iv-refresh';
   const REFRESH_POLL_MS = 5000;                 // status only: a poll never starts an acquisition
+  const COVERAGE_AUTO_READ_MS = 5 * 60_000;    // GET-only while the panel is open and visible
   const REFRESH_MAX_POLLS = 720;                // one hour of polling at most per panel opening
   const JOB_STATES = ['RUNNING', 'COMPLETE', 'PARTIAL', 'FAILED', 'SUPERSEDED', 'INTERRUPTED'];
   const JOB_STATE_TEXT = { RUNNING: 'acquisizione in corso', COMPLETE: 'acquisizione completata',
@@ -892,6 +894,18 @@
     throw Error('COVERAGE_HTTP_' + resp.status + ': ' + reason);
   }
 
+  // Metadata from the persisted Coverage read, not a Tastytrade quote/update timestamp.
+  function renderCoverageFreshness(data, readAt) {
+    const observed = (data.rows || []).map(r => r?.ivRef?.acquisition?.fetchedAt ?? r?.asOf?.ivObservedAt)
+      .filter(t => typeof t === 'string' && Number.isFinite(Date.parse(t)));
+    const newest = observed.length ? observed.reduce((a, b) => Date.parse(b) > Date.parse(a) ? b : a) : null;
+    return '<strong>Ultima lettura Coverage (APEX):</strong> ' + esc(readAt || '—') +
+      ' · <strong>Ultima sessione RV:</strong> ' + esc(data.asOfSessionDate || '—') +
+      ' · <strong>Data IV (NY):</strong> ' + esc(data.ivAsOfDate || '—') +
+      ' · <strong>Ultima osservazione IV registrata da APEX:</strong> ' + esc(newest || 'non disponibile') +
+      '<span class="sub"> · Le date non attestano l’aggiornamento dei prezzi presso Tastytrade.</span>';
+  }
+  
   function setupUi() {
     if (document.getElementById('apex-vol-coverage-launcher')) return;
     const trigger = document.createElement('button');
@@ -903,7 +917,24 @@
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
-    let refreshCurrent = null, refreshTimer = null, refreshAttempted = false;
+    let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
+    let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false;
+    function scheduleCoverageRead() {
+      if (coverageTimer !== null) clearTimeout(coverageTimer);
+      coverageTimer = null;
+      if (!host) return;
+      const runHost = host;
+      coverageTimer = setTimeout(() => {
+        coverageTimer = null;
+        if (host !== runHost) return;
+        if (document.visibilityState === 'hidden' || busy) { scheduleCoverageRead(); return; }
+        void analyze();
+      }, COVERAGE_AUTO_READ_MS);
+    }
+    function onResume() {
+      if (host && document.visibilityState !== 'hidden' && !busy &&
+          Date.now() - Math.max(lastReadAt, lastReadAttemptAt) >= COVERAGE_AUTO_READ_MS) void analyze();
+    }
     const view = { search: '', availability: '', spread: '', dividend: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
     function close() {
@@ -912,8 +943,12 @@
       if (recoveryCurrent) recoveryCurrent.abort();
       if (refreshCurrent) refreshCurrent.abort();
       if (refreshTimer) clearTimeout(refreshTimer);
+      if (coverageTimer !== null) clearTimeout(coverageTimer);
+      document.removeEventListener('visibilitychange', onResume);
+      window.removeEventListener('focus', onResume);
       current = null; detailCurrent = null; recoveryCurrent = null; busy = false; data = null;
-      refreshCurrent = null; refreshTimer = null; refreshAttempted = false;
+      refreshCurrent = null; refreshTimer = null; coverageTimer = null;
+      lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false;
       if (host) { host.remove(); host = null; }
       trigger.focus();
     }
@@ -964,6 +999,7 @@
         '<button type="button" id="recovery-run">Stato recupero candele 1D</button> ' +
         '<button type="button" id="csv" disabled>Esporta CSV</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
+        '<p id="freshness" class="note">Ultimi dati IV/RV: in lettura…</p>' +
         '<div id="refresh"></div><div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
         '<input id="search" type="search" placeholder="Cerca simbolo" aria-label="Cerca simbolo">' +
         '<select id="availability" aria-label="Disponibilità"><option value="">Disponibilità: tutte</option>' +
@@ -1054,7 +1090,10 @@
             if (job && job.state === 'RUNNING') schedulePoll(jobId, count);
             else {
               refreshRun.disabled = !data;
-              if (job) void analyze();   // one re-read with the concluded job's results
+              if (job) {
+                if (busy) pendingJobRead = true; // do not lose the completed-job re-read to another GET
+                else void analyze();            // GET only, with the concluded job's results
+              }
             }
           }
         }
@@ -1153,11 +1192,17 @@
         if (busy) return;
         if (typeof S === 'undefined' || !S.backendKey) {
           state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
+          scheduleCoverageRead();
           return;
         }
-        busy = true; run.disabled = true; csv.disabled = true; data = null; refreshRun.disabled = true;
-        $('summary').innerHTML = ''; $('table').innerHTML = ''; detail.innerHTML = ''; $('count').textContent = '';
-        $('filters').hidden = true; state.className = 'info';
+        lastReadAttemptAt = Date.now();
+        if (coverageTimer !== null) { clearTimeout(coverageTimer); coverageTimer = null; }
+        busy = true; run.disabled = true; csv.disabled = true; refreshRun.disabled = true;
+        if (!data) {
+          $('summary').innerHTML = ''; $('table').innerHTML = ''; detail.innerHTML = ''; $('count').textContent = '';
+          $('filters').hidden = true;
+        }
+        state.className = 'info';
         const controller = new AbortController();
         current = controller;
         const runHost = host;
@@ -1183,10 +1228,14 @@
           const combined = combinePages(pages);
           if (current !== controller || host !== runHost) return;
           data = combined;
+          lastReadAt = Date.now();
+          $('freshness').innerHTML = renderCoverageFreshness(data, new Date(lastReadAt).toISOString());
           $('summary').innerHTML = renderSummary(data);
+          detail.innerHTML = ''; // a previously opened symbol detail belongs to the earlier snapshot
           $('reason').innerHTML = '<option value="">Motivo: tutti</option>' + reasonCodes(data.rows)
             .map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
-          view.reason = '';
+          if (view.reason && !reasonCodes(data.rows).includes(view.reason)) view.reason = '';
+          $('reason').value = view.reason;
           $('filters').hidden = false;
           draw();
           csv.disabled = false;
@@ -1194,7 +1243,7 @@
           state.textContent = 'Completato: ' + data.rows.length + ' titoli in ' + pages.length +
             ' pagine · IV Ref presente per ' + withIv + '. Nessun valore stimato o sostituito.';
           if (refreshIdle()) refreshRun.disabled = false;
-          if (!refreshAttempted) { refreshAttempted = true; void startRefresh(false); }
+          // No POST here. Acquisition requires an explicit click on «Nuova acquisizione IV».
         } catch (error) {
           if (current !== controller || host !== runHost) return;
           state.textContent = signal.aborted ? 'Richiesta annullata o scaduta (' + TIMEOUT_MS / 1000 + ' s per pagina).'
@@ -1204,12 +1253,18 @@
           if (timeout) clearTimeout(timeout);
           if (current === controller && host === runHost) {
             run.disabled = false; busy = false; current = null;
+            csv.disabled = !data;
+            refreshRun.disabled = !data || !refreshIdle();
+            if (pendingJobRead) { pendingJobRead = false; void analyze(); }
+            else scheduleCoverageRead();
           }
         }
       }
       document.body.appendChild(host);
+      document.addEventListener('visibilitychange', onResume);
+      window.addEventListener('focus', onResume);
       run.focus();
-      // Opening the panel shows the latest available data at once; the refresh request follows the first complete read.
+      // Opening = GET-only Coverage. A new IV acquisition requires the separate manual button.
       void analyze();
     }
     trigger.addEventListener('click', open);
@@ -1220,7 +1275,7 @@
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
-      REFRESH_PATH, REFRESH_POLL_MS, REFRESH_MAX_POLLS };
+      REFRESH_PATH, REFRESH_POLL_MS, REFRESH_MAX_POLLS, COVERAGE_AUTO_READ_MS, renderCoverageFreshness };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
