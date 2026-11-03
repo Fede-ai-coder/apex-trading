@@ -5,7 +5,8 @@ const assert=require('node:assert/strict');
 const {readFileSync}=require('node:fs');
 const {join}=require('node:path');
 const {
-  checkYangZhangPage, attachYangZhangPages, yangZhangCell, renderYangZhangStatus,
+  checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
+  yangZhangCell, renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
 }=require('../devtools/volatility-coverage-monitor.js');
 
@@ -70,6 +71,21 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   attachYangZhangPages(c,[p0,p25]);
   assert.equal(c.yangZhang.status,'READY');
   assert.equal(c.rows[25].yangZhang.rv60YZ.value,0.4);
+  // Actual Coverage :symbol API: NO top-level asOfSessionDate. The only
+  // session reference is detail.row.asOf.rvSessionDate (verified in backend).
+  const detail={
+    ok:true,version:'VOLATILITY_COVERAGE_V1',readOnly:true,executionAuthorized:false,
+    symbol:'T0',universePosition:0,universe:{count:26,digest:DIGEST},
+    row:c.rows[0],
+  };
+  assert.equal(Object.hasOwn(detail,'asOfSessionDate'),false,'test must match real backend response shape');
+  assert.equal(matchingYangZhangRowForDetail(detail,c),c.rows[0]);
+  assert.equal(matchingYangZhangRowForDetail({...detail,row:{...detail.row,
+    asOf:{...detail.row.asOf,rvSessionDate:'2026-11-03'}}},c),null,'reject stale detail session');
+  assert.equal(matchingYangZhangRowForDetail({...detail,universe:{count:26,digest:'b'.repeat(64)}},c),null);
+  assert.equal(matchingYangZhangRowForDetail({...detail,universePosition:1},c),null);
+  assert.equal(matchingYangZhangRowForDetail({...detail,universe:{count:25,digest:DIGEST}},c),null);
+
   assert.match(renderYangZhangStatus(c),/26\/26/);
   assert.match(renderYangZhangStatus(c),/non atomica/);
   const table=renderTable(c.rows.slice(0,1),{key:'position',dir:'asc'},null,c.yangZhang.status);

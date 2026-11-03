@@ -353,6 +353,19 @@
       ' e RV60 ' + counts[1] + '/' + data.rows.length +
       ' preliminari; lettura sequenziale non atomica, non certificate e non usate negli spread IV−RV Close-to-Close.';
   }
+  // Coverage detail API has NO top-level asOfSessionDate. Its session is
+  // detail.row.asOf.rvSessionDate. Pin against the actual backend contract,
+  // including universe digest, position, identity and matching row session.
+  function matchingYangZhangRowForDetail(detail, coverage) {
+    if (!detail || !coverage || detail.universe?.digest !== coverage.universe?.digest ||
+        detail.universe?.count !== coverage.rows.length ||
+        detail.row?.symbol !== detail.symbol ||
+        detail.row?.universePosition !== detail.universePosition ||
+        detail.row?.asOf?.rvSessionDate !== coverage.asOfSessionDate) return null;
+    return coverage.rows.find(r => r.symbol === detail.symbol &&
+      r.universePosition === detail.universePosition &&
+      r.asOf?.rvSessionDate === coverage.asOfSessionDate) ?? null;
+  }
   function renderYangZhangDetail(row, state) {
     return '<h4>RV Yang–Zhang (OHLC giornalieri)</h4>' +
       '<p class="note">Stimatore alternativo alla RV Close-to-Close. Risultati diagnostici, non certificati. ' +
@@ -1272,11 +1285,10 @@
           $('yz-status').textContent = renderYangZhangStatus(coverage);
           draw();
           // Re-render only an already-open detail of the same session and digest.
-          if (detailSnapshot && detailSnapshot.universe?.digest === coverage.universe.digest &&
-              detailSnapshot.asOfSessionDate === coverage.asOfSessionDate) {
-            const r = coverage.rows.find(x => x.symbol === detailSnapshot.symbol);
-            if (r) detail.innerHTML = renderDetail(detailSnapshot, ivCache(),
-              { row: r, status: coverage.yangZhang.status });
+          if (detailSnapshot) {
+            const matching = matchingYangZhangRowForDetail(detailSnapshot, coverage);
+            if (matching) detail.innerHTML = renderDetail(detailSnapshot, ivCache(),
+              { row: matching, status: coverage.yangZhang.status });
           }
         } catch (error) {
           if (host !== readHost || yzCurrent !== controller || data !== coverage) return;
@@ -1285,8 +1297,7 @@
           $('yz-status').textContent = renderYangZhangStatus(coverage);
           draw();
           // Coverage remains intact; never replace missing YZ with Close-to-Close.
-          if (detailSnapshot && detailSnapshot.universe?.digest === coverage.universe.digest &&
-              detailSnapshot.asOfSessionDate === coverage.asOfSessionDate)
+          if (detailSnapshot && matchingYangZhangRowForDetail(detailSnapshot, coverage))
             detail.innerHTML = renderDetail(detailSnapshot, ivCache(), { row: null, status: 'ERROR' });
         } finally {
           if (timeout) clearTimeout(timeout);
@@ -1320,10 +1331,7 @@
           const json = await fetchJson(BACKEND + PATH + '/' + encodeURIComponent(symbol), S.backendKey, controller.signal);
           if (detailCurrent !== controller || host !== runHost) return;
           detailSnapshot = json;
-          const matching = data && json.universe?.digest === data.universe.digest &&
-            json.asOfSessionDate === data.asOfSessionDate
-            ? data.rows.find(r => r.symbol === json.symbol && r.universePosition === json.universePosition)
-            : null;
+          const matching = matchingYangZhangRowForDetail(json, data);
           detail.innerHTML = renderDetail(json, ivCache(), { row: matching,
             status: matching ? (data.yangZhang?.status ?? 'NOT_READ') : 'NOT_READ' });
         } catch (error) {
@@ -1481,7 +1489,8 @@
   }
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
-      yangZhangCell, renderYangZhangStatus, renderYangZhangDetail, summarize, filterRows, sortRows, reasonCodes, reasonText,
+      matchingYangZhangRowForDetail, yangZhangCell, renderYangZhangStatus, renderYangZhangDetail,
+      summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
