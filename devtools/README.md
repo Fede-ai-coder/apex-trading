@@ -175,6 +175,15 @@ What it shows (every value is the backend's):
   job, when APEX fetched it, and the `IV_RV_TIMING_V1` verdict; an IV of an earlier job is shown only as history,
   excluded from the spreads. *IV Market* (the scanner's Tastytrade IV index, when the page holds it) is shown apart as
   informational only. IV30 and IVR never stand in for it. It never enters a spread and never replaces a missing IV Ref.
+- **IV20 / IV40 / IV60 (informational, DEV multi-tenor only)**: distinct persisted Standard-chain observations of the current
+  full-universe refresh job, selected against nominal targets 20/40/60 calendar DTE. They are **not** replacements for
+  the legacy Regular-nearest-40-DTE IV Ref, nor operands of the existing IV−RV spreads. The table and symbol detail show
+  the *actual* selected expiry, actual DTE, expiry class and unavailable reason (e.g. nominal IV60 may be 74 DTE).
+  Before PR #322 is deployed, or for older/legacy jobs, the three columns say "tenor non esposto" instead of inventing
+  values. An unreadable tenor observation is reported as an error while the legacy IV Ref remains separate.
+  CSV appends per-target decimal values, status/reason, nominal/actual DTE, expiry, source, selection/version, job ID and
+  acquisition timestamps **after** all the previous columns. No formula, interpolation, missing-value fallback or
+  provider-update timestamp is inferred.
 - **RV20 / RV60**: labelled *certificata*, *preliminare* or *esplorativa*. An exploratory RV is never compared with IV.
   The last certified RV of the daily store is shown separately and never used for the current spread.
 - **IV − RV20 / IV − RV60**: the backend's `100 × (ivRef − rv)` in percentage points, rounded to 2 decimals **only on

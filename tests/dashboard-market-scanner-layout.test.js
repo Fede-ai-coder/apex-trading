@@ -665,7 +665,7 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'iv_freshness', 'iv_requested_at', 'iv_fetched_at', 'iv_provider_as_of', 'iv_provider_as_of_field', 'iv_chain_fetched_at',
     'iv_error_class', 'iv_selection_version', 'iv_policy_version', 'iv_timing_policy_version', 'iv_timing_comparable',
     'iv_timing_basis', 'iv_timing_reason', 'iv_provider_update_attested', 'iv_last_successful', 'iv_last_successful_fetched_at',
-    'iv_last_successful_job_id']);
+    'iv_last_successful_job_id'].concat([20, 40, 60].flatMap(n => ["value","status","reason","target_dte","actual_dte","expiration","expiration_type","option_chain_type","settlement_type","source","selection_version","policy_version","horizon_basis","job_id","as_of_date","observed_at","requested_at","provider_as_of","shared_with_targets","chain_fetched_at"].map(k => 'iv' + n + '_' + k))));
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
   assert.equal(lines[1].split(',')[col('iv_ref_from_current_job')], '', 'no refresh provenance is invented for pilot rows');
@@ -688,6 +688,91 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   assert.doesNotMatch(csv, /x-api-key|backendKey/);
   assert.equal(cov.csvCell(-1.5), '-1.5', 'a number is a number, not a defused text');
   assert.equal(cov.csvCell('-1.5'), "'-1.5");
+});
+
+
+// The backend PR #322 adds per-job IV20/IV40/IV60 for multi-tenor jobs only; never read these from IV Ref.
+require('node:test')('coverage monitor: current-job IV20/40/60 display actual DTE, preserve legacy IV Ref and CSV precision', () => {
+  const row = covRow('AAPL', 0, { iv: 0.277, basis: 'CERTIFIED', s20: 1.25, s60: -2.5 });
+  const source = { jobId: 'mt-job-1234', asOfDate: '2026-11-02', observedAt: '2026-11-02T21:35:00.000Z',
+    requestedAt: '2026-11-02T21:30:00.000Z', providerAsOf: null, source: 'TASTYTRADE_STANDARD_CHAIN_NEAREST_TARGET_IV',
+    selectionVersion: 'STANDARD_NEAREST_TARGET_V1', policyVersion: 'FULL_UNIVERSE_IV_REFRESH_V1',
+    horizonBasis: 'CALENDAR_DTE_NOMINAL_PAIRING', optionChainType: 'Standard', settlementType: 'PM',
+    chainFetchedAt: '2026-11-02T21:31:00.000Z', sharedWithTargets: [] };
+  row.ivTenors = {
+    iv20: { ...source, targetDte: 20, status: 'AVAILABLE', reason: null, value: 0.3134567890123,
+      selectedDte: 18, selectedExpiration: '2026-11-20', expirationType: 'Regular' },
+    iv40: { ...source, targetDte: 40, status: 'UNAVAILABLE', reason: 'NO_IV_FOR_SELECTED_EXPIRY', value: null,
+      selectedDte: 39, selectedExpiration: '2026-12-11', expirationType: 'Weekly' },
+    iv60: { ...source, targetDte: 60, status: 'AVAILABLE', reason: null, value: 0.256789123456,
+      selectedDte: 74, selectedExpiration: '2027-01-15', expirationType: 'Regular' },
+  };
+  const page = covPages(['AAPL'], () => row)[0];
+  assert.equal(cov.checkPage(page, 0, COV_DIGEST), page);
+  const data = cov.combinePages([page]);
+  const table = cov.renderTable(data.rows, null, null);
+  for (const n of [20, 40, 60]) assert.match(table, new RegExp('<th scope="col">IV' + n + '</th>'));
+  assert.match(table, /31\.35%/);
+  assert.match(table, /25\.68%/);
+  assert.match(table, /2027-01-15 · 74 DTE effettivi/);
+  assert.match(table, /2026-11-20 · 18 DTE effettivi/);
+  assert.match(table, /NO_IV_FOR_SELECTED_EXPIRY/);
+  assert.match(table, /27\.70%/, 'legacy IV Ref is the independent Regular selection');
+
+  const detail = covDetail(d => { d.row.ivTenors = row.ivTenors; });
+  const html = cov.renderDetail(detail, null);
+  assert.match(html, /IV60 \(target nominale 60 DTE\)/);
+  assert.match(html, /DTE effettivi 74/);
+  assert.match(html, /2027-01-15/);
+  assert.match(html, /scadenze Standard \(solo informative\)/);
+  assert.match(html, /Non usate per gli spread IV−RV/);
+
+  const csv = cov.toCsv(data, null);
+  const lines = csv.trimEnd().split('\r\n');
+  const head = lines[0].split(','), values = lines[1].split(',');
+  const v = key => values[head.indexOf(key)];
+  assert.equal(v('iv_ref'), '0.277');
+  assert.equal(v('iv60_value'), '0.256789123456', 'full decimal precision, never rounded');
+  assert.equal(v('iv60_actual_dte'), '74');
+  assert.equal(v('iv60_target_dte'), '60');
+  assert.equal(v('iv60_expiration'), '2027-01-15');
+  assert.equal(v('iv60_expiration_type'), 'Regular');
+  assert.equal(v('iv60_observed_at'), source.observedAt);
+  assert.equal(v('iv40_value'), '', 'missing IV stays empty, not zero or the legacy 40-DTE value');
+  assert.equal(v('iv40_reason'), 'NO_IV_FOR_SELECTED_EXPIRY');
+  assert.equal(v('iv20_value'), '0.3134567890123');
+  assert.equal(v('iv20_selection_version'), 'STANDARD_NEAREST_TARGET_V1');
+  assert.equal(v('iv60_provider_as_of'), '', 'unknown provider update time is not fabricated');
+  assert.equal(v('iv60_job_id'), source.jobId);
+
+  const noTenors = covRow('AAPL', 0, { iv: 0.277 });
+  const legacyPage = covPages(['AAPL'], () => noTenors)[0];
+  cov.checkPage(legacyPage, 0, COV_DIGEST);
+  const legacyCsv = cov.toCsv(cov.combinePages([legacyPage]), null).trimEnd().split('\r\n');
+  assert.deepEqual(legacyCsv[0].split(','), head, 'old and new responses have one stable CSV schema');
+  assert.equal(legacyCsv[1].split(',')[head.indexOf('iv60_value')], '');
+  assert.match(cov.renderTable([noTenors], null, null), /tenor non esposto/);
+});
+
+require('node:test')('coverage monitor: tenor payload validation and hostile provider metadata fail safely', () => {
+  const row = covRow('AAPL', 0, { iv: 0.3 });
+  const source = { jobId: 'mt-job-1234', targetDte: 20, status: 'AVAILABLE', value: 0.21, reason: null,
+    selectedDte: 21, selectedExpiration: '2026-11-23', expirationType: 'Weekly', optionChainType: 'Standard',
+    sharedWithTargets: [], source: COV_HOSTILE, selectionVersion: COV_HOSTILE };
+  row.ivTenors = { iv20: source, iv40: { ...source, targetDte: 40, value: null, status: 'ERROR', reason: COV_HOSTILE },
+    iv60: { ...source, targetDte: 60, selectedDte: 74, selectedExpiration: '2027-01-15' } };
+  const page = covPages(['AAPL'], () => row)[0];
+  cov.checkPage(page, 0, COV_DIGEST);
+  const html = cov.renderDetail(covDetail(d => { d.row.ivTenors = row.ivTenors; }), null);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  const csv = cov.toCsv(cov.combinePages([page]), null);
+  assert.match(csv, /<img src=x onerror=alert\(1\)>/, 'CSV retains source text; HTML escaping applies only to rendered markup');
+  const bad = covRow('AAPL', 0, { iv: 0.3 });
+  bad.ivTenors = { ...row.ivTenors, iv60: { ...source, targetDte: 60, selectedDte: 0 } };
+  assert.throws(() => cov.checkPage(covPages(['AAPL'], () => bad)[0], 0, COV_DIGEST), /COVERAGE_ROW_INCONSISTENT/);
+  bad.ivTenors = { ...row.ivTenors, iv60: { ...source, targetDte: 60, selectedDte: 21, value: 0 } };
+  assert.throws(() => cov.checkPage(covPages(['AAPL'], () => bad)[0], 0, COV_DIGEST), /COVERAGE_ROW_INCONSISTENT/);
 });
 
 require('node:test')('coverage monitor: hostile backend strings are escaped everywhere they are drawn', () => {
@@ -1473,7 +1558,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="14"/);
+  assert.match(ui.renderTable([],null,{}),/colspan="17"/,
+    'empty-row span covers all 17 columns, including IV20/IV40/IV60');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
