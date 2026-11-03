@@ -6,7 +6,8 @@ const {readFileSync}=require('node:fs');
 const {join}=require('node:path');
 const {
   checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
-  yangZhangCell, cc40Cell, renderYangZhangStatus,
+  yangZhangCell, cc40Cell, spread40Diagnostic, spread40Cell, renderSpread40Detail,
+  renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
 }=require('../../devtools/volatility-coverage-monitor.js');
 
@@ -102,6 +103,8 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.match(table,/RV20 CC/);
   assert.match(table,/RV40 CC/);
   assert.match(table,/RV40 YZ/);
+  assert.match(table,/IV40 − RV40 CC/);
+  assert.match(table,/IV40 − RV40 YZ/);
   assert.match(table,/IV40/);
   assert.match(table,/RV20 YZ/);
   assert.match(table,/RV60 YZ/);
@@ -122,6 +125,9 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(val('rv60_yz'),'0.4');
   assert.equal(val('rv40_cc'),'0.24');
   assert.equal(val('rv40_cc_status'),'PRELIMINARY');
+  assert.equal(val('iv40_minus_rv40_cc_status'),'UNAVAILABLE');
+  assert.equal(val('iv40_minus_rv40_cc_pp'),'');
+  assert.equal(val('iv40_minus_rv40_yz_pp'),'');
   assert.equal(val('rv40_yz'),'0.35');
   assert.equal(val('rv40_yz_returns_used'),'40');
   assert.ok(names.indexOf('rv40_cc')>names.indexOf('rv60_yz_category'),'RV40 columns strictly append');
@@ -130,6 +136,62 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(val('yz_generated_from'),AFTER);
   assert.equal(val('yz_generated_to'),AFTER);
   assert.ok(names.indexOf('rv20_yz')>names.indexOf('iv60_value'),'YZ fields append after existing CSV columns');
+}
+
+
+{
+  const c=coverage(1),p=page(c,0);
+  attachYangZhangPages(c,[p]);
+  const r=c.rows[0];
+  r.ivRef={...r.ivRef,observedAt:AFTER,
+    timing:{policyVersion:'IV_RV_TIMING_V1',comparable:true,providerUpdateAttested:false}};
+  r.ivTenors={iv40:{targetDte:40,status:'AVAILABLE',value:0.4,
+    optionChainType:'Standard',horizonBasis:'CALENDAR_DTE_NOMINAL_PAIRING_WITH_TRADING_SESSION_RV',
+    selectedDte:38,selectedExpiration:'2026-12-11',asOfDate:'2026-11-03',observedAt:AFTER}};
+  const cc=spread40Diagnostic(r,'CC','READY'),yz=spread40Diagnostic(r,'YZ','READY');
+  assert.equal(cc.status,'INDICATIVE');
+  assert.equal(yz.status,'INDICATIVE');
+  assert.ok(Math.abs(cc.valuePp-16)<1e-9);
+  assert.ok(Math.abs(yz.valuePp-5)<1e-9);
+  assert.equal(cc.actualDte,38);
+  const table=renderTable([r],{key:'position',dir:'asc'},null,'READY');
+  assert.match(table,/\+16\.00 pp/);
+  assert.match(table,/\+5\.00 pp/);
+  assert.match(spread40Cell(r,'CC','READY'),/38 DTE calendario \/ 40 sedute/);
+  const detail=renderSpread40Detail(r,r,'READY');
+  assert.match(detail,/IV40 − RV40 CC/);
+  assert.match(detail,/IV40 − RV40 YZ/);
+  assert.match(detail,/orizzonti NON coincidono/);
+  assert.match(renderSpread40Detail(r,null,'READY'),/RV40_SESSION_MISMATCH/);
+  const csv=toCsv(c,null).trimEnd().split('\r\n');
+  const head=csv[0].split(','),fields=csv[1].split(',');
+  const value=k=>fields[head.indexOf(k)];
+  assert.ok(Math.abs(Number(value('iv40_minus_rv40_cc_pp'))-16)<1e-9);
+  assert.ok(Math.abs(Number(value('iv40_minus_rv40_yz_pp'))-5)<1e-9);
+  assert.equal(value('iv40_minus_rv40_cc_status'),'INDICATIVE');
+  assert.equal(value('iv40_minus_rv40_yz_reason'),'');
+  assert.ok(head.indexOf('iv40_minus_rv40_cc_pp')>head.indexOf('rv40_yz_category'));
+  assert.equal(spread40Diagnostic(r,'CC','LOADING').valuePp,null);
+  assert.equal(spread40Diagnostic(r,'CC','LOADING').reason,'RV40_READ_LOADING');
+  assert.equal(spread40Diagnostic({...r,ivRef:{...r.ivRef,timing:null}},'CC','READY').reason,
+    'IV40_RV_TIMING_NOT_VERIFIED');
+  assert.equal(spread40Diagnostic({...r,ivTenors:{iv40:{...r.ivTenors.iv40,observedAt:'2026-11-03T12:00:01Z'}}},'CC','READY').reason,
+    'IV40_RV_TIMING_NOT_VERIFIED');
+  assert.equal(spread40Diagnostic({...r,ivTenors:{iv40:{...r.ivTenors.iv40,status:'NOT_CURRENT',value:null}}},'CC','READY').reason,
+    'IV40_NOT_CURRENT');
+  assert.equal(spread40Diagnostic({...r,ivTenors:{iv40:{...r.ivTenors.iv40,horizonBasis:'UNDECLARED'}}},'CC','READY').reason,
+    'IV40_PROVENANCE_UNVERIFIED');
+  assert.equal(spread40Diagnostic({...r,yangZhang:{...r.yangZhang,asOfSessionDate:'2026-11-01'}},'YZ','READY').reason,
+    'RV40_SESSION_MISMATCH');
+  assert.equal(spread40Diagnostic({...r,yangZhang:{...r.yangZhang,
+    cc:{rv40:{status:'EXPLORATORY_UNVERIFIED_SESSION_POLICY',value:0.24}}}},'CC','READY').reason,
+    'RV40_EXPLORATORY_UNVERIFIED_SESSION_POLICY');
+  assert.equal(spread40Diagnostic({...r,yangZhang:{...r.yangZhang,
+    rv40YZ:{status:'BLOCKED_SESSION_POLICY',value:null,mathematicalValue:0.35}}},'YZ','READY').reason,
+    'RV40_BLOCKED_SESSION_POLICY');
+  assert.equal(spread40Diagnostic({...r,ivTenors:undefined},'CC','READY').reason,'IV40_NOT_EXPOSED');
+  const sorted=sortRows([r,{...r,universePosition:1,ivTenors:undefined}],'spread40CC','desc');
+  assert.equal(sorted[0].universePosition,0);
 }
 
 // Policy-blocked mathematical diagnostics must NOT masquerade as usable RV.
