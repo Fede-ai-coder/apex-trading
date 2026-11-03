@@ -157,6 +157,15 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   const table=renderTable([r],{key:'position',dir:'asc'},null,'READY');
   assert.match(table,/\+16\.00 pp/);
   assert.match(table,/\+5\.00 pp/);
+  const h20=table.indexOf('data-sort="spread20"'),h60=table.indexOf('data-sort="spread60"');
+  const hCC=table.indexOf('data-sort="spread40CC"'),hYZ=table.indexOf('data-sort="spread40YZ"');
+  assert.ok(h20>=0 && h20<h60 && h60<hCC && hCC<hYZ,
+    'old and new spread table headings must match the actual cell order');
+  const tableCells=table.split('<tbody>')[1].split('</tr>')[0].split('<td>');
+  assert.match(tableCells[11],/\+15\.00 pp/,'legacy 20 spread remains in column 11');
+  assert.match(tableCells[12],/\+13\.00 pp/,'legacy 60 spread remains in column 12');
+  assert.match(tableCells[13],/\+16\.00 pp/,'indicative CC40 spread is in column 13');
+  assert.match(tableCells[14],/\+5\.00 pp/,'indicative YZ40 spread is in column 14');
   assert.match(spread40Cell(r,'CC','READY'),/38 DTE calendario \/ 40 sedute/);
   const detail=renderSpread40Detail(r,r,'READY');
   assert.match(detail,/IV40 − RV40 CC/);
