@@ -351,7 +351,7 @@
     const counts = [20, 60].map(n => data.rows.filter(r => yzWindow(r, n)?.status === 'PRELIMINARY').length);
     return 'Yang–Zhang: RV20 ' + counts[0] + '/' + data.rows.length +
       ' e RV60 ' + counts[1] + '/' + data.rows.length +
-      ' preliminari; non certificate e non usate negli spread IV−RV Close-to-Close.';
+      ' preliminari; lettura sequenziale non atomica, non certificate e non usate negli spread IV−RV Close-to-Close.';
   }
   function renderYangZhangDetail(row, state) {
     return '<h4>RV Yang–Zhang (OHLC giornalieri)</h4>' +
@@ -574,6 +574,8 @@
     ['yz_read_status', (r, d) => d.yangZhang?.status ?? 'NOT_READ'],
     ['yz_read_error', (r, d) => d.yangZhang?.readError ?? null],
     ['yz_formula_version', (r, d) => d.yangZhang?.formulaVersion ?? null],
+    ['yz_generated_from', (r, d) => d.yangZhang?.generatedFrom ?? null],
+    ['yz_generated_to', (r, d) => d.yangZhang?.generatedTo ?? null],
     ['yz_session_date', (r, d) => r.yangZhang?.asOfSessionDate ?? null],
     ...[20, 60].flatMap(n => [
       ['rv' + n + '_yz', r => yzWindow(r, n)?.status === 'PRELIMINARY' ? num(yzWindow(r, n)?.value) : null],
@@ -1380,7 +1382,15 @@
       run.addEventListener('click', () => analyze());
       async function analyze() {
         if (busy) return;
-        if (yzCurrent) { yzCurrent.abort(); yzCurrent = null; }
+        if (yzCurrent) {
+          yzCurrent.abort();
+          yzCurrent = null;
+          if (data?.yangZhang?.status === 'LOADING') {
+            data.yangZhang = { status: 'ERROR', readError: 'INTERRUPTED_BY_NEW_COVERAGE_READ' };
+            $('yz-status').textContent = renderYangZhangStatus(data);
+            draw();            // a failed new Coverage read must not leave stale YZ as "loading"
+          }
+        }
         if (typeof S === 'undefined' || !S.backendKey) {
           state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
           lastReadAttemptAt = Date.now();

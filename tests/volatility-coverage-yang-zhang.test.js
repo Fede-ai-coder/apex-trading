@@ -71,6 +71,7 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(c.yangZhang.status,'READY');
   assert.equal(c.rows[25].yangZhang.rv60YZ.value,0.4);
   assert.match(renderYangZhangStatus(c),/26\/26/);
+  assert.match(renderYangZhangStatus(c),/non atomica/);
   const table=renderTable(c.rows.slice(0,1),{key:'position',dir:'asc'},null,c.yangZhang.status);
   assert.match(table,/RV20 CC/);
   assert.match(table,/RV20 YZ/);
@@ -88,6 +89,8 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(val('rv60_yz'),'0.4');
   assert.equal(val('rv20_yz_status'),'PRELIMINARY');
   assert.equal(val('yz_read_status'),'READY');
+  assert.equal(val('yz_generated_from'),AFTER);
+  assert.equal(val('yz_generated_to'),AFTER);
   assert.ok(names.indexOf('rv20_yz')>names.indexOf('iv60_value'),'YZ fields append after existing CSV columns');
 }
 
