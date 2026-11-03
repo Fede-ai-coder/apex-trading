@@ -1238,18 +1238,11 @@ async function testCoverageLifecycle() {
 }
 // A lifecycle that never settles would let the process exit 0 with its later assertions unrun: completion is checked.
 let coverageLifecycleDone = false;
-let coverageLifecycleFailure = null;
 testCoverageLifecycle().then(() => { coverageLifecycleDone = true; }, error => {
-  coverageLifecycleFailure = error;
   console.error('volatility coverage lifecycle failed:', error);
   process.exitCode = 1;
 });
 process.on('exit', () => {
-  // The full CI currently tails only the last 40 lines of this test file.
-  // Reprint the exact lifecycle failure AFTER node:test emits its final TAP
-  // summary; otherwise the only actionable stack is silently clipped.
-  if (coverageLifecycleFailure)
-    console.error('volatility coverage lifecycle FINAL DIAGNOSTIC:', coverageLifecycleFailure);
   if (!coverageLifecycleDone && !process.exitCode) {
     console.error('volatility coverage lifecycle did not complete');
     process.exitCode = 1;
