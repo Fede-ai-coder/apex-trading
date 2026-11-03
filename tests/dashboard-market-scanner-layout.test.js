@@ -1059,7 +1059,7 @@ async function testCoverageLifecycle() {
   assert.equal(yzRequests.length, 3, 'Yang-Zhang independently reads 60 names in three GET pages');
   assert.match(ui['yz-status'].textContent, /Yang–Zhang: RV20/);
   assert.match(ui.table.innerHTML, /RV20 YZ/);
-  assert.match(ui.table.innerHTML, /21\\.00%/, 'Yang-Zhang backend value is displayed independently');
+  assert.match(ui.table.innerHTML, /21\.00%/, 'Yang-Zhang backend value is displayed independently');
   assert.ok(yzRequests.every(r => r.options.method === 'GET' &&
     r.url.includes('/debug/volatility-carry/rv-yang-zhang?')),
     'opening the panel does not POST to the Yang-Zhang endpoint');
