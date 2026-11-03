@@ -940,288 +940,173 @@ require('node:test')('coverage monitor: persisted DEV 1D checkpoint is distinct 
 // The browser lifecycle, as for the RV panel: a manual run reads pages in order with the pinned digest, a closed
 // panel never advances, a timer never fires a second read, and nothing but GET with the session key is sent.
 async function testCoverageLifecycle() {
-  const roots = [], hosts = [], requests = [], timeouts = [], blobs = [];
-  let launcher = null;
+  // All network traffic, clocks and browser events are virtual; no live provider calls.
+  let launcher = null, clock = Date.parse('2026-11-03T09:30:00Z'), seq = 0;
+  const requests = [], roots = [], hosts = [], timers = new Map(), docEvents = new Map(), winEvents = new Map(), blobs = [];
+  class FakeDate extends Date { static now() { return clock; } }
   const element = () => ({
     style: {}, handlers: {}, attrs: {}, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false,
-    addEventListener(type, fn) { this.handlers[type] = fn; },
-    setAttribute(k, v) { this.attrs[k] = v; }, getAttribute(k) { return this.attrs[k] ?? null; },
-    focus() {}, remove() { this.removed = true; }, click() { return this.handlers.click && this.handlers.click({ target: this }); },
+    addEventListener(name, fn) { this.handlers[name] = fn; }, setAttribute(k, v) { this.attrs[k] = v; },
+    getAttribute(k) { return this.attrs[k] ?? null; }, focus() {}, remove() { this.removed = true; },
+    click() { return this.handlers.click?.({ target: this }); },
   });
   const document = {
-    readyState: 'complete',
-    getElementById(id) { return id === 'apex-vol-coverage-launcher' ? launcher : null; },
+    readyState: 'complete', visibilityState: 'visible',
+    getElementById(k) { return k === 'apex-vol-coverage-launcher' ? launcher : null; },
+    addEventListener(k, fn) { docEvents.set(k, fn); },
+    removeEventListener(k, fn) { if (docEvents.get(k) === fn) docEvents.delete(k); },
     createElement(tag) {
-      const el = element();
-      if (tag === 'a') el.click = () => { el.clicked = true; };
+      const e = element();
+      if (tag === 'a') e.click = () => { e.clicked = true; };
       if (tag === 'div') {
-        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'freshness', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
-          'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element()]));
-        const root = { fields, appended: [], getElementById(id) { return fields[id]; },
-          querySelector(sel) { assert.equal(sel, '.shade'); return fields.shade; }, appendChild(x) { this.appended.push(x); } };
-        el.attachShadow = () => root;
-        roots.push(root); hosts.push(el);
+        const fields = Object.fromEntries(['run','refresh-run','refresh','recovery-run','recovery',
+          'csv','state','freshness','summary','filters','search','availability','spread','dividend',
+          'status','reason','count','table','detail','close','shade'].map(k => [k,element()]));
+        const root = { fields, getElementById(k) { return fields[k]; },
+          querySelector() { return fields.shade; }, appendChild() {} };
+        roots.push(root); hosts.push(e); e.attachShadow = () => root;
       }
-      return el;
+      return e;
     },
-    body: { appendChild(el) { if (el.id === 'apex-vol-coverage-launcher') launcher = el; } },
+    body: { appendChild(e) { if (e.id === 'apex-vol-coverage-launcher') launcher = e; } },
   };
+  const window = { location: { hostname: 'deploy-preview-552--spontaneous-queijadas-118823.netlify.app' },
+    addEventListener(k, fn) { winEvents.set(k, fn); },
+    removeEventListener(k, fn) { if (winEvents.get(k) === fn) winEvents.delete(k); } };
   const context = {
-    module: { exports: {} }, document, BACKEND: devBackend, S: { backendKey: 'fixture-only-api-key' }, AbortController,
-    window: { location: { hostname: 'deploy-preview-552--spontaneous-queijadas-118823.netlify.app' } },
-    setTimeout(fn) { timeouts.push(fn); return timeouts.length; }, clearTimeout() {},
+    module: { exports: {} }, document, window, Date: FakeDate, BACKEND: devBackend,
+    S: { backendKey: 'fixture-only-api-key' }, AbortController,
+    setTimeout(fn, ms) { const id = ++seq; timers.set(id, { fn, ms }); return id; },
+    clearTimeout(id) { timers.delete(id); },
     fetch(url, options) { return new Promise(resolve => requests.push({ url, options, resolve })); },
-    Blob: function (parts, options) { blobs.push({ parts, options }); },
-    URL: { createObjectURL: () => 'blob:fixture', revokeObjectURL() {} },
+    Blob: function (parts) { blobs.push(parts); },
+    URL: { createObjectURL() { return 'blob:fixture'; }, revokeObjectURL() {} },
   };
   vm.runInNewContext(covSource, context, { filename: 'volatility-coverage-monitor.js' });
-  assert.ok(launcher, 'the launcher mounts on the exact preview hostname with the DEV backend');
-  const ok = body => ({ ok: true, status: 200, json: async () => body });
-  const tick = () => new Promise(resolve => setImmediate(resolve));
-  const universe = covUniverse(60), pages = covPages(universe);
-
-  const REFRESH = devBackend + '/debug/volatility-carry/iv-refresh';
-  const refreshJob = (state, processed, extra) => Object.assign({ jobId: 'job-fixture-0001', state,
-    universe: { source: 'TEST', digest: COV_DIGEST, count: 60 }, requestedAt: '2026-10-26T13:00:00.000Z',
-    finishedAt: state === 'RUNNING' ? null : '2026-10-26T13:08:00.000Z', backoffUntil: null,
-    progress: { total: 60, processed, pending: 60 - processed, retrying: 0, done: processed, failed: 0,
-      ivAvailable: processed, ivUnavailable: 0, errors: 0 } }, extra || {});
-
-  // Opening the panel reads page 1 at once (the latest available data); a click while that read runs adds nothing.
+  assert.ok(launcher, 'allowed only on DEV');
+  const ok = data => ({ ok: true, status: 200, json: async () => data });
+  const flush = async () => { await new Promise(r => setImmediate(r)); await new Promise(r => setImmediate(r)); };
+  const period = 300_000, base = devBackend + '/debug/volatility-carry/coverage',
+    refresh = devBackend + '/debug/volatility-carry/iv-refresh';
+  const pending = ms => [...timers].filter(([, x]) => x.ms === ms);
+  const fire = ms => {
+    const found = pending(ms)[0]; assert.ok(found, 'missing timer '+ms);
+    timers.delete(found[0]); found[1].fn();
+  };
+  const pages = covPages(covUniverse(60)), small = covPages(covUniverse(3))[0];
+  const replyPages = async (index, ps) => {
+    for (let i=0; i<ps.length; i++) {
+      assert.equal(requests.length, index+i+1, 'one request per page');
+      const r = requests[index+i];
+      assert.equal(r.url, base+'?offset='+i*25+'&limit=25'+(i?'&universeDigest='+COV_DIGEST:''));
+      assert.equal(r.options.method, 'GET');
+      r.resolve(ok(ps[i])); await flush();
+    }
+  };
+  // The initial read is GET-only, its in-flight requests are aborted by close, and no timers survive.
   launcher.click();
+  assert.equal(requests.length, 1);
   const first = roots[0].fields;
-  first.csv.handlers.click();
-  assert.equal(blobs.length, 0, 'no export before a complete read');
-  const firstRun = first.run.click();
-  await first.run.click();
-  assert.equal(requests.length, 1, 'the opening read is joined, never duplicated, by «Analizza universo»');
-  assert.equal(requests[0].url, devBackend + '/debug/volatility-carry/coverage?offset=0&limit=25');
-  assert.equal(requests[0].options.method, 'GET');
-  assert.equal(requests[0].options.headers['x-api-key'], 'fixture-only-api-key');
+  assert.equal(docEvents.has('visibilitychange'), true);
+  assert.equal(winEvents.has('focus'), true);
+  first.run.click(); assert.equal(requests.length, 1, 'joining a read creates no duplicate');
   first.close.click();
-  assert.equal(requests[0].options.signal.aborted, true, 'close aborts the run');
-  requests[0].resolve(ok(pages[0]));
-  await firstRun; await tick(); await tick();
-  assert.equal(requests.length, 1, 'a closed panel never asks for page 2, nor starts a refresh');
+  assert.equal(requests[0].options.signal.aborted, true);
+  assert.equal(docEvents.size, 0); assert.equal(winEvents.size, 0);
+  requests[0].resolve(ok(small)); await flush();
+  assert.equal(requests.length, 1); assert.equal(pending(period).length, 0);
 
+  // Complete 60-symbol, three-page read; no POST, one periodic timer, visible provenance.
   launcher.click();
-  const second = roots[1].fields;
-  const secondRun = second.run.click();
-  for (let i = 0; i < 3; i++) {
-    assert.equal(requests.length, 2 + i);
-    if (i > 0) assert.equal(requests[1 + i].url, devBackend + '/debug/volatility-carry/coverage?offset=' + i * 25 +
-      '&limit=25&universeDigest=' + COV_DIGEST, 'pages 2…n pin the digest of page 1');
-    requests[1 + i].resolve(ok(pages[i]));
-    await tick(); await tick();
-  }
-  await secondRun; await tick();
-  // After the complete read, exactly ONE authenticated POST starts or reuses the refresh job of THAT universe digest.
-  assert.equal(requests.length, 5, 'exactly one request per page, then one refresh request');
-  const post = requests[4];
-  assert.equal(post.url, REFRESH + '/jobs');
-  assert.equal(post.options.method, 'POST');
-  assert.equal(post.options.headers['x-api-key'], 'fixture-only-api-key');
-  assert.equal(post.options.headers['Content-Type'], 'application/json');
-  assert.deepEqual(JSON.parse(post.options.body), { universeDigest: COV_DIGEST }, 'no force on the automatic request');
-  assert.equal(second['refresh-run'].disabled, true, 'no second request while the first is in flight');
-  post.resolve(ok({ ok: true, created: false, reused: 'RECENT', superseded: [], job: refreshJob('COMPLETE', 60) }));
-  await tick(); await tick();
-  assert.match(second.refresh.innerHTML, /Nessuna nuova acquisizione: riuso del job concluso il 2026-10-26T13:08:00\.000Z/,
-    'a reused job is declared as such, never as a new acquisition');
-  // The panel OPENED (automatic request, no force): the ordinary reuse wording, never the post-force one.
-  assert.match(second.refresh.innerHTML, /Usa «Nuova acquisizione IV» per richiederne una\./, 'automatic reuse keeps its wording');
-  assert.doesNotMatch(second.refresh.innerHTML, /meno di 60 secondi|richieste duplicate/, 'the force-only wording is not shown on opening');
-  assert.match(second.refresh.innerHTML, /Elaborati <strong>60\/60<\/strong> · con IV valida <strong>60<\/strong>/);
-  assert.equal(second['refresh-run'].disabled, false, 'a new acquisition can be requested explicitly');
-  assert.match(second.state.textContent, /Completato: 60 titoli in 3 pagine · IV Ref presente per \d+\./);
-  assert.equal(second.filters.hidden, false);
-  assert.equal(second.csv.disabled, false);
-  assert.match(second.table.innerHTML, /U059/);
-  for (const fn of timeouts.splice(0)) fn();
-  await tick();
-  assert.equal(requests.length, 5, 'with a concluded job no timer ever starts another read: there is no polling');
-  assert.equal(requests[1].options.signal.aborted, true, 'a late per-page timer only aborts its own, finished run');
+  const ui = roots[1].fields, start = requests.length;
+  await replyPages(start, pages);
+  assert.equal(requests.length, start+3, 'opening does not start provider acquisition');
+  assert.equal(pending(period).length, 1);
+  assert.equal(ui['refresh-run'].disabled, false);
+  assert.equal(ui.csv.disabled, false);
+  for (const label of ['Ultima lettura Coverage', 'Ultima sessione RV', 'Data IV',
+    'Ultima osservazione IV registrata da APEX']) assert.ok(ui.freshness.innerHTML.includes(label));
+  assert.match(ui.freshness.innerHTML, /non attestano l’aggiornamento dei prezzi presso Tastytrade/);
+  ui.search.value = 'U05'; ui.search.handlers.input();
+  assert.match(ui.count.textContent, /^10 di 60 titoli mostrati/);
 
-  second.search.value = 'U05';
-  second.search.handlers.input();
-  assert.match(second.count.textContent, /^10 di 60 titoli mostrati\.$/);
-  second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-sort' ? 'spread20' : null) }) } });
-  assert.match(second.table.innerHTML, /aria-sort="ascending"/);
-  second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-sort' ? 'spread20' : null) }) } });
-  assert.match(second.table.innerHTML, /aria-sort="descending"/);
+  // One five-minute timer causes exactly one new GET read and preserves filters.
+  clock += period; const timed = requests.length; fire(period);
+  assert.equal(requests.length, timed+1);
+  ui.run.click(); assert.equal(requests.length, timed+1, 'manual click while busy joins');
+  await replyPages(timed, pages);
+  assert.equal(requests.length, timed+3);
+  assert.match(ui.count.textContent, /^10 di 60 titoli mostrati/);
+  assert.equal(pending(period).length, 1);
 
-  second.csv.handlers.click();
-  assert.equal(blobs.length, 1);
-  assert.match(blobs[0].parts[0], /^symbol,universe_position,status,/);
-  assert.doesNotMatch(blobs[0].parts[0], /fixture-only-api-key/);
-  assert.equal(roots[1].appended[0].download, 'volatility-coverage-2026-10-23-cccccccc.csv');
+  // Hidden pages do not poll. Resume after five minutes GETs; immediate focus does not duplicate.
+  document.visibilityState = 'hidden'; clock += period;
+  const beforeHide = requests.length; fire(period);
+  assert.equal(requests.length, beforeHide);
+  document.visibilityState = 'visible'; const resumeAt = requests.length;
+  docEvents.get('visibilitychange')();
+  assert.equal(requests.length, resumeAt+1);
+  winEvents.get('focus')(); assert.equal(requests.length, resumeAt+1);
+  await replyPages(resumeAt, pages);
+  winEvents.get('focus')(); assert.equal(requests.length, resumeAt+3);
+  assert.equal(pending(period).length, 1);
 
-  const detailRun = second.table.handlers.click({ target: { closest: () => ({ getAttribute: k => (k === 'data-symbol' ? 'U007' : null) }) } });
-  assert.equal(requests.length, 6);
-  assert.equal(requests[5].url, devBackend + '/debug/volatility-carry/coverage/U007');
-  requests[5].resolve({ ok: false, status: 404, json: async () => ({ ok: false, error: 'COVERAGE_SYMBOL_NOT_IN_UNIVERSE' }) });
-  await detailRun; await tick(); await tick();
-  assert.match(second.detail.innerHTML, /COVERAGE_HTTP_404: COVERAGE_SYMBOL_NOT_IN_UNIVERSE/);
+  // A failed automatic read never wipes prior values, CSV or the last successful observation time.
+  const table = ui.table.innerHTML, freshness = ui.freshness.innerHTML;
+  clock += period; const badAt = requests.length; fire(period);
+  requests[badAt].resolve({ ok:false, status:404, json:async()=>{ throw Error('not JSON'); } }); await flush();
+  assert.match(ui.state.textContent, /Endpoint non ancora disponibile/);
+  assert.equal(ui.table.innerHTML, table);
+  assert.equal(ui.freshness.innerHTML, freshness);
+  assert.equal(ui.csv.disabled, false);
+  ui.csv.click(); assert.equal(blobs.length, 1);
+  assert.equal(pending(period).length, 1);
 
-  const thirdRun = second.run.click();
-  requests[6].resolve({ ok: false, status: 404, json: async () => { throw SyntaxError('Unexpected token <'); } });
-  await thirdRun;
-  assert.match(second.state.textContent, /Endpoint non ancora disponibile sul backend DEV/);
-  assert.equal(second.state.className, 'error');
-  assert.equal(requests.length, 7, 'a failed re-read starts no refresh: one refresh request per panel opening');
-  assert.ok(requests.every((r, i) => (i === 4 ? r.options.method === 'POST' && r.url === REFRESH + '/jobs'
-    : r.options.method === 'GET' && r.url.startsWith(devBackend + '/debug/volatility-carry/coverage'))),
-    'every request is a coverage GET except the single refresh POST');
-  second.shade.click();
-  assert.equal(hosts[1].removed, true);
+  // ONLY the explicit «Nuova acquisizione IV» button sends the POST, force:true; all its polls are GET.
+  const job = (state,n) => ({ jobId:'job-fixture-0001', state,
+    universe:{source:'TEST', digest:COV_DIGEST, count:60}, requestedAt:'2026-11-03T09:45:00Z',
+    finishedAt:state==='RUNNING'?null:'2026-11-03T09:48:00Z',
+    progress:{total:60,processed:n,pending:60-n,retrying:0,done:n,failed:0,ivAvailable:n,ivUnavailable:0,errors:0} });
+  const postAt = requests.length; ui['refresh-run'].click(); ui['refresh-run'].click();
+  assert.equal(requests.length, postAt+1, 'duplicate clicks do not double POST');
+  assert.equal(requests[postAt].url, refresh+'/jobs');
+  assert.equal(requests[postAt].options.method, 'POST');
+  assert.deepEqual(JSON.parse(requests[postAt].options.body), { universeDigest:COV_DIGEST, force:true });
+  requests[postAt].resolve(ok({ok:true,created:true,job:job('RUNNING',20)})); await flush();
+  assert.equal(pending(5000).length, 1);
+  fire(5000); const pollAt = requests.length-1;
+  assert.equal(requests[pollAt].url, refresh+'/jobs/job-fixture-0001');
+  assert.equal(requests[pollAt].options.method, 'GET');
+  requests[pollAt].resolve(ok({ok:true,job:job('RUNNING',40)})); await flush();
+  fire(5000); const lastPoll = requests.length-1;
+  requests[lastPoll].resolve(ok({ok:true,job:job('COMPLETE',60)})); await flush();
+  const reread = lastPoll+1;
+  assert.equal(requests.length, reread+1);
+  await replyPages(reread, pages);
+  assert.equal(requests.length, reread+3, 'concluded job triggers a read, not a new POST');
+  assert.match(ui.refresh.innerHTML, /acquisizione completata/);
+  assert.equal(pending(5000).length, 0);
+  assert.equal(pending(period).length, 1);
+  assert.equal(ui['refresh-run'].disabled, false);
+  const posts = requests.filter(x=>x.options.method==='POST');
+  assert.equal(posts.length, 1, 'all other reads, including resume and completion, are GET');
 
-  // Closed while its LAST page is in flight: the late page must not complete the closed run, nor leave data that a
-  // reopened panel could export.
-  launcher.click();
-  const third = roots[2].fields;
-  const lastPageRun = third.run.click();
-  third.close.click();
-  requests[7].resolve(ok(covPages(covUniverse(3))[0]));
-  await lastPageRun; await tick(); await tick();
-  assert.equal(third.summary.innerHTML, '');
-  assert.doesNotMatch(third.state.textContent, /Completato/);
-  assert.equal(requests.length, 8, 'the closed run starts no refresh');
-  launcher.click();
-  roots[3].fields.csv.handlers.click();
-  assert.equal(blobs.length, 1, 'nothing from the closed run is exportable');
-  // The recovery checkpoint is not fetched by panel open or universe analysis.
-  // It is fetched only on its separate button, once, via the same authenticated
-  // GET helper; a stale response after close cannot update the reopened panel.
-  const fourth = roots[3].fields;
-  assert.equal(requests.length, 9, 'the reopened panel reads page 1 (its own opening read), nothing else');
-  assert.equal(requests[8].url, devBackend + '/debug/volatility-carry/coverage?offset=0&limit=25');
-  assert.equal(fourth.recovery.innerHTML, '');
-  const recoveryRun = fourth['recovery-run'].click();
-  assert.equal(requests.length, 10);
-  assert.equal(requests[9].url, devBackend + '/dev/market/candles/store/recovery-always-on?offset=0&limit=1');
-  assert.equal(requests[9].options.method, 'GET');
-  assert.equal(requests[9].options.headers['x-api-key'], 'fixture-only-api-key');
-  await fourth['recovery-run'].click();
-  assert.equal(requests.length, 10, 'an in-flight read is joined/refused, not duplicated');
-  requests[9].resolve(ok({
-    ok:true,readOnly:true,version:'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1',
-    mode:'canary',enabled:false,killSwitch:{enabled:false},
-    stateFile:{source:'FILE_READ_ONLY'},
-    totals:{insertedTotal:7,providerAttemptsTotal:9},
-    counts:{recoverableSessions:527,due:216,parked:0},
-    timestamps:{lastSuccessfulRecoveryAt:'2026-10-31T16:46:51.410Z'},
-    generatedAt:'2026-10-31T16:49:00Z',
-    lastCompletedNyseSession:'2026-10-30'
-  }));
-  await recoveryRun;
-  assert.match(fourth.recovery.innerHTML,/Acquisizione e salvataggio 1D/);
-  assert.match(fourth.recovery.innerHTML,/527/);
-  assert.equal(fourth['recovery-run'].disabled,false);
-  const lateRun = fourth['recovery-run'].click();
-  assert.equal(requests.length,11);
-  fourth.close.click();
-  assert.equal(requests[10].options.signal.aborted,true);
-  assert.equal(requests[8].options.signal.aborted,true, 'close also aborts the opening read');
-  requests[10].resolve(ok({ok:true,readOnly:true,version:'BAD'}));
-  await lateRun;
-  assert.doesNotMatch(fourth.recovery.innerHTML,/non verificabile/,
-    'a response after close cannot overwrite the previous rendered checkpoint');
+  // Close makes timers and browser observers inert; reopening starts a fresh GET only.
+  const lastCount=requests.length; ui.close.click();
+  assert.equal(pending(period).length, 0);
+  assert.equal(pending(5000).length, 0);
+  assert.equal(docEvents.size, 0); assert.equal(winEvents.size, 0);
+  clock += period*2; assert.equal(requests.length,lastCount);
+  launcher.click(); assert.equal(requests.length,lastCount+1);
+  await replyPages(lastCount,[small]);
+  roots[2].fields.close.click();
+  assert.equal(pending(period).length, 0);
 
-  // A NEW job: progress polled by GET only, one re-read when it ends, then an explicit new acquisition (force).
-  const small = covPages(covUniverse(3))[0];
-  const progress = n => ({ total: 3, processed: n, pending: 3 - n, retrying: 0, done: n, failed: 0, ivAvailable: n, ivUnavailable: 0, errors: 0 });
-  const smallJob = (state, n) => refreshJob(state, n, { universe: { source: 'TEST', digest: COV_DIGEST, count: 3 }, progress: progress(n) });
-  launcher.click();
-  const fifth = roots[4].fields;
-  requests[11].resolve(ok(small));
-  await tick(); await tick(); await tick();
-  assert.equal(requests.length, 13);
-  assert.deepEqual([requests[12].url, requests[12].options.method], [REFRESH + '/jobs', 'POST']);
-  requests[12].resolve({ ok: true, status: 202, json: async () => ({ ok: true, created: true, reused: null, superseded: [],
-    job: smallJob('RUNNING', 1) }) });
-  await tick(); await tick();
-  assert.match(fifth.refresh.innerHTML, /Nuova acquisizione IV avviata/);
-  assert.match(fifth.refresh.innerHTML, /acquisizione in corso/);
-  assert.match(fifth.refresh.innerHTML, /Elaborati <strong>1\/3<\/strong>/);
-  assert.equal(fifth['refresh-run'].disabled, true, 'no explicit request while a job runs');
-  timeouts.pop()();                                  // the status poll
-  assert.equal(requests.length, 14);
-  assert.deepEqual([requests[13].url, requests[13].options.method, requests[13].options.body],
-    [REFRESH + '/jobs/job-fixture-0001', 'GET', undefined], 'a poll is a GET of the job status, never an acquisition');
-  requests[13].resolve(ok({ ok: true, job: smallJob('RUNNING', 2) }));
-  await tick(); await tick();
-  assert.match(fifth.refresh.innerHTML, /Elaborati <strong>2\/3<\/strong>/);
-  assert.doesNotMatch(fifth.refresh.innerHTML, /Nuova acquisizione IV avviata/, 'a poll is not reported as a new start');
-  timeouts.pop()();
-  requests[14].resolve(ok({ ok: true, job: smallJob('COMPLETE', 3) }));
-  await tick(); await tick();
-  assert.equal(requests.length, 16, 'the concluded job triggers exactly one coverage re-read');
-  assert.equal(requests[15].url, devBackend + '/debug/volatility-carry/coverage?offset=0&limit=25');
-  requests[15].resolve(ok(small));
-  await tick(); await tick(); await tick();
-  assert.equal(requests.length, 16, 'the re-read starts no second refresh');
-  assert.match(fifth.refresh.innerHTML, /acquisizione completata/);
-  assert.equal(fifth['refresh-run'].disabled, false);
-  for (const fn of timeouts.splice(0)) fn();
-  await tick();
-  assert.equal(requests.length, 16, 'no polling after the job ended');
-  fifth['refresh-run'].click();
-  fifth['refresh-run'].click();
-  assert.equal(requests.length, 17, 'a double click sends one request');
-  assert.deepEqual(JSON.parse(requests[16].options.body), { universeDigest: COV_DIGEST, force: true });
-  requests[16].resolve(ok({ ok: true, created: false, reused: 'RECENT', superseded: [], job: smallJob('COMPLETE', 3) }));
-  await tick(); await tick();
-  assert.match(fifth.refresh.innerHTML, /Nessuna nuova acquisizione/, 'a refused explicit request is declared, not hidden');
-  // The user has JUST pressed «Nuova acquisizione IV»: the panel says why nothing new started and never invites the same
-  // click again within the backend's 60 s duplicate guard.
-  assert.match(fifth.refresh.innerHTML, /Nessuna nuova acquisizione: l’ultima acquisizione IV è terminata da meno di 60 secondi/, 'the reason is stated');
-  assert.match(fifth.refresh.innerHTML, /\. Per evitare richieste duplicate vengono mostrati i risultati già disponibili;/);
-  assert.match(fifth.refresh.innerHTML, /al termine di questo intervallo/);
-  assert.doesNotMatch(fifth.refresh.innerHTML, /Usa «Nuova acquisizione IV»/, 'no invitation to press the same button again');
-  assert.doesNotMatch(fifth.refresh.innerHTML, /Nuova acquisizione IV avviata/, 'never presented as a new start');
-  fifth.close.click();
-
-  // An old or disabled backend: stated once, never retried, the already-read values stay.
-  launcher.click();
-  const sixth = roots[5].fields;
-  requests[17].resolve(ok(small));
-  await tick(); await tick(); await tick();
-  requests[18].resolve({ ok: false, status: 404, json: async () => { throw SyntaxError('Unexpected token <'); } });
-  await tick(); await tick();
-  assert.match(sixth.refresh.innerHTML, /Refresh IV non avviato: Endpoint non ancora disponibile sul backend DEV/);
-  assert.match(sixth.refresh.innerHTML, /I valori mostrati restano quelli già letti/);
-  assert.match(sixth.state.textContent, /Completato: 3 titoli/);
-  for (const fn of timeouts.splice(0)) fn();
-  await tick();
-  assert.equal(requests.length, 19, 'no automatic retry');
-  sixth.close.click();
-
-  // Closing while a poll is scheduled: the timer firing later sends nothing.
-  launcher.click();
-  const seventh = roots[6].fields;
-  requests[19].resolve(ok(small));
-  await tick(); await tick(); await tick();
-  requests[20].resolve(ok({ ok: true, created: false, reused: 'ACTIVE', superseded: [], job: smallJob('RUNNING', 1) }));
-  await tick(); await tick();
-  assert.match(seventh.refresh.innerHTML, /già in corso: pannello ricollegato allo stesso job/);
-  const pending = timeouts.pop();
-  seventh.close.click();
-  pending();
-  await tick();
-  assert.equal(requests.length, 21, 'a closed panel never polls');
-
-  // Closing while the refresh POST is in flight aborts it.
-  launcher.click();
-  requests[21].resolve(ok(small));
-  await tick(); await tick(); await tick();
-  assert.equal(requests.length, 23);
-  roots[7].fields.close.click();
-  assert.equal(requests[22].options.signal.aborted, true, 'close aborts the in-flight refresh request');
-
-  const productionContext = Object.assign({}, context, { BACKEND: 'https://apex-tastytrade-backend-production.up.railway.app' });
-  launcher = null;
-  vm.runInNewContext(covSource, productionContext, { filename: 'volatility-coverage-monitor.js' });
-  assert.equal(launcher, null, 'no launcher against the production backend');
+  // The same source does not attach a launcher when backend is PROD.
+  launcher=null;
+  vm.runInNewContext(covSource,Object.assign({},context,{BACKEND:'https://apex-tastytrade-backend-production.up.railway.app'}),
+    {filename:'volatility-coverage-monitor.js'});
+  assert.equal(launcher,null);
 }
 // A lifecycle that never settles would let the process exit 0 with its later assertions unrun: completion is checked.
 let coverageLifecycleDone = false;
