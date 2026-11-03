@@ -900,7 +900,7 @@
       .filter(t => typeof t === 'string' && Number.isFinite(Date.parse(t)));
     const newest = observed.length ? observed.reduce((a, b) => Date.parse(b) > Date.parse(a) ? b : a) : null;
     return '<strong>Ultima lettura Coverage (APEX):</strong> ' + esc(readAt || '—') +
-      ' · <strong>Ultima sessione RV:</strong> ' + esc(data.asOfSessionDate || '—') +
+      ' · <strong>Sessione RV di riferimento:</strong> ' + esc(data.asOfSessionDate || '—') +
       ' · <strong>Data IV (NY):</strong> ' + esc(data.ivAsOfDate || '—') +
       ' · <strong>Ultima osservazione IV registrata da APEX:</strong> ' + esc(newest || 'non disponibile') +
       '<span class="sub"> · Le date non attestano l’aggiornamento dei prezzi presso Tastytrade.</span>';
