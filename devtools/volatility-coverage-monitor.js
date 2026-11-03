@@ -1032,7 +1032,7 @@
       // Start — or reuse — the backend refresh job of the universe just read. `force` asks for a NEW acquisition after a
       // concluded one; the backend refuses duplicates (one running job per universe, and a minimum interval).
       async function startRefresh(force) {
-        if (!refreshIdle() || !data || typeof S === 'undefined' || !S.backendKey) return;
+        if (busy || !refreshIdle() || !data || typeof S === 'undefined' || !S.backendKey) return;
         const controller = new AbortController();
         refreshCurrent = controller;
         const runHost = host;
@@ -1055,7 +1055,7 @@
           if (refreshCurrent === controller && host === runHost) {
             refreshCurrent = null;
             if (job && job.state === 'RUNNING') schedulePoll(job.jobId, 0);
-            else refreshRun.disabled = !data;
+            else refreshRun.disabled = !data || busy;
           }
         }
       }
@@ -1064,7 +1064,7 @@
         const runHost = host;
         if (count >= REFRESH_MAX_POLLS) {
           refresh.innerHTML += '<p class="warn">Aggiornamento dello stato sospeso dopo un’ora: riapri il pannello per ricollegarti.</p>';
-          refreshRun.disabled = !data;
+          refreshRun.disabled = !data || busy;
           return;
         }
         refreshTimer = setTimeout(() => { refreshTimer = null; if (host === runHost) void pollRefresh(jobId, count + 1); }, REFRESH_POLL_MS);
@@ -1090,7 +1090,7 @@
             refreshCurrent = null;
             if (job && job.state === 'RUNNING') schedulePoll(jobId, count);
             else {
-              refreshRun.disabled = !data;
+              refreshRun.disabled = !data || busy;
               if (job) {
                 if (busy) pendingJobRead = true; // do not lose the completed-job re-read to another GET
                 else void analyze();            // GET only, with the concluded job's results

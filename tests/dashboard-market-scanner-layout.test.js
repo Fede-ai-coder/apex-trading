@@ -1100,6 +1100,9 @@ async function testCoverageLifecycle() {
   assert.equal(requests[detailAt].url, base + '/U007');
   const beforeNewRead = requests.length;
   ui.run.click();
+  assert.equal(ui['refresh-run'].disabled, true, 'acquisition stays disabled during a Coverage read');
+  ui['refresh-run'].click(); // even a synthetic event cannot start a POST against an outdated digest
+  assert.equal(requests.length, beforeNewRead+1, 'no IV acquisition while the current Coverage read is incomplete');
   await replyPages(beforeNewRead, pages);
   assert.equal(requests[detailAt].options.signal.aborted, true,
     'successful new Coverage snapshot aborts the old symbol-detail request');
