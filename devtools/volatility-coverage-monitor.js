@@ -11,6 +11,8 @@
   'use strict';
   const PATH = '/debug/volatility-carry/coverage';
   const YZ_PATH = '/debug/volatility-carry/rv-yang-zhang';
+  const PRICE_BASIS_PATH = '/debug/volatility-carry/price-basis';
+  const PRICE_BASIS_VERSION = 'RV_PRICE_BASIS_DAILY_ONLY_DIAGNOSTIC_V1';
   const YZ_AUDIT_VERSION = 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1';
   const RV40_DIAGNOSTIC_VERSION = 'RV40_CC_AND_YANG_ZHANG_STORED_1D_PRELIMINARY_V1';
   const YZ_STATES = ['PRELIMINARY', 'BLOCKED_SESSION_POLICY', 'UNAVAILABLE'];
@@ -467,69 +469,105 @@
     if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(row.symbol)||
        ![20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return '';
     return '<p><button type="button" data-yz-ohlc-symbol="'+esc(row.symbol)+'">'+
-      'Mostra sedute OHLC incompatibili (sola lettura)</button></p>'+
+      'Analizza sedute OHLC e dividendi (sola lettura)</button></p>'+
       '<div data-yz-ohlc-results></div>';
   }
-  function renderYangZhangOhlcAudit(reply,coverage,joined) {
-    const bad=()=>{throw Error('YZ_OHLC_DETAIL_INCONSISTENT');};
-    if(!coverage||coverage.yangZhang?.status!=='READY'||!joined?.yangZhang||!reply||
+  // The backend price-basis report is richer than the bare YZ blocked sessions:
+  // exact session, deviation, materiality, the dividend checkpoint state and
+  // evidence. It remains purely diagnostic; classification tolerance NEVER
+  // changes the strict Yang–Zhang eligibility or stored OHLC values.
+  function renderPriceBasisOhlcAudit(reply,coverage,joined) {
+    const invalid=()=>{throw Error('PRICE_BASIS_DETAIL_INCONSISTENT');};
+    const audit=reply?.report, prior=joined?.yangZhang;
+    if(!coverage||coverage.yangZhang?.status!=='READY'||!joined||!prior||!reply||
        reply.ok!==true||reply.readOnly!==true||reply.certified!==false||
-       reply.notForTrading!==true||reply.executionAuthorized!==false||
-       reply.auditVersion!==YZ_AUDIT_VERSION||reply.rv40DiagnosticVersion!==RV40_DIAGNOSTIC_VERSION||
-       reply.universe?.digest!==coverage.universe?.digest||
-       reply.universe?.count!==coverage.rows.length||
-       reply.asOfSessionDate!==coverage.asOfSessionDate||
-       reply.symbol!==joined.symbol||reply.universePosition!==joined.universePosition||
-       reply.row?.symbol!==joined.symbol||reply.row?.universePosition!==joined.universePosition||
-       reply.row?.asOfSessionDate!==coverage.asOfSessionDate||reply.row?.readError!==null||
-       reply.yangZhang?.symbol!==joined.symbol||
-       reply.yangZhang?.asOfSessionDate!==coverage.asOfSessionDate)
-      bad();
-    const all=new Map(), counts={20:0,40:0,60:0};
-    for(const n of [20,40,60]){
-      const key='rv'+n+'YZ';
-      const full=reply.yangZhang[key],compact=reply.row[key],snapshot=joined.yangZhang[key];
-      if(!full||!compact||!snapshot||
-         full.status!==compact.status||compact.status!==snapshot.status||
-         full.reason!==compact.reason||compact.reason!==snapshot.reason||
-         full.windowFrom!==compact.windowFrom||compact.windowFrom!==snapshot.windowFrom||
-         full.windowThrough!==compact.windowThrough||compact.windowThrough!==snapshot.windowThrough||
-         compact.inputDigest!==snapshot.inputDigest||
-         !Array.isArray(full.blockedSessions)||full.blockedSessions.length>n+1)
-        bad();
-      if(full.reason===YZ_OHLC_REASON && full.blockedSessions.length===0)bad();
-      const seen=new Set();
-      for(const b of full.blockedSessions){
-        if(!b||b.reason!==YZ_OHLC_REASON||
-           typeof b.sessionDate!=='string'||!DAY.test(b.sessionDate)||
-           b.sessionDate<full.windowFrom||b.sessionDate>full.windowThrough||
-           !['PRIOR_CLOSE','RETURN_SESSION'].includes(b.role)||
-           !Array.isArray(b.shape)||b.shape.length<1||b.shape.length>4||
-           b.shape.some(shape=>!YZ_OHLC_SHAPES.has(shape))||seen.has(b.sessionDate))
-          bad();
-        seen.add(b.sessionDate);
-        let rec=all.get(b.sessionDate);
-        if(!rec){rec={date:b.sessionDate,shapes:new Set(),windows:new Set(),roles:new Set()};all.set(b.sessionDate,rec);}
-        b.shape.forEach(shape=>rec.shapes.add(shape));
-        rec.windows.add(n);rec.roles.add(b.role);
-        counts[n]++;
-      }
+       reply.changesPrices!==false||reply.notForTrading!==true||
+       reply.version!==PRICE_BASIS_VERSION||reply.universe?.digest!==coverage.universe?.digest||
+       reply.universe?.count!==coverage.rows.length||reply.asOfSessionDate!==coverage.asOfSessionDate||
+       !audit||audit.version!==PRICE_BASIS_VERSION||audit.readOnly!==true||
+       audit.certified!==false||audit.changesPrices!==false||audit.symbol!==joined.symbol||
+       audit.asOfSessionDate!==coverage.asOfSessionDate||audit.readError!==null)
+      invalid();
+    if(!coverage.rows.some(r=>r===joined&&r.symbol===audit.symbol&&
+       r.universePosition===joined.universePosition&&r.asOf?.rvSessionDate===coverage.asOfSessionDate))
+      invalid();
+    for(const n of [20,60]){
+      const win=audit['rv'+n],snap=prior['rv'+n+'YZ'];
+      if(!win||!snap||!win.yz||
+         win.windowFrom!==snap.windowFrom||win.windowThrough!==snap.windowThrough||
+         win.yz.status!==snap.status||win.yz.reason!==snap.reason||
+         win.yz.inputDigest!==snap.inputDigest||
+         !Array.isArray(win.sessions)||win.sessions.length>n+1)
+        invalid();
     }
-    if(!all.size)bad();
-    const rows=[...all.values()].sort((a,b)=>a.date.localeCompare(b.date));
-    const table=rows.map(r=>'<tr><td><code>'+esc(r.date)+'</code></td><td>'+
-      esc([...r.shapes].sort().join(' · '))+'</td><td>'+esc([...r.windows].sort((a,b)=>a-b).join('/'))+
-      '</td><td>'+esc([...r.roles].sort().join(' / '))+'</td></tr>').join('');
+    const win40=prior.rv40YZ;
+    if(!win40||!DAY.test(String(win40.windowFrom))||!DAY.test(String(win40.windowThrough))||
+       win40.windowFrom<audit.rv60.windowFrom||win40.windowThrough!==audit.rv60.windowThrough)
+      invalid();
+    const arr=audit.rv60.sessions,seen=new Set(),buckets={20:0,40:0,60:0};
+    const observed=[];
+    for(const item of arr){
+      if(!item||typeof item.sessionDate!=='string'||!DAY.test(item.sessionDate)||
+         item.sessionDate<audit.rv60.windowFrom||item.sessionDate>audit.rv60.windowThrough||
+         seen.has(item.sessionDate)||!['MINOR','MATERIAL','STRUCTURAL'].includes(item.kind)||
+         item.yzStrictOhlcValid!==false||
+         (item.kind==='STRUCTURAL' && !YZ_OHLC_SHAPES.has(item.structuralIssue))||
+         (item.kind!=='STRUCTURAL' && (!YZ_OHLC_SHAPES.has(item.side)||
+           num(item.deviation)===null||item.deviation<0||
+           num(item.reference)===null||item.reference<=0||
+           num(item.relativeDeviation)===null||item.relativeDeviation<0)))
+        invalid();
+      seen.add(item.sessionDate);
+      const in20=item.sessionDate>=audit.rv20.windowFrom && item.sessionDate<=audit.rv20.windowThrough;
+      const in40=item.sessionDate>=win40.windowFrom && item.sessionDate<=win40.windowThrough;
+      buckets[60]++;if(in40)buckets[40]++;if(in20)buckets[20]++;
+      observed.push({item,in20,in40});
+    }
+    // The existing report independently evaluates RV20, using the identical
+    // stored 1D sessions. An inconsistent cross-window read must fail closed.
+    const in20From60=new Map(observed.filter(x=>x.in20).map(x=>[x.item.sessionDate,x.item]));
+    if(audit.rv20.sessions.length!==in20From60.size||
+       audit.rv20.sessions.some(x=>!in20From60.has(x.sessionDate)||
+         x.kind!==in20From60.get(x.sessionDate).kind||
+         x.yzStrictOhlcValid!==false))
+      invalid();
+    for(const n of [20,40,60]){
+      if(prior['rv'+n+'YZ']?.reason===YZ_OHLC_REASON && buckets[n]===0)
+        invalid();
+    }
+    if(!observed.length)invalid();
+    const dateRows=observed.sort((a,b)=>a.item.sessionDate.localeCompare(b.item.sessionDate))
+      .map(({item,in20,in40})=>{
+        const shape=item.kind==='STRUCTURAL'?item.structuralIssue:item.side;
+        const deviation=item.kind==='STRUCTURAL'?'—':String(item.deviation)+' USD';
+        const bp=item.kind==='STRUCTURAL'?'—':String(item.relativeDeviation*10000)+' bp';
+        const finding=item.finding;
+        const divEvidence=item.dividendEvidence??'NON_VALUTATA';
+        const dividendNote=finding
+          ?divEvidence+' · importo '+String(finding.amount??'—')+
+            ' · data evento '+String(finding.eventDate??'—')
+          :divEvidence;
+        return '<tr><td><code>'+esc(item.sessionDate)+'</code></td><td>'+
+          esc(shape)+'</td><td>'+esc(item.kind)+'</td><td>'+
+          esc(deviation)+'</td><td>'+esc(bp)+'</td><td>'+
+          esc([...(in20?['20']:[]),...(in40?['40']:[]),'60'].join('/'))+'</td><td>'+
+          esc(dividendNote)+'</td></tr>';
+      }).join('');
     return '<section class="audit-detail" data-yz-ohlc-diagnostic>'+
-      '<h4>'+esc(joined.symbol)+' · sedute OHLC incompatibili con Yang–Zhang</h4>'+
-      '<p class="warn">Diagnostica read-only sullo store 1D: '+rows.length+
-      ' sedute distinte; rilievi RV20 '+counts[20]+', RV40 '+counts[40]+', RV60 '+counts[60]+
+      '<h4>'+esc(joined.symbol)+' · qualità OHLC e base prezzi 1D</h4>'+
+      '<p class="warn">'+observed.length+' sedute anomale distinte. Nelle finestre: RV20 '+buckets[20]+
+      ', RV40 '+buckets[40]+', RV60 '+buckets[60]+
       '. Le finestre si sovrappongono: non sommare i conteggi.</p>'+
-      '<table><thead><tr><th>Sessione NY</th><th>Forma OHLC</th>'+
-      '<th>Finestre RV</th><th>Ruolo</th></tr></thead><tbody>'+table+'</tbody></table>'+
-      '<p class="note">Questa risposta specifica date e forme dell’anomalia, NON i prezzi O/H/L/C grezzi. '+
-      'Nessuna candela è modificata o recuperata. Prima di correggere i dati, '+
-      'confrontarli con la fonte originale e le eventuali azioni societarie.</p></section>';
+      '<p class="note">Checkpoint dividendi: '+esc(audit.evidence?.dividendCheckpoint?.state??'NON_DISPONIBILE')+
+      '. MINOR: deviazione fino a 0,05 USD E 5 bp; MATERIAL oltre almeno una soglia. '+
+      'Anche MINOR resta incompatibile con lo Yang–Zhang rigoroso.</p>'+
+      '<div class="scroll"><table><thead><tr><th>Sessione NY</th><th>Forma OHLC</th>'+
+      '<th>Entità</th><th>Scostamento</th><th>Scostamento bp</th>'+
+      '<th>RV YZ</th><th>Evidenza dividendo</th></tr></thead><tbody>'+
+      dateRows+'</tbody></table></div>'+
+      '<p class="note">Il report è read-only e non restituisce tutti i prezzi OHLC originali. '+
+      'La compatibilità numerica con un dividendo NON attesta la data ex-dividendo o la base prezzi. '+
+      'Nessuna correzione, acquisizione o nuova politica di recupero è stata eseguita.</p></section>';
   }
 
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
@@ -1592,11 +1630,11 @@
         const timeout=setTimeout(()=>controller.abort(),TIMEOUT_MS);
         slot.textContent='Lettura sedute incompatibili di '+symbol+' (GET, nessuna acquisizione)…';
         try{
-          const json=await fetchJson(BACKEND+YZ_PATH+'/'+encodeURIComponent(symbol),
+          const json=await fetchJson(BACKEND+PRICE_BASIS_PATH+'/'+encodeURIComponent(symbol),
             S.backendKey,controller.signal);
           if(controller!==ohlcCurrent||host!==runHost||data!==readData||
              detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
-          slot.innerHTML=renderYangZhangOhlcAudit(json,readData,joined);
+          slot.innerHTML=renderPriceBasisOhlcAudit(json,readData,joined);
         }catch(error){
           if(controller!==ohlcCurrent||host!==runHost||data!==readData||
              detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
@@ -1757,7 +1795,7 @@
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
       matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, spread40Diagnostic,
-      ohlcDiagnosticButton, renderYangZhangOhlcAudit,
+      ohlcDiagnosticButton, renderPriceBasisOhlcAudit,
       spread40Cell, renderSpread40Detail, renderYangZhangStatus, renderYangZhangDetail,
       summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
