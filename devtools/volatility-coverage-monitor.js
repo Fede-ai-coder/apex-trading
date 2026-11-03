@@ -453,7 +453,83 @@
       'Gli spread IV−RV visualizzati sopra restano quelli calcolati dal backend sulla RV Close-to-Close.</p>' +
       '<div>RV20 YZ: ' + yangZhangCell(row, 20, state) + '</div>' +
       '<div>RV40 YZ: ' + yangZhangCell(row, 40, state) + '</div>' +
-      '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>';
+      '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>' +
+      ohlcDiagnosticButton(row,state);
+  }
+
+
+  // Full OHLC incompatibility dates are already exposed by the existing
+  // backend DEV Yang-Zhang :symbol GET; no provider fetch, store write, repair,
+  // fallback or price adjustment. This optional detail read is user-initiated.
+  const YZ_OHLC_REASON='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG';
+  const YZ_OHLC_SHAPES=new Set(['CLOSE_BELOW_LOW','CLOSE_ABOVE_HIGH','OPEN_OUTSIDE_RANGE','LOW_ABOVE_HIGH']);
+  function ohlcDiagnosticButton(row,state) {
+    if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(row.symbol)||
+       ![20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return '';
+    return '<p><button type="button" data-yz-ohlc-symbol="'+esc(row.symbol)+'">'+
+      'Mostra sedute OHLC incompatibili (sola lettura)</button></p>'+
+      '<div data-yz-ohlc-results></div>';
+  }
+  function renderYangZhangOhlcAudit(reply,coverage,joined) {
+    const bad=()=>{throw Error('YZ_OHLC_DETAIL_INCONSISTENT');};
+    if(!coverage||coverage.yangZhang?.status!=='READY'||!joined?.yangZhang||!reply||
+       reply.ok!==true||reply.readOnly!==true||reply.certified!==false||
+       reply.notForTrading!==true||reply.executionAuthorized!==false||
+       reply.auditVersion!==YZ_AUDIT_VERSION||reply.rv40DiagnosticVersion!==RV40_DIAGNOSTIC_VERSION||
+       reply.universe?.digest!==coverage.universe?.digest||
+       reply.universe?.count!==coverage.rows.length||
+       reply.asOfSessionDate!==coverage.asOfSessionDate||
+       reply.symbol!==joined.symbol||reply.universePosition!==joined.universePosition||
+       reply.row?.symbol!==joined.symbol||reply.row?.universePosition!==joined.universePosition||
+       reply.row?.asOfSessionDate!==coverage.asOfSessionDate||reply.row?.readError!==null||
+       reply.yangZhang?.symbol!==joined.symbol||
+       reply.yangZhang?.asOfSessionDate!==coverage.asOfSessionDate)
+      bad();
+    const all=new Map(), counts={20:0,40:0,60:0};
+    for(const n of [20,40,60]){
+      const key='rv'+n+'YZ';
+      const full=reply.yangZhang[key],compact=reply.row[key],snapshot=joined.yangZhang[key];
+      if(!full||!compact||!snapshot||
+         full.status!==compact.status||compact.status!==snapshot.status||
+         full.reason!==compact.reason||compact.reason!==snapshot.reason||
+         full.windowFrom!==compact.windowFrom||compact.windowFrom!==snapshot.windowFrom||
+         full.windowThrough!==compact.windowThrough||compact.windowThrough!==snapshot.windowThrough||
+         compact.inputDigest!==snapshot.inputDigest||
+         !Array.isArray(full.blockedSessions)||full.blockedSessions.length>n+1)
+        bad();
+      if(full.reason===YZ_OHLC_REASON && full.blockedSessions.length===0)bad();
+      const seen=new Set();
+      for(const b of full.blockedSessions){
+        if(!b||b.reason!==YZ_OHLC_REASON||
+           typeof b.sessionDate!=='string'||!DAY.test(b.sessionDate)||
+           b.sessionDate<full.windowFrom||b.sessionDate>full.windowThrough||
+           !['PRIOR_CLOSE','RETURN_SESSION'].includes(b.role)||
+           !Array.isArray(b.shape)||b.shape.length<1||b.shape.length>4||
+           b.shape.some(shape=>!YZ_OHLC_SHAPES.has(shape))||seen.has(b.sessionDate))
+          bad();
+        seen.add(b.sessionDate);
+        let rec=all.get(b.sessionDate);
+        if(!rec){rec={date:b.sessionDate,shapes:new Set(),windows:new Set(),roles:new Set()};all.set(b.sessionDate,rec);}
+        b.shape.forEach(shape=>rec.shapes.add(shape));
+        rec.windows.add(n);rec.roles.add(b.role);
+        counts[n]++;
+      }
+    }
+    if(!all.size)bad();
+    const rows=[...all.values()].sort((a,b)=>a.date.localeCompare(b.date));
+    const table=rows.map(r=>'<tr><td><code>'+esc(r.date)+'</code></td><td>'+
+      esc([...r.shapes].sort().join(' · '))+'</td><td>'+esc([...r.windows].sort((a,b)=>a-b).join('/'))+
+      '</td><td>'+esc([...r.roles].sort().join(' / '))+'</td></tr>').join('');
+    return '<section class="audit-detail" data-yz-ohlc-diagnostic>'+
+      '<h4>'+esc(joined.symbol)+' · sedute OHLC incompatibili con Yang–Zhang</h4>'+
+      '<p class="warn">Diagnostica read-only sullo store 1D: '+rows.length+
+      ' sedute distinte; rilievi RV20 '+counts[20]+', RV40 '+counts[40]+', RV60 '+counts[60]+
+      '. Le finestre si sovrappongono: non sommare i conteggi.</p>'+
+      '<table><thead><tr><th>Sessione NY</th><th>Forma OHLC</th>'+
+      '<th>Finestre RV</th><th>Ruolo</th></tr></thead><tbody>'+table+'</tbody></table>'+
+      '<p class="note">Questa risposta specifica date e forme dell’anomalia, NON i prezzi O/H/L/C grezzi. '+
+      'Nessuna candela è modificata o recuperata. Prima di correggere i dati, '+
+      'confrontarli con la fonte originale e le eventuali azioni societarie.</p></section>';
   }
 
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
@@ -1197,7 +1273,7 @@
     trigger.style.cssText = 'position:fixed;bottom:17px;right:150px;z-index:2147482990;' +
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
-    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, yzCurrent = null,
+    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, yzCurrent = null, ohlcCurrent = null,
       detailSnapshot = null, busy = false, data = null;
     let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
     let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false, activeAnalyze = null;
@@ -1225,12 +1301,13 @@
       if (detailCurrent) detailCurrent.abort();
       if (recoveryCurrent) recoveryCurrent.abort();
       if (yzCurrent) yzCurrent.abort();
+      if (ohlcCurrent) ohlcCurrent.abort();
       if (refreshCurrent) refreshCurrent.abort();
       if (refreshTimer) clearTimeout(refreshTimer);
       if (coverageTimer !== null) clearTimeout(coverageTimer);
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
-      current = null; detailCurrent = null; recoveryCurrent = null; yzCurrent = null;
+      current = null; detailCurrent = null; recoveryCurrent = null; yzCurrent = null; ohlcCurrent = null;
       detailSnapshot = null; busy = false; data = null;
       refreshCurrent = null; refreshTimer = null; coverageTimer = null;
       lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false; activeAnalyze = null;
@@ -1463,6 +1540,7 @@
       });
       async function loadDetail(symbol) {
         if (typeof S === 'undefined' || !S.backendKey) return;
+        if (ohlcCurrent) { ohlcCurrent.abort(); ohlcCurrent = null; }
         if (detailCurrent) detailCurrent.abort();
         // The currently requested symbol owns the detail slot from this point
         // onward. A failed/aborted read must not let a prior symbol reappear
@@ -1493,6 +1571,44 @@
           if (detailCurrent === controller) detailCurrent = null;
         }
       }
+
+      // Explicit per-symbol GET of full Yang-Zhang diagnostics. Never invoked
+      // from opening, paginating, auto-refresh or IV acquisition.
+      detail.addEventListener('click', async event => {
+        const button=event.target?.closest?.('button[data-yz-ohlc-symbol]');
+        if(!button||!host||!data||data.yangZhang?.status!=='READY')return;
+        const symbol=button.getAttribute('data-yz-ohlc-symbol');
+        if(!symbol||!SYMBOL.test(symbol)||detailSnapshot?.symbol!==symbol||
+           typeof S==='undefined'||!S.backendKey)return;
+        const joined=matchingYangZhangRowForDetail(detailSnapshot,data);
+        if(!joined||joined.symbol!==symbol||
+           ![20,40,60].some(n=>joined.yangZhang?.['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return;
+        const slot=detail.querySelector('[data-yz-ohlc-results]');
+        if(!slot)return;
+        if(ohlcCurrent)ohlcCurrent.abort();
+        const controller=new AbortController();
+        ohlcCurrent=controller;
+        const runHost=host, readData=data, readDetail=detailSnapshot;
+        const timeout=setTimeout(()=>controller.abort(),TIMEOUT_MS);
+        slot.textContent='Lettura sedute incompatibili di '+symbol+' (GET, nessuna acquisizione)…';
+        try{
+          const json=await fetchJson(BACKEND+YZ_PATH+'/'+encodeURIComponent(symbol),
+            S.backendKey,controller.signal);
+          if(controller!==ohlcCurrent||host!==runHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
+          slot.innerHTML=renderYangZhangOhlcAudit(json,readData,joined);
+        }catch(error){
+          if(controller!==ohlcCurrent||host!==runHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
+          slot.innerHTML='<p class="error">'+esc(controller.signal.aborted?'Lettura OHLC scaduta o annullata.':
+            (error?.message||'YZ_OHLC_DETAIL_READ_FAILED'))+
+            '. Nessun dato modificato.</p>';
+        }finally{
+          clearTimeout(timeout);
+          if(ohlcCurrent===controller)ohlcCurrent=null;
+        }
+      });
+
       // A second explicit click performs ONE authenticated GET; never run
       // this read automatically on open or during the coverage analysis.
       recoveryRun.addEventListener('click', async () => {
@@ -1540,6 +1656,7 @@
       run.addEventListener('click', () => analyze());
       async function analyze() {
         if (busy) return;
+        if (ohlcCurrent) { ohlcCurrent.abort(); ohlcCurrent = null; }
         if (yzCurrent) {
           yzCurrent.abort();
           yzCurrent = null;
@@ -1640,6 +1757,7 @@
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
       matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, spread40Diagnostic,
+      ohlcDiagnosticButton, renderYangZhangOhlcAudit,
       spread40Cell, renderSpread40Detail, renderYangZhangStatus, renderYangZhangDetail,
       summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
