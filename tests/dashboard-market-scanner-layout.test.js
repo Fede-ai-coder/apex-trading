@@ -1024,7 +1024,7 @@ async function testCoverageLifecycle() {
   assert.equal(pending(period).length, 1);
   assert.equal(ui['refresh-run'].disabled, false);
   assert.equal(ui.csv.disabled, false);
-  for (const label of ['Ultima lettura Coverage', 'Ultima sessione RV', 'Data IV',
+  for (const label of ['Ultima lettura Coverage', 'Sessione RV di riferimento', 'Data IV',
     'Ultima osservazione IV registrata da APEX']) assert.ok(ui.freshness.innerHTML.includes(label));
   assert.match(ui.freshness.innerHTML, /non attestano l’aggiornamento dei prezzi presso Tastytrade/);
   ui.search.value = 'U05'; ui.search.handlers.input();
