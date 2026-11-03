@@ -128,7 +128,7 @@ With the panel **open and visible**, an automatic read-only refresh repeats ever
 to the browser tab or window after at least 5 minutes since the last attempted/successful read, it re-reads Coverage
 via GET. While the tab is hidden it sends no scheduled Coverage requests; when closed, it cancels the timer and
 removes the resume listeners. There is never a second concurrent Coverage read.
-The panel labels the **latest Coverage read instant (APEX)**, **latest RV session date**, **IV date (New York)** and
+The panel labels the **latest Coverage read instant (APEX)**, **reference completed RV session date (not per-symbol RV certification)**, **IV date (New York)** and
 **latest IV observation acquired by APEX**, where available. Those timestamps do *not* attest to a provider-side
 calculation update. An unsuccessful re-read keeps the last valid displayed results and export available.
 From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
