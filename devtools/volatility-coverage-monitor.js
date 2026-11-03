@@ -1233,7 +1233,9 @@
           lastReadAt = Date.now();
           $('freshness').innerHTML = renderCoverageFreshness(data, new Date(lastReadAt).toISOString());
           $('summary').innerHTML = renderSummary(data);
-          detail.innerHTML = ''; // a previously opened symbol detail belongs to the earlier snapshot
+          // A detail requested for the prior snapshot cannot overwrite refreshed Coverage.
+          if (detailCurrent) { detailCurrent.abort(); detailCurrent = null; }
+          detail.innerHTML = '';
           $('reason').innerHTML = '<option value="">Motivo: tutti</option>' + reasonCodes(data.rows)
             .map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
           if (view.reason && !reasonCodes(data.rows).includes(view.reason)) view.reason = '';
