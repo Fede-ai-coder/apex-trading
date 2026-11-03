@@ -316,6 +316,12 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.match(html,/Nessuna correzione, acquisizione/);
   assert.doesNotMatch(html,/<script|onerror=|onload=/i);
   assert.ok(html.indexOf('2026-08-21')<html.indexOf('2026-09-17'));
+  const structured=session('2026-09-19','STRUCTURAL',{
+    structuralIssue:'NOT_POSITIVE_OR_NON_FINITE_PRICE'});
+  const withStructural={...reply,report:{...report,rv60:{...report.rv60,
+    sessions:[small,material,structured]}}};
+  assert.match(renderPriceBasisOhlcAudit(withStructural,c,joined),
+    /NOT_POSITIVE_OR_NON_FINITE_PRICE/);
   const bad=x=>throws(()=>renderPriceBasisOhlcAudit(x,c,joined),'PRICE_BASIS_DETAIL_INCONSISTENT');
   bad({...reply,readOnly:false});
   bad({...reply,changesPrices:true});
@@ -329,6 +335,8 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   bad({...reply,report:{...report,asOfSessionDate:'2026-11-03'}});
   bad({...reply,report:{...report,rv60:{...report.rv60,
     yz:{...report.rv60.yz,reason:'MISSING_COMPLETED_SESSIONS'}}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[
+    small,material,{...structured,structuralIssue:'<svg onload=alert(1)>'}]}}});
   bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[small,small]}}});
   bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[
     {...small,sessionDate:'2027-12-01'},material]}}});
