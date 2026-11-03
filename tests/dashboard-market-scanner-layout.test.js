@@ -1091,6 +1091,49 @@ async function testCoverageLifecycle() {
   const posts = requests.filter(x=>x.options.method==='POST');
   assert.equal(posts.length, 1, 'all other reads, including resume and completion, are GET');
 
+  // The 1D recovery checkpoint is still an EXPLICIT separate GET, never an automatic side effect.
+  assert.equal(ui.recovery.innerHTML, '', 'opening and periodic updates do not fetch the recovery checkpoint');
+  const recoveryAt = requests.length;
+  ui['recovery-run'].click();
+  assert.equal(requests.length, recoveryAt+1);
+  assert.equal(requests[recoveryAt].url, devBackend+'/dev/market/candles/store/recovery-always-on?offset=0&limit=1');
+  assert.equal(requests[recoveryAt].options.method, 'GET');
+  requests[recoveryAt].resolve(ok({
+    ok:true,readOnly:true,version:'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1',
+    mode:'canary',enabled:false,killSwitch:{enabled:false},
+    stateFile:{source:'FILE_READ_ONLY'},
+    totals:{insertedTotal:7,providerAttemptsTotal:9},
+    counts:{recoverableSessions:527,due:216,parked:0},
+    timestamps:{lastSuccessfulRecoveryAt:'2026-10-31T16:46:51.410Z'},
+    generatedAt:'2026-10-31T16:49:00Z',lastCompletedNyseSession:'2026-10-30'
+  })); await flush();
+  assert.match(ui.recovery.innerHTML,/Acquisizione e salvataggio 1D/);
+  assert.equal(ui['recovery-run'].disabled,false);
+
+  // Manual force within the cooldown reuses the finished job and is NOT reported as a new acquisition.
+  const recentAt = requests.length; ui['refresh-run'].click();
+  assert.equal(requests[recentAt].options.method,'POST');
+  assert.deepEqual(JSON.parse(requests[recentAt].options.body),{universeDigest:COV_DIGEST,force:true});
+  requests[recentAt].resolve(ok({ok:true,created:false,reused:'RECENT',job:job('COMPLETE',60)}));
+  await flush();
+  assert.match(ui.refresh.innerHTML,/Nessuna nuova acquisizione.*meno di 60 secondi/);
+  assert.equal(pending(5000).length,0);
+
+  // A backend rejecting an explicit POST leaves previous read-only data intact and does not retry on a timer.
+  const rejectedAt=requests.length; ui['refresh-run'].click();
+  requests[rejectedAt].resolve({ok:false,status:404,json:async()=>{throw Error('not JSON')}});
+  await flush();
+  assert.match(ui.refresh.innerHTML,/Refresh IV non avviato: Endpoint non ancora disponibile/);
+  assert.match(ui.refresh.innerHTML,/I valori mostrati restano quelli già letti/);
+  assert.equal(ui.csv.disabled,false);
+  assert.equal(pending(5000).length,0);
+
+  // A manually started job's pending status timer is cancelled on close (no background job status polling).
+  const activeAt=requests.length; ui['refresh-run'].click();
+  requests[activeAt].resolve(ok({ok:true,created:true,job:job('RUNNING',3)}));
+  await flush();
+  assert.equal(pending(5000).length,1);
+
   // Close makes timers and browser observers inert; reopening starts a fresh GET only.
   const lastCount=requests.length; ui.close.click();
   assert.equal(pending(period).length, 0);
