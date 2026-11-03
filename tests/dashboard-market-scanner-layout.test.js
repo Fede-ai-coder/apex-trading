@@ -651,7 +651,7 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   const lines = csv.split('\r\n');
   assert.equal(lines.length, 11, 'header + 9 rows + final CRLF');
   const header = lines[0].split(',');
-  assert.deepEqual(header, ['symbol', 'universe_position', 'status', 'primary_reason', 'reasons', 'iv_ref', 'iv_ref_status',
+  const previousHeader = ['symbol', 'universe_position', 'status', 'primary_reason', 'reasons', 'iv_ref', 'iv_ref_status',
     'iv_ref_reason', 'iv_ref_source', 'iv_ref_expiration', 'iv_ref_dte', 'iv_observed_at', 'iv_as_of_date',
     'rv20', 'rv20_basis', 'rv20_validated', 'rv20_required', 'rv20_missing', 'rv20_certified_reasons',
     'rv60', 'rv60_basis', 'rv60_validated', 'rv60_required', 'rv60_missing', 'rv60_certified_reasons',
@@ -667,9 +667,30 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'iv_freshness', 'iv_requested_at', 'iv_fetched_at', 'iv_provider_as_of', 'iv_provider_as_of_field', 'iv_chain_fetched_at',
     'iv_error_class', 'iv_selection_version', 'iv_policy_version', 'iv_timing_policy_version', 'iv_timing_comparable',
     'iv_timing_basis', 'iv_timing_reason', 'iv_provider_update_attested', 'iv_last_successful', 'iv_last_successful_fetched_at',
-    'iv_last_successful_job_id'].concat([20, 40, 60].flatMap(n => ["value","status","reason","target_dte","actual_dte","expiration","expiration_type","option_chain_type","settlement_type","source","selection_version","policy_version","horizon_basis","job_id","as_of_date","observed_at","requested_at","provider_as_of","shared_with_targets","chain_fetched_at"].map(k => 'iv' + n + '_' + k))));
+    'iv_last_successful_job_id'].concat([20, 40, 60].flatMap(n => ["value","status","reason","target_dte","actual_dte","expiration","expiration_type","option_chain_type","settlement_type","source","selection_version","policy_version","horizon_basis","job_id","as_of_date","observed_at","requested_at","provider_as_of","shared_with_targets","chain_fetched_at"].map(k => 'iv' + n + '_' + k)));
+  // Every historic column is position-pinned. Yang-Zhang may only append its
+  // independently labeled diagnostic fields, never silently move IV or CC RV.
+  const yangZhangFields = ['yz_read_status', 'yz_read_error', 'yz_formula_version',
+    'yz_generated_from', 'yz_generated_to', 'yz_session_date',
+    ...[20, 60].flatMap(n => [
+      'rv' + n + '_yz', 'rv' + n + '_yz_status', 'rv' + n + '_yz_reason',
+      'rv' + n + '_yz_mathematical_diagnostic', 'rv' + n + '_yz_window_from',
+      'rv' + n + '_yz_window_through', 'rv' + n + '_yz_returns_used',
+      'rv' + n + '_yz_missing_sessions', 'rv' + n + '_yz_invalid_sessions',
+      'rv' + n + '_yz_category',
+    ]),
+  ];
+  assert.deepEqual(header.slice(0, previousHeader.length), previousHeader,
+    'all pre-Yang-Zhang column names and offsets are preserved');
+  assert.deepEqual(header.slice(previousHeader.length), yangZhangFields,
+    'Yang-Zhang columns are append-only and exact, not merged with Close-to-Close');
+  assert.equal(new Set(header).size, header.length, 'no duplicate names');
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
+  assert.equal(lines[1].split(',')[col('yz_read_status')], 'NOT_READ',
+    'legacy coverage CSV explicitly says the separate Yang-Zhang read was not performed');
+  assert.equal(lines[1].split(',')[col('rv20_yz')], '',
+    'unread Yang-Zhang is empty; it must never be synthesized from Close-to-Close');
   assert.equal(lines[1].split(',')[col('iv_ref_from_current_job')], '', 'no refresh provenance is invented for pilot rows');
   const bbb = lines[2].split(',');
   assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
@@ -942,7 +963,8 @@ require('node:test')('coverage monitor: persisted DEV 1D checkpoint is distinct 
 async function testCoverageLifecycle() {
   // All network traffic, clocks and browser events are virtual; no live provider calls.
   let launcher = null, clock = Date.parse('2026-11-03T09:30:00Z'), seq = 0;
-  const requests = [], roots = [], hosts = [], timers = new Map(), docEvents = new Map(), winEvents = new Map(), blobs = [];
+  const requests = [], yzRequests = [], roots = [], hosts = [], timers = new Map(), docEvents = new Map(), winEvents = new Map(), blobs = [];
+  let yzSourcePages = null;
   class FakeDate extends Date { static now() { return clock; } }
   const element = () => ({
     style: {}, handlers: {}, attrs: {}, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false,
@@ -960,7 +982,7 @@ async function testCoverageLifecycle() {
       if (tag === 'a') e.click = () => { e.clicked = true; };
       if (tag === 'div') {
         const fields = Object.fromEntries(['run','refresh-run','refresh','recovery-run','recovery',
-          'csv','state','freshness','summary','filters','search','availability','spread','dividend',
+          'csv','state','freshness','yz-status','summary','filters','search','availability','spread','dividend',
           'status','reason','count','table','detail','close','shade'].map(k => [k,element()]));
         const root = { fields, getElementById(k) { return fields[k]; },
           querySelector() { return fields.shade; }, appendChild() {} };
@@ -978,7 +1000,40 @@ async function testCoverageLifecycle() {
     S: { backendKey: 'fixture-only-api-key' }, AbortController,
     setTimeout(fn, ms) { const id = ++seq; timers.set(id, { fn, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
-    fetch(url, options) { return new Promise(resolve => requests.push({ url, options, resolve })); },
+    fetch(url, options) {
+      // Yang-Zhang is a SECOND independent, read-only paginated endpoint.
+      // Keep requests[] for legacy Coverage/refresh lifecycle assertions; do
+      // validate YZ GETs separately instead of silently ignoring their effects.
+      const yzPrefix = devBackend + '/debug/volatility-carry/rv-yang-zhang?';
+      if (url.startsWith(yzPrefix)) {
+        yzRequests.push({ url, options });
+        assert.equal(options.method, 'GET');
+        assert.ok(yzSourcePages && yzSourcePages.length, 'Coverage fixtures exist before Yang-Zhang GET');
+        const query = new URL(url).searchParams;
+        const offset = Number(query.get('offset')), limit = Number(query.get('limit'));
+        const first = yzSourcePages[0];
+        assert.equal(query.get('universeDigest'), first.universe.digest);
+        assert.equal(limit, 25);
+        const allRows = yzSourcePages.flatMap(p => p.rows);
+        const pageRows = allRows.slice(offset, offset + limit);
+        const yzWindow = (value) => ({ status: 'PRELIMINARY', value, mathematicalValue: value, reason: null });
+        const result = {
+          ok: true, readOnly: true, certified: false, notForTrading: true, executionAuthorized: false,
+          auditVersion: 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1',
+          formulaVersion: 'YZ_PRELIMINARY_DAILY_OHLC_V1',
+          generatedAt: '2026-11-03T09:30:00.000Z', asOfSessionDate: first.asOfSessionDate,
+          universe: first.universe, offset, limit, returned: pageRows.length,
+          nextOffset: offset + pageRows.length < allRows.length ? offset + pageRows.length : null,
+          rows: pageRows.map((r, i) => ({
+            symbol: r.symbol, universePosition: offset + i, readError: null,
+            asOfSessionDate: first.asOfSessionDate,
+            rv20YZ: yzWindow(0.21), rv60YZ: yzWindow(0.29),
+          })),
+        };
+        return Promise.resolve({ ok: true, status: 200, json: async () => result });
+      }
+      return new Promise(resolve => requests.push({ url, options, resolve }));
+    },
     Blob: function (parts) { blobs.push(parts); },
     URL: { createObjectURL() { return 'blob:fixture'; }, revokeObjectURL() {} },
   };
@@ -995,6 +1050,7 @@ async function testCoverageLifecycle() {
   };
   const pages = covPages(covUniverse(60)), small = covPages(covUniverse(3))[0];
   const replyPages = async (index, ps) => {
+    yzSourcePages = ps;
     for (let i=0; i<ps.length; i++) {
       assert.equal(requests.length, index+i+1, 'one request per page');
       const r = requests[index+i];
@@ -1021,6 +1077,13 @@ async function testCoverageLifecycle() {
   const ui = roots[1].fields, start = requests.length - 1; // opening GET already dispatched
   await replyPages(start, pages);
   assert.equal(requests.length, start+3, 'opening does not start provider acquisition');
+  assert.equal(yzRequests.length, 3, 'Yang-Zhang independently reads 60 names in three GET pages');
+  assert.match(ui['yz-status'].textContent, /Yang–Zhang: RV20/);
+  assert.match(ui.table.innerHTML, /RV20 YZ/);
+  assert.match(ui.table.innerHTML, /21\.00%/, 'Yang-Zhang backend value is displayed independently');
+  assert.ok(yzRequests.every(r => r.options.method === 'GET' &&
+    r.url.includes('/debug/volatility-carry/rv-yang-zhang?')),
+    'opening the panel does not POST to the Yang-Zhang endpoint');
   assert.equal(pending(period).length, 1);
   assert.equal(ui['refresh-run'].disabled, false);
   assert.equal(ui.csv.disabled, false);
@@ -1156,11 +1219,12 @@ async function testCoverageLifecycle() {
   assert.equal(pending(5000).length,1);
 
   // Close makes timers and browser observers inert; reopening starts a fresh GET only.
-  const lastCount=requests.length; ui.close.click();
+  const lastCount=requests.length, lastYzCount=yzRequests.length; ui.close.click();
   assert.equal(pending(period).length, 0);
   assert.equal(pending(5000).length, 0);
   assert.equal(docEvents.size, 0); assert.equal(winEvents.size, 0);
   clock += period*2; assert.equal(requests.length,lastCount);
+  assert.equal(yzRequests.length,lastYzCount, 'closed monitor issues no background YZ GET');
   launcher.click(); assert.equal(requests.length,lastCount+1);
   await replyPages(lastCount,[small]);
   roots[2].fields.close.click();
@@ -1511,8 +1575,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="17"/,
-    'empty-row span covers all 17 columns, including IV20/IV40/IV60');
+  assert.match(ui.renderTable([],null,{}),/colspan="19"/,
+    'empty-row span covers all 19 columns, including IV20/IV40/IV60 and RV20/RV60 Yang-Zhang');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
@@ -1609,3 +1673,7 @@ test('cross-page audit source changes are never presented as fully reconciled to
 });
 
 })();
+
+// Existing Coverage suite also owns its separate Yang–Zhang pure projection
+// contract. No new tests/*.test.js file: permanent suite-count ratchet stays 197.
+require('./lib/volatility-coverage-yang-zhang.contract.js');
