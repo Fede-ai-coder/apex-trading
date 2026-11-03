@@ -651,7 +651,7 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   const lines = csv.split('\r\n');
   assert.equal(lines.length, 11, 'header + 9 rows + final CRLF');
   const header = lines[0].split(',');
-  assert.deepEqual(header, ['symbol', 'universe_position', 'status', 'primary_reason', 'reasons', 'iv_ref', 'iv_ref_status',
+  const previousHeader = ['symbol', 'universe_position', 'status', 'primary_reason', 'reasons', 'iv_ref', 'iv_ref_status',
     'iv_ref_reason', 'iv_ref_source', 'iv_ref_expiration', 'iv_ref_dte', 'iv_observed_at', 'iv_as_of_date',
     'rv20', 'rv20_basis', 'rv20_validated', 'rv20_required', 'rv20_missing', 'rv20_certified_reasons',
     'rv60', 'rv60_basis', 'rv60_validated', 'rv60_required', 'rv60_missing', 'rv60_certified_reasons',
@@ -667,9 +667,30 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'iv_freshness', 'iv_requested_at', 'iv_fetched_at', 'iv_provider_as_of', 'iv_provider_as_of_field', 'iv_chain_fetched_at',
     'iv_error_class', 'iv_selection_version', 'iv_policy_version', 'iv_timing_policy_version', 'iv_timing_comparable',
     'iv_timing_basis', 'iv_timing_reason', 'iv_provider_update_attested', 'iv_last_successful', 'iv_last_successful_fetched_at',
-    'iv_last_successful_job_id'].concat([20, 40, 60].flatMap(n => ["value","status","reason","target_dte","actual_dte","expiration","expiration_type","option_chain_type","settlement_type","source","selection_version","policy_version","horizon_basis","job_id","as_of_date","observed_at","requested_at","provider_as_of","shared_with_targets","chain_fetched_at"].map(k => 'iv' + n + '_' + k))));
+    'iv_last_successful_job_id'].concat([20, 40, 60].flatMap(n => ["value","status","reason","target_dte","actual_dte","expiration","expiration_type","option_chain_type","settlement_type","source","selection_version","policy_version","horizon_basis","job_id","as_of_date","observed_at","requested_at","provider_as_of","shared_with_targets","chain_fetched_at"].map(k => 'iv' + n + '_' + k)));
+  // Every historic column is position-pinned. Yang-Zhang may only append its
+  // independently labeled diagnostic fields, never silently move IV or CC RV.
+  const yangZhangFields = ['yz_read_status', 'yz_read_error', 'yz_formula_version',
+    'yz_generated_from', 'yz_generated_to', 'yz_session_date',
+    ...[20, 60].flatMap(n => [
+      'rv' + n + '_yz', 'rv' + n + '_yz_status', 'rv' + n + '_yz_reason',
+      'rv' + n + '_yz_mathematical_diagnostic', 'rv' + n + '_yz_window_from',
+      'rv' + n + '_yz_window_through', 'rv' + n + '_yz_returns_used',
+      'rv' + n + '_yz_missing_sessions', 'rv' + n + '_yz_invalid_sessions',
+      'rv' + n + '_yz_category',
+    ]),
+  ];
+  assert.deepEqual(header.slice(0, previousHeader.length), previousHeader,
+    'all pre-Yang-Zhang column names and offsets are preserved');
+  assert.deepEqual(header.slice(previousHeader.length), yangZhangFields,
+    'Yang-Zhang columns are append-only and exact, not merged with Close-to-Close');
+  assert.equal(new Set(header).size, header.length, 'no duplicate names');
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
+  assert.equal(lines[1].split(',')[col('yz_read_status')], 'NOT_READ',
+    'legacy coverage CSV explicitly says the separate Yang-Zhang read was not performed');
+  assert.equal(lines[1].split(',')[col('rv20_yz')], '',
+    'unread Yang-Zhang is empty; it must never be synthesized from Close-to-Close');
   assert.equal(lines[1].split(',')[col('iv_ref_from_current_job')], '', 'no refresh provenance is invented for pilot rows');
   const bbb = lines[2].split(',');
   assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
@@ -1561,8 +1582,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="17"/,
-    'empty-row span covers all 17 columns, including IV20/IV40/IV60');
+  assert.match(ui.renderTable([],null,{}),/colspan="19"/,
+    'empty-row span covers all 19 columns, including IV20/IV40/IV60 and RV20/RV60 Yang-Zhang');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
