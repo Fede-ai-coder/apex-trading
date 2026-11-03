@@ -918,7 +918,7 @@
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
     let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
     let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
-    let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false;
+    let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false, activeAnalyze = null;
     function scheduleCoverageRead() {
       if (coverageTimer !== null) clearTimeout(coverageTimer);
       coverageTimer = null;
@@ -928,12 +928,13 @@
         coverageTimer = null;
         if (host !== runHost) return;
         if (document.visibilityState === 'hidden' || busy) { scheduleCoverageRead(); return; }
-        void analyze();
+        if (activeAnalyze) void activeAnalyze();
       }, COVERAGE_AUTO_READ_MS);
     }
     function onResume() {
       if (host && document.visibilityState !== 'hidden' && !busy &&
-          Date.now() - Math.max(lastReadAt, lastReadAttemptAt) >= COVERAGE_AUTO_READ_MS) void analyze();
+          Date.now() - Math.max(lastReadAt, lastReadAttemptAt) >= COVERAGE_AUTO_READ_MS && activeAnalyze)
+        void activeAnalyze();
     }
     const view = { search: '', availability: '', spread: '', dividend: '', status: '', reason: '', sort: { key: 'position', dir: 'asc' } };
     const ivCache = () => (typeof _ivrCache !== 'undefined' ? _ivrCache : null);
@@ -948,7 +949,7 @@
       window.removeEventListener('focus', onResume);
       current = null; detailCurrent = null; recoveryCurrent = null; busy = false; data = null;
       refreshCurrent = null; refreshTimer = null; coverageTimer = null;
-      lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false;
+      lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false; activeAnalyze = null;
       if (host) { host.remove(); host = null; }
       trigger.focus();
     }
@@ -1192,6 +1193,7 @@
         if (busy) return;
         if (typeof S === 'undefined' || !S.backendKey) {
           state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
+          lastReadAttemptAt = Date.now();
           scheduleCoverageRead();
           return;
         }
@@ -1260,6 +1262,7 @@
           }
         }
       }
+      activeAnalyze = analyze;
       document.body.appendChild(host);
       document.addEventListener('visibilitychange', onResume);
       window.addEventListener('focus', onResume);
