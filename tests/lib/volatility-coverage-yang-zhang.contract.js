@@ -297,7 +297,7 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.match(html,/2 sedute distinte/);
   assert.match(html,/RV20 0, RV40 1, RV60 2/);
   assert.match(html,/40\/60/);
-  assert.match(html,/non sono/);
+  assert.match(html,/NON i prezzi O\/H\/L\/C grezzi/);
   assert.doesNotMatch(html,/<script|onerror=|onload=/i);
   assert.ok(html.indexOf('2026-08-21')<html.indexOf('2026-09-17'),'dates are chronological');
   const bad=x=>throws(()=>renderYangZhangOhlcAudit(x,c,joined),'YZ_OHLC_DETAIL_INCONSISTENT');
