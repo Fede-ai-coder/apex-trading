@@ -7,6 +7,7 @@ const {join}=require('node:path');
 const {
   checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
   yangZhangCell, cc40Cell, spread40Diagnostic, spread40Cell, renderSpread40Detail,
+  ohlcDiagnosticButton, renderYangZhangOhlcAudit,
   renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
 }=require('../../devtools/volatility-coverage-monitor.js');
@@ -254,6 +255,78 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(cols[1].split(',')[idx],'ERROR');
 }
 
+
+// Existing backend :symbol endpoint exposes exact BLOCKED sessions (not the
+// raw O/H/L/C). The client must join read-only audit facts to the exact already
+// validated snapshot, and must reject stale/mismatched/injected response data.
+{
+  const reason='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG',c=coverage(1),p=page(c,0);
+  for(const n of [40,60]){
+    const w=p.rows[0]['rv'+n+'YZ'];
+    p.rows[0]['rv'+n+'YZ']={...w,status:'UNAVAILABLE',value:null,
+      mathematicalValue:null,reason,category:'INVALID_OHLC',blockedSessions:n===40?1:2};
+  }
+  attachYangZhangPages(c,[p]);
+  const joined=c.rows[0];
+  const b=(date,shape,role='RETURN_SESSION')=>({
+    sessionDate:date,reason,shape:[shape],role
+  });
+  const details={
+    20:{...p.rows[0].rv20YZ,blockedSessions:[]},
+    40:{...p.rows[0].rv40YZ,blockedSessions:[b('2026-09-17','CLOSE_BELOW_LOW')]},
+    60:{...p.rows[0].rv60YZ,blockedSessions:[
+      b('2026-08-21','OPEN_OUTSIDE_RANGE'),
+      b('2026-09-17','CLOSE_BELOW_LOW')]},
+  };
+  const reply={
+    ok:true,readOnly:true,certified:false,notForTrading:true,executionAuthorized:false,
+    auditVersion:'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1',
+    rv40DiagnosticVersion:'RV40_CC_AND_YANG_ZHANG_STORED_1D_PRELIMINARY_V1',
+    universe:{digest:DIGEST,count:1},symbol:'T0',universePosition:0,asOfSessionDate:DATE,
+    row:p.rows[0],yangZhang:{symbol:'T0',asOfSessionDate:DATE,
+      rv20YZ:details[20],rv40YZ:details[40],rv60YZ:details[60]}
+  };
+  assert.match(ohlcDiagnosticButton(joined,'READY'),/Mostra sedute OHLC incompatibili/);
+  assert.equal(ohlcDiagnosticButton(joined,'LOADING'),'');
+  assert.equal(ohlcDiagnosticButton({...joined,yangZhang:null},'READY'),'');
+  const html=renderYangZhangOhlcAudit(reply,c,joined);
+  assert.match(html,/2026-08-21/);
+  assert.match(html,/2026-09-17/);
+  assert.match(html,/CLOSE_BELOW_LOW/);
+  assert.match(html,/OPEN_OUTSIDE_RANGE/);
+  assert.match(html,/2 sedute distinte/);
+  assert.match(html,/RV20 0, RV40 1, RV60 2/);
+  assert.match(html,/40\/60/);
+  assert.match(html,/non sono/);
+  assert.doesNotMatch(html,/<script|onerror=|onload=/i);
+  assert.ok(html.indexOf('2026-08-21')<html.indexOf('2026-09-17'),'dates are chronological');
+  const bad=x=>throws(()=>renderYangZhangOhlcAudit(x,c,joined),'YZ_OHLC_DETAIL_INCONSISTENT');
+  bad({...reply,readOnly:false});
+  bad({...reply,executionAuthorized:true});
+  bad({...reply,certified:true});
+  bad({...reply,universe:{digest:'b'.repeat(64),count:1}});
+  bad({...reply,universe:{digest:DIGEST,count:2}});
+  bad({...reply,asOfSessionDate:'2026-11-03'});
+  bad({...reply,symbol:'T1'});
+  bad({...reply,universePosition:1});
+  bad({...reply,row:{...reply.row,symbol:'T1'}});
+  bad({...reply,yangZhang:{...reply.yangZhang,symbol:'T1'}});
+  bad({...reply,rv40DiagnosticVersion:null});
+  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{...details[40],reason:'OTHER'}}});
+  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
+    ...details[40],blockedSessions:[]}}});
+  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
+    ...details[40],blockedSessions:[b('2026-09-17','<svg onload=alert(1)>')]}}});
+  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
+    ...details[40],blockedSessions:[b('2027-12-01','CLOSE_BELOW_LOW')]}}});
+  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
+    ...details[40],blockedSessions:[
+      b('2026-09-17','CLOSE_BELOW_LOW'),b('2026-09-17','CLOSE_BELOW_LOW')]}}});
+  const drift={...joined,yangZhang:{...joined.yangZhang,rv40YZ:{
+    ...joined.yangZhang.rv40YZ,reason:'MISSING_COMPLETED_SESSIONS'}}};
+  throws(()=>renderYangZhangOhlcAudit(reply,c,drift),'YZ_OHLC_DETAIL_INCONSISTENT');
+}
+
 // HTTP guard: Yang-Zhang is read-only; any attempt to POST to it fails BEFORE fetch.
 {
   const oldFetch=globalThis.fetch;let calls=0;
@@ -271,6 +344,10 @@ const src=readFileSync(join(__dirname,'..','..','devtools','volatility-coverage-
 assert.match(src,/const YZ_PATH = '\/debug\/volatility-carry\/rv-yang-zhang'/);
 assert.match(src,/const RV40_DIAGNOSTIC_VERSION =/);
 assert.match(src,/if \(yzCurrent\) yzCurrent\.abort\(\)/);
+assert.match(src,/if \(ohlcCurrent\) ohlcCurrent\.abort\(\)/);
+assert.match(src,/detail\.addEventListener\('click', async event =>/);
+assert.match(src,/fetchJson\(BACKEND\+YZ_PATH\+'\/'\+encodeURIComponent\(symbol\)/);
+assert.doesNotMatch(src,/fetchJson\(BACKEND\+YZ_PATH\+'\/'\+encodeURIComponent\(symbol\)[^\n]*,\s*S\.backendKey,\s*controller\.signal,\s*\{/);
 assert.match(src,/void loadYangZhang\(data\)/);
 assert.match(src,/if \(detailCurrent\) detailCurrent\.abort\(\);\s*\/\/[^\n]*\n[\s\S]*?detailSnapshot = null;\s*const controller = new AbortController\(\);/,
   'changing selected symbol clears the earlier detail before the new request');
