@@ -682,8 +682,14 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   ];
   assert.deepEqual(header.slice(0, previousHeader.length), previousHeader,
     'all pre-Yang-Zhang column names and offsets are preserved');
-  assert.deepEqual(header.slice(previousHeader.length), yangZhangFields,
-    'Yang-Zhang columns are append-only and exact, not merged with Close-to-Close');
+  const rv40Fields=['rv40_cc','rv40_cc_status','rv40_cc_reason','rv40_cc_price_adjustment',
+    'rv40_yz','rv40_yz_status','rv40_yz_reason','rv40_yz_mathematical_diagnostic',
+    'rv40_yz_window_from','rv40_yz_window_through','rv40_yz_returns_used',
+    'rv40_yz_missing_sessions','rv40_yz_invalid_sessions','rv40_yz_category'];
+  assert.deepEqual(header.slice(previousHeader.length,previousHeader.length+yangZhangFields.length), yangZhangFields,
+    'all old YZ20/60 CSV names and offsets remain identical');
+  assert.deepEqual(header.slice(previousHeader.length+yangZhangFields.length),rv40Fields,
+    'all 40-session Close-to-Close and YZ fields are appended in exact order');
   assert.equal(new Set(header).size, header.length, 'no duplicate names');
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
@@ -691,6 +697,8 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'legacy coverage CSV explicitly says the separate Yang-Zhang read was not performed');
   assert.equal(lines[1].split(',')[col('rv20_yz')], '',
     'unread Yang-Zhang is empty; it must never be synthesized from Close-to-Close');
+  assert.equal(lines[1].split(',')[col('rv40_yz')], '');
+  assert.equal(lines[1].split(',')[col('rv40_cc')], '');
   assert.equal(lines[1].split(',')[col('iv_ref_from_current_job')], '', 'no refresh provenance is invented for pilot rows');
   const bbb = lines[2].split(',');
   assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
@@ -1020,6 +1028,7 @@ async function testCoverageLifecycle() {
         const result = {
           ok: true, readOnly: true, certified: false, notForTrading: true, executionAuthorized: false,
           auditVersion: 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1',
+          rv40DiagnosticVersion:'RV40_CC_AND_YANG_ZHANG_STORED_1D_PRELIMINARY_V1',
           formulaVersion: 'YZ_PRELIMINARY_DAILY_OHLC_V1',
           generatedAt: '2026-11-03T09:30:00.000Z', asOfSessionDate: first.asOfSessionDate,
           universe: first.universe, offset, limit, returned: pageRows.length,
@@ -1027,7 +1036,9 @@ async function testCoverageLifecycle() {
           rows: pageRows.map((r, i) => ({
             symbol: r.symbol, universePosition: offset + i, readError: null,
             asOfSessionDate: first.asOfSessionDate,
-            rv20YZ: yzWindow(0.21), rv60YZ: yzWindow(0.29),
+            rv20YZ: yzWindow(0.21), rv40YZ:{...yzWindow(0.27),sessionsRequired:41,returnsUsed:40},
+            rv60YZ: yzWindow(0.29),
+            cc:{rv40:{status:'PRELIMINARY',value:0.26,reason:null,priceAdjustment:'UNVERIFIED_NO_JUMP_DETECTED'}},
           })),
         };
         return Promise.resolve({ ok: true, status: 200, json: async () => result });
@@ -1080,6 +1091,11 @@ async function testCoverageLifecycle() {
   assert.equal(yzRequests.length, 3, 'Yang-Zhang independently reads 60 names in three GET pages');
   assert.match(ui['yz-status'].textContent, /Yang–Zhang: RV20/);
   assert.match(ui.table.innerHTML, /RV20 YZ/);
+  assert.match(ui.table.innerHTML,/RV40 CC/);
+  assert.match(ui.table.innerHTML,/RV40 YZ/);
+  assert.match(ui.table.innerHTML,/IV40/);
+  assert.match(ui.table.innerHTML,/26\.00%/);
+  assert.match(ui.table.innerHTML,/27\.00%/);
   assert.match(ui.table.innerHTML, /21\.00%/, 'Yang-Zhang backend value is displayed independently');
   assert.ok(yzRequests.every(r => r.options.method === 'GET' &&
     r.url.includes('/debug/volatility-carry/rv-yang-zhang?')),
@@ -1575,8 +1591,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="19"/,
-    'empty-row span covers all 19 columns, including IV20/IV40/IV60 and RV20/RV60 Yang-Zhang');
+  assert.match(ui.renderTable([],null,{}),/colspan="21"/,
+    'empty-row span covers all 21 columns, including IV20/40/60, RV40 CC and RV20/40/60 Yang-Zhang');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
