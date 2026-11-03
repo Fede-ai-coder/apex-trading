@@ -688,8 +688,14 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'rv40_yz_missing_sessions','rv40_yz_invalid_sessions','rv40_yz_category'];
   assert.deepEqual(header.slice(previousHeader.length,previousHeader.length+yangZhangFields.length), yangZhangFields,
     'all old YZ20/60 CSV names and offsets remain identical');
-  assert.deepEqual(header.slice(previousHeader.length+yangZhangFields.length),rv40Fields,
-    'all 40-session Close-to-Close and YZ fields are appended in exact order');
+  assert.deepEqual(header.slice(previousHeader.length+yangZhangFields.length,
+    previousHeader.length+yangZhangFields.length+rv40Fields.length),rv40Fields,
+    'all 40-session Close-to-Close and YZ fields remain in exact original order');
+  const spread40Fields=['iv40_minus_rv40_cc_pp','iv40_minus_rv40_cc_status',
+    'iv40_minus_rv40_cc_reason','iv40_minus_rv40_yz_pp','iv40_minus_rv40_yz_status',
+    'iv40_minus_rv40_yz_reason'];
+  assert.deepEqual(header.slice(previousHeader.length+yangZhangFields.length+rv40Fields.length),
+    spread40Fields,'new indicative spreads append after ALL previously shipped columns');
   assert.equal(new Set(header).size, header.length, 'no duplicate names');
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
@@ -699,6 +705,8 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
     'unread Yang-Zhang is empty; it must never be synthesized from Close-to-Close');
   assert.equal(lines[1].split(',')[col('rv40_yz')], '');
   assert.equal(lines[1].split(',')[col('rv40_cc')], '');
+  assert.equal(lines[1].split(',')[col('iv40_minus_rv40_cc_pp')], '');
+  assert.equal(lines[1].split(',')[col('iv40_minus_rv40_yz_pp')], '');
   assert.equal(lines[1].split(',')[col('iv_ref_from_current_job')], '', 'no refresh provenance is invented for pilot rows');
   const bbb = lines[2].split(',');
   assert.equal(bbb[col('iv_minus_rv20_pp')], '-4.0000000000000036', 'never rounded in the export');
@@ -1093,6 +1101,8 @@ async function testCoverageLifecycle() {
   assert.match(ui.table.innerHTML, /RV20 YZ/);
   assert.match(ui.table.innerHTML,/RV40 CC/);
   assert.match(ui.table.innerHTML,/RV40 YZ/);
+  assert.match(ui.table.innerHTML,/IV40 − RV40 CC/);
+  assert.match(ui.table.innerHTML,/IV40 − RV40 YZ/);
   assert.match(ui.table.innerHTML,/IV40/);
   assert.match(ui.table.innerHTML,/26\.00%/);
   assert.match(ui.table.innerHTML,/27\.00%/);
@@ -1591,8 +1601,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="21"/,
-    'empty-row span covers all 21 columns, including IV20/40/60, RV40 CC and RV20/40/60 Yang-Zhang');
+  assert.match(ui.renderTable([],null,{}),/colspan="23"/,
+    'empty-row span covers all 23 columns, including the two IV40−RV40 indicative spreads');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
