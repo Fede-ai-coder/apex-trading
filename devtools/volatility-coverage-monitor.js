@@ -990,13 +990,13 @@
     }).join('');
     const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20 CC']
       .map(h => '<th scope="col">' + esc(h) + '</th>').join('') + cc40Head +
-      '<th scope="col">RV60 CC</th>' + yzHead + spread40Head +
+      '<th scope="col">RV60 CC</th>' + yzHead +
       SORTABLE.map(([key, label]) => {
         const active = sort && sort.key === key;
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
-      }).join('') +
+      }).join('') + spread40Head +
       ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
