@@ -293,7 +293,7 @@
           ![null, 'CANDLE_READ_FAILED'].includes(r.readError) ||
           (r.readError === null && r.asOfSessionDate !== coverage.asOfSessionDate))
         throw Error('YANG_ZHANG_ROW_MISMATCH_AT_' + (offset + i));
-      if (r.readError !== null && (r.rv20YZ !== null || r.rv60YZ !== null)) 
+      if (r.readError !== null && (r.rv20YZ !== null || r.rv60YZ !== null))
         throw Error('YANG_ZHANG_FAILED_ROW_WITH_VALUE');
       if (r.readError === null) for (const n of [20, 60]) {
         const w = r['rv' + n + 'YZ'];
