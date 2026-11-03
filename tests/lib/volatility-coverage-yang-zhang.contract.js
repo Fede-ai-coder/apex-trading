@@ -8,7 +8,7 @@ const {
   checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
   yangZhangCell, renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
-}=require('../devtools/volatility-coverage-monitor.js');
+}=require('../../devtools/volatility-coverage-monitor.js');
 
 const DIGEST='a'.repeat(64);
 const DATE='2026-11-02';
@@ -162,7 +162,7 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
 
 // Source-level guards on the UI lifecycle: close aborts the YZ request; auto-refresh
 // reuses GET-only analyze, never auto-starts /iv-refresh/jobs.
-const src=readFileSync(join(__dirname,'..','devtools','volatility-coverage-monitor.js'),'utf8');
+const src=readFileSync(join(__dirname,'..','..','devtools','volatility-coverage-monitor.js'),'utf8');
 assert.match(src,/const YZ_PATH = '\/debug\/volatility-carry\/rv-yang-zhang'/);
 assert.match(src,/if \(yzCurrent\) yzCurrent\.abort\(\)/);
 assert.match(src,/void loadYangZhang\(data\)/);

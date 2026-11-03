@@ -942,7 +942,8 @@ require('node:test')('coverage monitor: persisted DEV 1D checkpoint is distinct 
 async function testCoverageLifecycle() {
   // All network traffic, clocks and browser events are virtual; no live provider calls.
   let launcher = null, clock = Date.parse('2026-11-03T09:30:00Z'), seq = 0;
-  const requests = [], roots = [], hosts = [], timers = new Map(), docEvents = new Map(), winEvents = new Map(), blobs = [];
+  const requests = [], yzRequests = [], roots = [], hosts = [], timers = new Map(), docEvents = new Map(), winEvents = new Map(), blobs = [];
+  let yzSourcePages = null;
   class FakeDate extends Date { static now() { return clock; } }
   const element = () => ({
     style: {}, handlers: {}, attrs: {}, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false,
@@ -960,7 +961,7 @@ async function testCoverageLifecycle() {
       if (tag === 'a') e.click = () => { e.clicked = true; };
       if (tag === 'div') {
         const fields = Object.fromEntries(['run','refresh-run','refresh','recovery-run','recovery',
-          'csv','state','freshness','summary','filters','search','availability','spread','dividend',
+          'csv','state','freshness','yz-status','summary','filters','search','availability','spread','dividend',
           'status','reason','count','table','detail','close','shade'].map(k => [k,element()]));
         const root = { fields, getElementById(k) { return fields[k]; },
           querySelector() { return fields.shade; }, appendChild() {} };
@@ -978,7 +979,40 @@ async function testCoverageLifecycle() {
     S: { backendKey: 'fixture-only-api-key' }, AbortController,
     setTimeout(fn, ms) { const id = ++seq; timers.set(id, { fn, ms }); return id; },
     clearTimeout(id) { timers.delete(id); },
-    fetch(url, options) { return new Promise(resolve => requests.push({ url, options, resolve })); },
+    fetch(url, options) {
+      // Yang-Zhang is a SECOND independent, read-only paginated endpoint.
+      // Keep requests[] for legacy Coverage/refresh lifecycle assertions; do
+      // validate YZ GETs separately instead of silently ignoring their effects.
+      const yzPrefix = devBackend + '/debug/volatility-carry/rv-yang-zhang?';
+      if (url.startsWith(yzPrefix)) {
+        yzRequests.push({ url, options });
+        assert.equal(options.method, 'GET');
+        assert.ok(yzSourcePages && yzSourcePages.length, 'Coverage fixtures exist before Yang-Zhang GET');
+        const query = new URL(url).searchParams;
+        const offset = Number(query.get('offset')), limit = Number(query.get('limit'));
+        const first = yzSourcePages[0];
+        assert.equal(query.get('universeDigest'), first.universe.digest);
+        assert.equal(limit, 25);
+        const allRows = yzSourcePages.flatMap(p => p.rows);
+        const pageRows = allRows.slice(offset, offset + limit);
+        const yzWindow = (value) => ({ status: 'PRELIMINARY', value, mathematicalValue: value, reason: null });
+        const result = {
+          ok: true, readOnly: true, certified: false, notForTrading: true, executionAuthorized: false,
+          auditVersion: 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1',
+          formulaVersion: 'YZ_PRELIMINARY_DAILY_OHLC_V1',
+          generatedAt: '2026-11-03T09:30:00.000Z', asOfSessionDate: first.asOfSessionDate,
+          universe: first.universe, offset, limit, returned: pageRows.length,
+          nextOffset: offset + pageRows.length < allRows.length ? offset + pageRows.length : null,
+          rows: pageRows.map((r, i) => ({
+            symbol: r.symbol, universePosition: offset + i, readError: null,
+            asOfSessionDate: first.asOfSessionDate,
+            rv20YZ: yzWindow(0.21), rv60YZ: yzWindow(0.29),
+          })),
+        };
+        return Promise.resolve({ ok: true, status: 200, json: async () => result });
+      }
+      return new Promise(resolve => requests.push({ url, options, resolve }));
+    },
     Blob: function (parts) { blobs.push(parts); },
     URL: { createObjectURL() { return 'blob:fixture'; }, revokeObjectURL() {} },
   };
@@ -995,6 +1029,7 @@ async function testCoverageLifecycle() {
   };
   const pages = covPages(covUniverse(60)), small = covPages(covUniverse(3))[0];
   const replyPages = async (index, ps) => {
+    yzSourcePages = ps;
     for (let i=0; i<ps.length; i++) {
       assert.equal(requests.length, index+i+1, 'one request per page');
       const r = requests[index+i];
@@ -1021,6 +1056,13 @@ async function testCoverageLifecycle() {
   const ui = roots[1].fields, start = requests.length - 1; // opening GET already dispatched
   await replyPages(start, pages);
   assert.equal(requests.length, start+3, 'opening does not start provider acquisition');
+  assert.equal(yzRequests.length, 3, 'Yang-Zhang independently reads 60 names in three GET pages');
+  assert.match(ui['yz-status'].textContent, /Yang–Zhang: RV20/);
+  assert.match(ui.table.innerHTML, /RV20 YZ/);
+  assert.match(ui.table.innerHTML, /21\\.00%/, 'Yang-Zhang backend value is displayed independently');
+  assert.ok(yzRequests.every(r => r.options.method === 'GET' &&
+    r.url.includes('/debug/volatility-carry/rv-yang-zhang?')),
+    'opening the panel does not POST to the Yang-Zhang endpoint');
   assert.equal(pending(period).length, 1);
   assert.equal(ui['refresh-run'].disabled, false);
   assert.equal(ui.csv.disabled, false);
@@ -1156,11 +1198,12 @@ async function testCoverageLifecycle() {
   assert.equal(pending(5000).length,1);
 
   // Close makes timers and browser observers inert; reopening starts a fresh GET only.
-  const lastCount=requests.length; ui.close.click();
+  const lastCount=requests.length, lastYzCount=yzRequests.length; ui.close.click();
   assert.equal(pending(period).length, 0);
   assert.equal(pending(5000).length, 0);
   assert.equal(docEvents.size, 0); assert.equal(winEvents.size, 0);
   clock += period*2; assert.equal(requests.length,lastCount);
+  assert.equal(yzRequests.length,lastYzCount, 'closed monitor issues no background YZ GET');
   launcher.click(); assert.equal(requests.length,lastCount+1);
   await replyPages(lastCount,[small]);
   roots[2].fields.close.click();
@@ -1609,3 +1652,7 @@ test('cross-page audit source changes are never presented as fully reconciled to
 });
 
 })();
+
+// Existing Coverage suite also owns its separate Yang–Zhang pure projection
+// contract. No new tests/*.test.js file: permanent suite-count ratchet stays 197.
+require('./lib/volatility-coverage-yang-zhang.contract.js');
