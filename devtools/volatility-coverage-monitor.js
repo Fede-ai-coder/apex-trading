@@ -10,6 +10,9 @@
 (function () {
   'use strict';
   const PATH = '/debug/volatility-carry/coverage';
+  const YZ_PATH = '/debug/volatility-carry/rv-yang-zhang';
+  const YZ_AUDIT_VERSION = 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1';
+  const YZ_STATES = ['PRELIMINARY', 'BLOCKED_SESSION_POLICY', 'UNAVAILABLE'];
   const PAGE_SIZE = 25;
   const MAX_PAGES = 100;
   const VERSION = 'VOLATILITY_COVERAGE_V1';
@@ -268,6 +271,96 @@
     };
   }
 
+
+  // The Yang-Zhang endpoint is read-only and calculated on the backend. Its page
+  // must match EACH Coverage symbol and date, not just the universe digest:
+  // neither page family is an atomic snapshot, so fail closed on drift.
+  function checkYangZhangPage(page, offset, coverage) {
+    const u = page?.universe;
+    if (!page || page.ok !== true || page.auditVersion !== YZ_AUDIT_VERSION ||
+        page.readOnly !== true || page.certified !== false || page.notForTrading !== true ||
+        page.executionAuthorized !== false || typeof page.formulaVersion !== 'string' ||
+        !u || u.digest !== coverage.universe.digest || u.count !== coverage.rows.length ||
+        page.asOfSessionDate !== coverage.asOfSessionDate ||
+        page.offset !== offset || page.limit !== PAGE_SIZE ||
+        !Array.isArray(page.rows) || page.returned !== page.rows.length ||
+        page.rows.length !== Math.min(PAGE_SIZE, coverage.rows.length - offset) ||
+        page.nextOffset !== (offset + page.rows.length < coverage.rows.length ? offset + page.rows.length : null))
+      throw Error('YANG_ZHANG_PAGE_INCONSISTENT_AT_' + offset);
+    page.rows.forEach((r, i) => {
+      const expected = coverage.rows[offset + i];
+      if (!r || r.symbol !== expected.symbol || r.universePosition !== offset + i ||
+          ![null, 'CANDLE_READ_FAILED'].includes(r.readError) ||
+          (r.readError === null && r.asOfSessionDate !== coverage.asOfSessionDate))
+        throw Error('YANG_ZHANG_ROW_MISMATCH_AT_' + (offset + i));
+      if (r.readError !== null && (r.rv20YZ !== null || r.rv60YZ !== null)) 
+        throw Error('YANG_ZHANG_FAILED_ROW_WITH_VALUE');
+      if (r.readError === null) for (const n of [20, 60]) {
+        const w = r['rv' + n + 'YZ'];
+        if (!w || !YZ_STATES.includes(w.status) ||
+            (w.status === 'PRELIMINARY' && (num(w.value) === null || w.value <= 0)) ||
+            (w.status !== 'PRELIMINARY' && w.value !== null) ||
+            (w.status === 'BLOCKED_SESSION_POLICY' && num(w.mathematicalValue) === null))
+          throw Error('YANG_ZHANG_WINDOW_INVALID_' + r.symbol + '_' + n);
+      }
+    });
+    return page;
+  }
+
+  // Atomic frontend join: validate ALL Yang-Zhang pages before modifying any
+  // Coverage row. Never fill missing YZ from Close-to-Close, nor recompute IV−YZ.
+  function attachYangZhangPages(coverage, pages) {
+    if (!Array.isArray(pages) || pages.length !== Math.ceil(coverage.rows.length / PAGE_SIZE))
+      throw Error('YANG_ZHANG_PAGES_INCOMPLETE');
+    let offset = 0, formulaVersion = null;
+    const rows = [];
+    for (const page of pages) {
+      checkYangZhangPage(page, offset, coverage);
+      if (formulaVersion !== null && page.formulaVersion !== formulaVersion)
+        throw Error('YANG_ZHANG_FORMULA_CHANGED_DURING_READ');
+      formulaVersion = page.formulaVersion;
+      rows.push(...page.rows);
+      offset += page.rows.length;
+    }
+    if (offset !== coverage.rows.length || pages.at(-1).nextOffset !== null)
+      throw Error('YANG_ZHANG_UNIVERSE_INCOMPLETE');
+    for (let i = 0; i < rows.length; i++) coverage.rows[i].yangZhang = rows[i];
+    coverage.yangZhang = { status: 'READY', formulaVersion, auditVersion: YZ_AUDIT_VERSION,
+      asOfSessionDate: coverage.asOfSessionDate, generatedFrom: pages[0].generatedAt,
+      generatedTo: pages.at(-1).generatedAt, readError: null };
+    return coverage;
+  }
+  const yzWindow = (row, n) => row?.yangZhang?.['rv' + n + 'YZ'] ?? null;
+  function yangZhangCell(row, n, status = 'NOT_READ') {
+    if (status !== 'READY') return '<span class="na">—</span><div class="sub">Yang–Zhang: ' +
+      esc(status === 'LOADING' ? 'lettura in corso' : status === 'ERROR' ? 'errore lettura' : 'non letta') + '</div>';
+    if (row?.yangZhang?.readError) return '<span class="na">—</span><div class="sub">candele non leggibili</div>';
+    const w = yzWindow(row, n);
+    if (!w) return '<span class="na">—</span><div class="sub">non disponibile</div>';
+    if (w.status === 'PRELIMINARY')
+      return '<strong>' + esc(formatPct(w.value)) + '</strong><div class="sub">Yang–Zhang · preliminare, non certificata</div>';
+    return '<span class="na">—</span><div class="sub">' +
+      esc(w.status === 'BLOCKED_SESSION_POLICY' ? 'solo valore matematico · policy esclusa'
+        : 'dati insufficienti o anomali') + '</div>' +
+      (w.reason ? '<div class="sub"><code>' + esc(w.reason) + '</code></div>' : '');
+  }
+  function renderYangZhangStatus(data) {
+    const yz = data?.yangZhang;
+    if (!yz || yz.status === 'LOADING') return 'Yang–Zhang RV20/RV60: lettura separata in corso (solo GET).';
+    if (yz.status !== 'READY') return 'Yang–Zhang RV20/RV60: non disponibili · ' + String(yz.readError || 'lettura fallita');
+    const counts = [20, 60].map(n => data.rows.filter(r => yzWindow(r, n)?.status === 'PRELIMINARY').length);
+    return 'Yang–Zhang: RV20 ' + counts[0] + '/' + data.rows.length +
+      ' e RV60 ' + counts[1] + '/' + data.rows.length +
+      ' preliminari; non certificate e non usate negli spread IV−RV Close-to-Close.';
+  }
+  function renderYangZhangDetail(row, state) {
+    return '<h4>RV Yang–Zhang (OHLC giornalieri)</h4>' +
+      '<p class="note">Stimatore alternativo alla RV Close-to-Close. Risultati diagnostici, non certificati. ' +
+      'Gli spread IV−RV visualizzati sopra restano quelli calcolati dal backend sulla RV Close-to-Close.</p>' +
+      '<p>RV20 YZ: ' + yangZhangCell(row, 20, state) +
+      ' · RV60 YZ: ' + yangZhangCell(row, 60, state) + '</p>';
+  }
+
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
   const spreadOf = (row, n) => num(row.spreads['ivMinusRv' + n + 'Pp'].valuePp);
   // Every metric available = both spreads computed. A read error on another source (status ERROR) does not undo that.
@@ -346,6 +439,8 @@
   const SORT_KEYS = {
     position: r => r.universePosition, symbol: r => r.symbol, status: r => STATUSES.indexOf(r.status),
     ivRef: r => num(r.ivRef.value), rv20: r => num(r.rv20.value), rv60: r => num(r.rv60.value),
+    rv20YZ: r => yzWindow(r, 20)?.status === 'PRELIMINARY' ? num(yzWindow(r, 20).value) : null,
+    rv60YZ: r => yzWindow(r, 60)?.status === 'PRELIMINARY' ? num(yzWindow(r, 60).value) : null,
     spread20: r => spreadOf(r, 20), spread60: r => spreadOf(r, 60),
   };
   // Missing values sort last in BOTH directions; ties keep the universe order, so the sort is deterministic.
@@ -473,10 +568,32 @@
   const TENOR_CSV_COLUMNS = TENOR_TARGETS.flatMap(n => TENOR_CSV_FIELDS.map(([name, read]) => [
     'iv' + n + '_' + name, row => { const t = tenorOf(row, n); return t ? read(t) : null; },
   ]));
+
+  // Append-only Yang-Zhang CSV block: no substitution for the established CC columns.
+  const YZ_CSV_COLUMNS = [
+    ['yz_read_status', (r, d) => d.yangZhang?.status ?? 'NOT_READ'],
+    ['yz_read_error', (r, d) => d.yangZhang?.readError ?? null],
+    ['yz_formula_version', (r, d) => d.yangZhang?.formulaVersion ?? null],
+    ['yz_session_date', (r, d) => r.yangZhang?.asOfSessionDate ?? null],
+    ...[20, 60].flatMap(n => [
+      ['rv' + n + '_yz', r => yzWindow(r, n)?.status === 'PRELIMINARY' ? num(yzWindow(r, n)?.value) : null],
+      ['rv' + n + '_yz_status', r => yzWindow(r, n)?.status ?? null],
+      ['rv' + n + '_yz_reason', r => yzWindow(r, n)?.reason ?? null],
+      ['rv' + n + '_yz_mathematical_diagnostic', r => yzWindow(r, n)?.status === 'BLOCKED_SESSION_POLICY'
+        ? num(yzWindow(r, n)?.mathematicalValue) : null],
+      ['rv' + n + '_yz_window_from', r => yzWindow(r, n)?.windowFrom ?? null],
+      ['rv' + n + '_yz_window_through', r => yzWindow(r, n)?.windowThrough ?? null],
+      ['rv' + n + '_yz_returns_used', r => yzWindow(r, n)?.returnsUsed ?? null],
+      ['rv' + n + '_yz_missing_sessions', r => yzWindow(r, n)?.missingSessions ?? null],
+      ['rv' + n + '_yz_invalid_sessions', r => yzWindow(r, n)?.invalidSessions ?? null],
+      ['rv' + n + '_yz_category', r => yzWindow(r, n)?.category ?? null],
+    ]),
+  ];
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
       'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest'])
-      .concat(ACQUISITION_COLUMNS.map(c => c[0])).concat(TENOR_CSV_COLUMNS.map(c => c[0]));
+      .concat(ACQUISITION_COLUMNS.map(c => c[0])).concat(TENOR_CSV_COLUMNS.map(c => c[0]))
+      .concat(YZ_CSV_COLUMNS.map(c => c[0]));
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
@@ -486,7 +603,8 @@
         csvCell(data.pageGeneratedAt ? data.pageGeneratedAt[row.symbol] : null),
         csvCell(data.generatedFrom), csvCell(data.generatedTo), csvCell(data.universe.source), csvCell(data.universe.digest),
       ]).concat(ACQUISITION_COLUMNS.map(c => csvCell(c[1](row, data))))
-        .concat(TENOR_CSV_COLUMNS.map(c => csvCell(c[1](row)))).join(','));
+        .concat(TENOR_CSV_COLUMNS.map(c => csvCell(c[1](row))))
+        .concat(YZ_CSV_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -713,8 +831,16 @@
       (a.state === 'IN_PROGRESS' ? '<div class="warn">scansione non completata</div>' : '');
   }
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
-  function renderTable(rows, sort, ivCache) {
-    const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20', 'RV60'].map(h => '<th scope="col">' + esc(h) + '</th>').join('') +
+  const SORTABLE_YZ = [['rv20YZ','RV20 YZ'], ['rv60YZ','RV60 YZ']];
+  function renderTable(rows, sort, ivCache, yzStatus = 'NOT_READ') {
+    const yzHead = SORTABLE_YZ.map(([key, label]) => {
+      const active = sort && sort.key === key;
+      const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
+      return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
+        esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
+    }).join('');
+    const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20 CC', 'RV60 CC']
+      .map(h => '<th scope="col">' + esc(h) + '</th>').join('') + yzHead +
       SORTABLE.map(([key, label]) => {
         const active = sort && sort.key === key;
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
@@ -726,7 +852,8 @@
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
       esc(r.symbol) + '</button></th><td>' + ivRefCell(r.ivRef, ivMarketOf(r.symbol, ivCache)) + '</td>' +
       TENOR_TARGETS.map(n => '<td>' + tenorCell(r, n) + '</td>').join('') + '<td>' + rvCell(r.rv20) +
-      '</td><td>' + rvCell(r.rv60) + '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
+      '</td><td>' + rvCell(r.rv60) + '</td><td>' + yangZhangCell(r, 20, yzStatus) +
+      '</td><td>' + yangZhangCell(r, 60, yzStatus) + '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
@@ -734,7 +861,7 @@
       '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
         '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="17">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="19">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
@@ -857,6 +984,8 @@
       spreadLine('IV − RV60', r.spreads.ivMinusRv60Pp) + '</ul>' +
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
+      renderYangZhangDetail(arguments.length > 2 && arguments[2] ? arguments[2].row : null,
+        arguments.length > 2 && arguments[2] ? arguments[2].status : 'NOT_READ') +
       renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
@@ -1276,7 +1405,8 @@
     document.body.appendChild(trigger);
   }
   if (typeof module !== 'undefined' && module.exports)
-    module.exports = { devContext, checkPage, combinePages, summarize, filterRows, sortRows, reasonCodes, reasonText,
+    module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
+      yangZhangCell, renderYangZhangStatus, renderYangZhangDetail, summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
