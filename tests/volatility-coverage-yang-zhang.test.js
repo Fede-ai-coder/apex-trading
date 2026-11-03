@@ -166,6 +166,10 @@ const src=readFileSync(join(__dirname,'..','devtools','volatility-coverage-monit
 assert.match(src,/const YZ_PATH = '\/debug\/volatility-carry\/rv-yang-zhang'/);
 assert.match(src,/if \(yzCurrent\) yzCurrent\.abort\(\)/);
 assert.match(src,/void loadYangZhang\(data\)/);
+assert.match(src,/if \(detailCurrent\) detailCurrent\.abort\(\);\s*\/\/[^\n]*\n[\s\S]*?detailSnapshot = null;\s*const controller = new AbortController\(\);/,
+  'changing selected symbol clears the earlier detail before the new request');
+assert.match(src,/const html = renderDetail\(json,[\s\S]*?detailSnapshot = json;\s*detail\.innerHTML = html;/,
+  'only a successfully rendered backend detail is retained for YZ refresh');
 assert.match(src,/readOnly !== true/);
 assert.doesNotMatch(src,/fetchJson\(BACKEND \+ YZ_PATH[^\n]*,\s*S\.backendKey,\s*signal,\s*\{/);
 console.log('Volatility Coverage Yang-Zhang: atomic joins, CSV, detail, classification, network guard OK');

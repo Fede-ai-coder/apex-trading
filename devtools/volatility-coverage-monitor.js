@@ -1322,6 +1322,10 @@
       async function loadDetail(symbol) {
         if (typeof S === 'undefined' || !S.backendKey) return;
         if (detailCurrent) detailCurrent.abort();
+        // The currently requested symbol owns the detail slot from this point
+        // onward. A failed/aborted read must not let a prior symbol reappear
+        // when the independently pending Yang-Zhang pages complete.
+        detailSnapshot = null;
         const controller = new AbortController();
         detailCurrent = controller;
         const runHost = host;
@@ -1330,12 +1334,16 @@
         try {
           const json = await fetchJson(BACKEND + PATH + '/' + encodeURIComponent(symbol), S.backendKey, controller.signal);
           if (detailCurrent !== controller || host !== runHost) return;
-          detailSnapshot = json;
           const matching = matchingYangZhangRowForDetail(json, data);
-          detail.innerHTML = renderDetail(json, ivCache(), { row: matching,
+          const html = renderDetail(json, ivCache(), { row: matching,
             status: matching ? (data.yangZhang?.status ?? 'NOT_READ') : 'NOT_READ' });
+          // Commit only a fully validated/rendered detail. Re-render callbacks
+          // must never revive a superseded or invalid response.
+          detailSnapshot = json;
+          detail.innerHTML = html;
         } catch (error) {
           if (detailCurrent !== controller || host !== runHost) return;
+          detailSnapshot = null;
           detail.innerHTML = '<p class="error">' + esc(controller.signal.aborted ? 'Richiesta annullata o scaduta.'
             : (error && error.message) || 'Errore di lettura del dettaglio.') + '</p>';
         } finally {
