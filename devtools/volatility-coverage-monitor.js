@@ -465,6 +465,7 @@
   // fallback or price adjustment. This optional detail read is user-initiated.
   const YZ_OHLC_REASON='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG';
   const YZ_OHLC_SHAPES=new Set(['CLOSE_BELOW_LOW','CLOSE_ABOVE_HIGH','OPEN_OUTSIDE_RANGE','LOW_ABOVE_HIGH']);
+  const PRICE_BASIS_STRUCTURAL_ISSUES=new Set(['NOT_POSITIVE_OR_NON_FINITE_PRICE','LOW_ABOVE_HIGH','OPEN_OUTSIDE_RANGE']);
   function ohlcDiagnosticButton(row,state) {
     if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(row.symbol)||
        ![20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return '';
@@ -511,7 +512,7 @@
          item.sessionDate<audit.rv60.windowFrom||item.sessionDate>audit.rv60.windowThrough||
          seen.has(item.sessionDate)||!['MINOR','MATERIAL','STRUCTURAL'].includes(item.kind)||
          item.yzStrictOhlcValid!==false||
-         (item.kind==='STRUCTURAL' && !YZ_OHLC_SHAPES.has(item.structuralIssue))||
+         (item.kind==='STRUCTURAL' && !PRICE_BASIS_STRUCTURAL_ISSUES.has(item.structuralIssue))||
          (item.kind!=='STRUCTURAL' && (!YZ_OHLC_SHAPES.has(item.side)||
            num(item.deviation)===null||item.deviation<0||
            num(item.reference)===null||item.reference<=0||
