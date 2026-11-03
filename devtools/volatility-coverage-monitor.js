@@ -405,9 +405,12 @@
     return '<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
       '</strong><div class="sub">indicativo · '+esc(x.actualDte)+' DTE calendario / 40 sedute</div>';
   }
-  function renderSpread40Detail(row,readStatus) {
+  function renderSpread40Detail(row, joinedYangZhangRow, readStatus) {
+    // Coverage :symbol detail omits the independent Yang-Zhang result. Reuse
+    // only the digest/session/position-verified joined row, NEVER a raw reply.
+    const paired={...row,yangZhang:joinedYangZhangRow?.yangZhang??null};
     const items=['CC','YZ'].map(est=>{
-      const x=spread40Diagnostic(row,est,readStatus);
+      const x=spread40Diagnostic(paired,est,readStatus);
       return '<li>IV40 − RV40 '+est+': '+(x.valuePp===null
         ?'<span class="na">—</span> <code>'+esc(x.reason)+'</code>'
         :'<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
@@ -1134,7 +1137,7 @@
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
       renderYangZhangDetail(yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
-      renderSpread40Detail(r, yzInfo?.status ?? 'NOT_READ') +
+      renderSpread40Detail(r, yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
       renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
