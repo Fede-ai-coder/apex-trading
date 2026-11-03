@@ -369,6 +369,57 @@
         : 'dati insufficienti o anomali') + '</div>' +
       (w.reason ? '<div class="sub"><code>' + esc(w.reason) + '</code></div>' : '');
   }
+  // Indicative comparison only. IV40 has CALENDAR DTE; RV40 uses TRADING sessions.
+  // Never feed this into the original Coverage classification, spreads or execution.
+  const SPREAD40_HORIZON = 'CALENDAR_DTE_NOMINAL_PAIRING_WITH_TRADING_SESSION_RV';
+  function spread40Diagnostic(row, estimator, readStatus='NOT_READ') {
+    const no=reason=>({status:'UNAVAILABLE',reason,valuePp:null});
+    if(readStatus!=='READY')return no('RV40_READ_'+readStatus);
+    const iv=tenorOf(row,40);
+    if(!iv||iv.status!=='AVAILABLE'||num(iv.value)===null||iv.value<=0)
+      return no(iv?'IV40_'+iv.status:'IV40_NOT_EXPOSED');
+    if(iv.targetDte!==40||iv.optionChainType!=='Standard'||iv.horizonBasis!==SPREAD40_HORIZON||
+       !Number.isSafeInteger(iv.selectedDte)||iv.selectedDte<=0||
+       typeof iv.selectedExpiration!=='string'||!DAY.test(iv.selectedExpiration)||
+       typeof iv.asOfDate!=='string'||!DAY.test(iv.asOfDate))
+      return no('IV40_PROVENANCE_UNVERIFIED');
+    const ref=row?.ivRef, timing=ref?.timing;
+    // Backend temporal comparability belongs to IV Ref. Reuse it only for an
+    // IV40 fetched at precisely the SAME instant; never infer it from metrics.
+    if(!timing||timing.policyVersion!=='IV_RV_TIMING_V1'||timing.comparable!==true||
+       ref?.observedAt!==iv.observedAt||!iv.observedAt||Number.isNaN(Date.parse(iv.observedAt))||
+       iv.asOfDate!==row?.asOf?.ivAsOfDate)
+      return no('IV40_RV_TIMING_NOT_VERIFIED');
+    if(row?.yangZhang?.asOfSessionDate!==row?.asOf?.rvSessionDate)
+      return no('RV40_SESSION_MISMATCH');
+    const w=estimator==='CC'?cc40Window(row):estimator==='YZ'?yzWindow(row,40):null;
+    if(!w||w.status!=='PRELIMINARY'||num(w.value)===null||w.value<0)
+      return no('RV40_'+(w?.status||'UNAVAILABLE'));
+    return {status:'INDICATIVE',reason:null,valuePp:100*(iv.value-w.value),
+      actualDte:iv.selectedDte,rvReturns:40,comparisonBasis:SPREAD40_HORIZON};
+  }
+  function spread40Cell(row,estimator,readStatus) {
+    const x=spread40Diagnostic(row,estimator,readStatus);
+    if(x.valuePp===null)
+      return '<span class="na">—</span><div class="sub"><code>'+esc(x.reason)+'</code></div>';
+    return '<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
+      '</strong><div class="sub">indicativo · '+esc(x.actualDte)+' DTE calendario / 40 sedute</div>';
+  }
+  function renderSpread40Detail(row,readStatus) {
+    const items=['CC','YZ'].map(est=>{
+      const x=spread40Diagnostic(row,est,readStatus);
+      return '<li>IV40 − RV40 '+est+': '+(x.valuePp===null
+        ?'<span class="na">—</span> <code>'+esc(x.reason)+'</code>'
+        :'<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
+          '</strong> · IV '+esc(x.actualDte)+' DTE effettivi / RV 40 sedute')+'</li>';
+    }).join('');
+    return '<h4>Spread a 40 · sola diagnostica</h4><p class="note">'+
+      'IV40: volatilità implicita forward della scadenza selezionata (giorni di calendario); '+
+      'RV40: volatilità storica su 40 rendimenti di sedute. Benché entrambe annualizzate, '+
+      'gli orizzonti NON coincidono. Confronto indicativo, non premio di rischio realizzato '+
+      'né segnale operativo. Serve IV40 del job corrente con controllo temporale verificabile '+
+      'e RV40 preliminare non certificata.</p><ul class="reasons">'+items+'</ul>';
+  }
   function renderYangZhangStatus(data) {
     const yz = data?.yangZhang;
     if (!yz || yz.status === 'LOADING') return 'RV40 CC e RV20/40/60 Yang–Zhang: lettura separata in corso (solo GET).';
@@ -483,6 +534,8 @@
     rv20YZ: r => yzWindow(r, 20)?.status === 'PRELIMINARY' ? num(yzWindow(r, 20).value) : null,
     rv40CC: r => cc40Window(r)?.status === 'PRELIMINARY' ? num(cc40Window(r).value) : null,
     rv40YZ: r => yzWindow(r, 40)?.status === 'PRELIMINARY' ? num(yzWindow(r, 40).value) : null,
+    spread40CC: r => spread40Diagnostic(r,'CC','READY').valuePp,
+    spread40YZ: r => spread40Diagnostic(r,'YZ','READY').valuePp,
     rv60YZ: r => yzWindow(r, 60)?.status === 'PRELIMINARY' ? num(yzWindow(r, 60).value) : null,
     spread20: r => spreadOf(r, 20), spread60: r => spreadOf(r, 60),
   };
@@ -656,11 +709,21 @@
       ['rv40_yz_category', r => yzWindow(r, 40)?.category ?? null],
     ],
   ];
+  // Append only: all existing IV20/40/60, RV20/40/60 and YZ CSV offsets stay fixed.
+  const SPREAD40_CSV_COLUMNS = [
+    ['iv40_minus_rv40_cc_pp',(r,d)=>spread40Diagnostic(r,'CC',d.yangZhang?.status).valuePp],
+    ['iv40_minus_rv40_cc_status',(r,d)=>spread40Diagnostic(r,'CC',d.yangZhang?.status).status],
+    ['iv40_minus_rv40_cc_reason',(r,d)=>spread40Diagnostic(r,'CC',d.yangZhang?.status).reason],
+    ['iv40_minus_rv40_yz_pp',(r,d)=>spread40Diagnostic(r,'YZ',d.yangZhang?.status).valuePp],
+    ['iv40_minus_rv40_yz_status',(r,d)=>spread40Diagnostic(r,'YZ',d.yangZhang?.status).status],
+    ['iv40_minus_rv40_yz_reason',(r,d)=>spread40Diagnostic(r,'YZ',d.yangZhang?.status).reason],
+  ];
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
       'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest'])
       .concat(ACQUISITION_COLUMNS.map(c => c[0])).concat(TENOR_CSV_COLUMNS.map(c => c[0]))
-      .concat(YZ_CSV_COLUMNS.map(c => c[0])).concat(RV40_CSV_COLUMNS.map(c => c[0]));
+      .concat(YZ_CSV_COLUMNS.map(c => c[0])).concat(RV40_CSV_COLUMNS.map(c => c[0]))
+      .concat(SPREAD40_CSV_COLUMNS.map(c => c[0]));
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
@@ -672,7 +735,8 @@
       ]).concat(ACQUISITION_COLUMNS.map(c => csvCell(c[1](row, data))))
         .concat(TENOR_CSV_COLUMNS.map(c => csvCell(c[1](row))))
         .concat(YZ_CSV_COLUMNS.map(c => csvCell(c[1](row, data))))
-        .concat(RV40_CSV_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
+        .concat(RV40_CSV_COLUMNS.map(c => csvCell(c[1](row, data))))
+        .concat(SPREAD40_CSV_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -901,6 +965,7 @@
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
   const SORTABLE_YZ = [['rv20YZ','RV20 YZ'], ['rv40YZ','RV40 YZ'], ['rv60YZ','RV60 YZ']];
   const SORTABLE_CC40 = [['rv40CC','RV40 CC']];
+  const SORTABLE_SPREAD40 = [['spread40CC','IV40 − RV40 CC*'],['spread40YZ','IV40 − RV40 YZ*']];
   function renderTable(rows, sort, ivCache, yzStatus = 'NOT_READ') {
     const yzHead = SORTABLE_YZ.map(([key, label]) => {
       const active = sort && sort.key === key;
@@ -914,9 +979,15 @@
       return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
         esc(label) + (active?(sort.dir==='desc'?' ▼':' ▲'):' ↕') + '</button></th>';
     }).join('');
+    const spread40Head=SORTABLE_SPREAD40.map(([key,label])=>{
+      const active=sort&&sort.key===key;
+      const aria=active?(sort.dir==='desc'?'descending':'ascending'):'none';
+      return '<th scope="col" aria-sort="'+aria+'"><button type="button" class="sort" data-sort="'+key+'">'+
+        esc(label)+(active?(sort.dir==='desc'?' ▼':' ▲'):' ↕')+'</button></th>';
+    }).join('');
     const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20 CC']
       .map(h => '<th scope="col">' + esc(h) + '</th>').join('') + cc40Head +
-      '<th scope="col">RV60 CC</th>' + yzHead +
+      '<th scope="col">RV60 CC</th>' + yzHead + spread40Head +
       SORTABLE.map(([key, label]) => {
         const active = sort && sort.key === key;
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
@@ -931,14 +1002,15 @@
       '</td><td>' + cc40Cell(r, yzStatus) + '</td><td>' + rvCell(r.rv60) + '</td><td>' + yangZhangCell(r, 20, yzStatus) +
       '</td><td>' + yangZhangCell(r, 40, yzStatus) + '</td><td>' + yangZhangCell(r, 60, yzStatus) +
       '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
-      spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
+      spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + spread40Cell(r,'CC',yzStatus) +
+      '</td><td>' + spread40Cell(r,'YZ',yzStatus) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
       dividendAuditCell(r) + '</td><td>' + asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) +
       '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
         '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="21">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="23">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
@@ -1062,6 +1134,7 @@
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
       renderYangZhangDetail(yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
+      renderSpread40Detail(r, yzInfo?.status ?? 'NOT_READ') +
       renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
@@ -1179,7 +1252,7 @@
         '.metric{background:#1b3442;padding:8px 9px;border-radius:7px;min-width:118px}' +
         '.metric span,.metric strong{display:block}.metric span{font-size:11px;color:#b6cbd3}' +
         '.metric strong{font-size:19px;margin-top:2px}.scroll{overflow:auto;max-height:62vh}' +
-        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:2460px}' +
+        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:2800px}' +
         'th,td{padding:8px;border-bottom:1px solid #36505e;vertical-align:top}' +
         'th{color:#fff}thead th{background:#213744;position:sticky;top:0;z-index:1}' +
         '.sort,.sym{background:none;padding:0;color:#9fe3d8;font-weight:600;font-size:12px}' +
@@ -1203,7 +1276,9 @@
         ' IV Market, IV30, IVR non la sostituiscono mai. Le RV20/40/60 CC sono Close-to-Close; le RV20/40/60 YZ sono' +
         ' Yang–Zhang da OHLC giornalieri e restano diagnostiche. RV40 richiede 41 chiusure consecutive di borsa,' +
         ' IV40 usa una scadenza opzioni con DTE effettivi indicati: gli orizzonti non sono identici.' +
-        ' Nessun nuovo spread IV−RV40. Spread esistenti = 100 × (IV Ref − RV20/60 CC) in punti percentuali, arrotondati solo' +
+        ' Spread a 40 aggiunti come confronti indicativi IV40−RV40 CC e IV40−RV40 YZ, soltanto con dati verificabili.' +
+        ' Non equivalgono a orizzonti futuri/passati identici o segnali di trading.' +
+        ' Spread esistenti = 100 × (IV Ref − RV20/60 CC) in punti percentuali, arrotondati solo' +
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
         '<button type="button" id="run">Analizza universo</button> ' +
@@ -1561,7 +1636,8 @@
   }
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
-      matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, renderYangZhangStatus, renderYangZhangDetail,
+      matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, spread40Diagnostic,
+      spread40Cell, renderSpread40Detail, renderYangZhangStatus, renderYangZhangDetail,
       summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
