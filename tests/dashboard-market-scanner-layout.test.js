@@ -1091,6 +1091,24 @@ async function testCoverageLifecycle() {
   const posts = requests.filter(x=>x.options.method==='POST');
   assert.equal(posts.length, 1, 'all other reads, including resume and completion, are GET');
 
+  // A symbol-detail GET started against the old snapshot must never paint over refreshed Coverage.
+  const detailAt = requests.length;
+  ui.table.handlers.click({ target: { closest: () => ({
+    getAttribute: name => name === 'data-symbol' ? 'U007' : null
+  }) } });
+  assert.equal(requests.length, detailAt + 1);
+  assert.equal(requests[detailAt].url, base + '/U007');
+  const beforeNewRead = requests.length;
+  ui.run.click();
+  await replyPages(beforeNewRead, pages);
+  assert.equal(requests[detailAt].options.signal.aborted, true,
+    'successful new Coverage snapshot aborts the old symbol-detail request');
+  requests[detailAt].resolve(ok({ ok: true, row: { symbol: 'U007', stale: true } }));
+  await flush();
+  assert.equal(ui.detail.innerHTML, '', 'late old-detail response does not overwrite the new snapshot');
+  assert.equal(requests.filter(r => r.options.method === 'POST').length, 1,
+    're-reading Coverage never starts another IV acquisition');
+
   // The 1D recovery checkpoint is still an EXPLICIT separate GET, never an automatic side effect.
   assert.equal(ui.recovery.innerHTML, '', 'opening and periodic updates do not fetch the recovery checkpoint');
   const recoveryAt = requests.length;
