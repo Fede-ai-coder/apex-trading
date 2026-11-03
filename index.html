@@ -24219,8 +24219,9 @@ function _jxiDateTime(v) {
 }
 
 // "ADBE/15F27C305:xcbf" → { root, expiry, type, strike } (month code F=Jan … Z=Dec)
+// A two-letter country suffix on the root ("META_US/…") is dropped: root "META".
 function _jxiParseOptionTicker(raw) {
-  var mt = String(raw == null ? '' : raw).trim().match(/^([A-Za-z0-9.\-]+)\/(\d{1,2})([A-Za-z])(\d{2})([CPcp])([0-9]+(?:\.[0-9]+)?)(?::.*)?$/);
+  var mt = String(raw == null ? '' : raw).trim().match(/^([A-Za-z0-9.\-]+)(?:_[A-Za-z]{2})?\/(\d{1,2})([A-Za-z])(\d{2})([CPcp])([0-9]+(?:\.[0-9]+)?)(?::.*)?$/);
   if (!mt) return null;
   var month = _JXI_CODE_MONTH[mt[3].toUpperCase()];
   if (!month) return null;
