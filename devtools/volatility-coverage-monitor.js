@@ -357,8 +357,8 @@
     return '<h4>RV Yang–Zhang (OHLC giornalieri)</h4>' +
       '<p class="note">Stimatore alternativo alla RV Close-to-Close. Risultati diagnostici, non certificati. ' +
       'Gli spread IV−RV visualizzati sopra restano quelli calcolati dal backend sulla RV Close-to-Close.</p>' +
-      '<p>RV20 YZ: ' + yangZhangCell(row, 20, state) +
-      ' · RV60 YZ: ' + yangZhangCell(row, 60, state) + '</p>';
+      '<div>RV20 YZ: ' + yangZhangCell(row, 20, state) + '</div>' +
+      '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>';
   }
 
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
@@ -952,7 +952,7 @@
       '<p class="note">DIVIDEND_COMPATIBLE significa soltanto compatibilità numerica: la data ex-dividendo NON è verificata.' +
       ' L’audit NON modifica OHLC, finalità RV o spread.</p></section>';
   }
-  function renderDetail(detail, ivCache) {
+  function renderDetail(detail, ivCache, yzInfo = null) {
     if (!detail || detail.ok !== true || detail.version !== VERSION || detail.readOnly !== true ||
         detail.executionAuthorized !== false || !detail.row || detail.row.symbol !== detail.symbol ||
         !STATUSES.includes(detail.row.status) || !detail.row.ivRef || !detail.row.rv20 || !detail.row.rv60 ||
@@ -984,8 +984,7 @@
       spreadLine('IV − RV60', r.spreads.ivMinusRv60Pp) + '</ul>' +
       renderWindowDetail('rv20', 20, r.rv20, diag && diag.sessions, diag && diag.corporateActions) +
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
-      renderYangZhangDetail(arguments.length > 2 && arguments[2] ? arguments[2].row : null,
-        arguments.length > 2 && arguments[2] ? arguments[2].status : 'NOT_READ') +
+      renderYangZhangDetail(yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
       renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
@@ -1045,7 +1044,8 @@
     trigger.style.cssText = 'position:fixed;bottom:17px;right:150px;z-index:2147482990;' +
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
-    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, busy = false, data = null;
+    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, yzCurrent = null,
+      detailSnapshot = null, busy = false, data = null;
     let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
     let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false, activeAnalyze = null;
     function scheduleCoverageRead() {
@@ -1071,12 +1071,14 @@
       if (current) current.abort();
       if (detailCurrent) detailCurrent.abort();
       if (recoveryCurrent) recoveryCurrent.abort();
+      if (yzCurrent) yzCurrent.abort();
       if (refreshCurrent) refreshCurrent.abort();
       if (refreshTimer) clearTimeout(refreshTimer);
       if (coverageTimer !== null) clearTimeout(coverageTimer);
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
-      current = null; detailCurrent = null; recoveryCurrent = null; busy = false; data = null;
+      current = null; detailCurrent = null; recoveryCurrent = null; yzCurrent = null;
+      detailSnapshot = null; busy = false; data = null;
       refreshCurrent = null; refreshTimer = null; coverageTimer = null;
       lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false; activeAnalyze = null;
       if (host) { host.remove(); host = null; }
@@ -1100,7 +1102,7 @@
         '.metric{background:#1b3442;padding:8px 9px;border-radius:7px;min-width:118px}' +
         '.metric span,.metric strong{display:block}.metric span{font-size:11px;color:#b6cbd3}' +
         '.metric strong{font-size:19px;margin-top:2px}.scroll{overflow:auto;max-height:62vh}' +
-        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:1880px}' +
+        'table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;min-width:2180px}' +
         'th,td{padding:8px;border-bottom:1px solid #36505e;vertical-align:top}' +
         'th{color:#fff}thead th{background:#213744;position:sticky;top:0;z-index:1}' +
         '.sort,.sym{background:none;padding:0;color:#9fe3d8;font-weight:600;font-size:12px}' +
@@ -1121,7 +1123,8 @@
         '<p class="note">IV Ref = IV della scadenza Standard/Regular più vicina a 40 DTE, acquisita dal job DEV dell’intero' +
         ' universo (o dal pilot IV se il job non è disponibile); IV20/40/60 sono target nominali separati, con DTE' +
         ' effettivi e scadenza esposti, mai sostituti della IV Ref;' +
-        ' IV Market, IV30, IVR non la sostituiscono mai. Spread = 100 × (IV Ref − RV) in punti percentuali, arrotondati solo' +
+        ' IV Market, IV30, IVR non la sostituiscono mai. Le RV20/60 CC sono Close-to-Close; le RV20/60 YZ sono' +
+        ' Yang–Zhang da OHLC giornalieri e restano diagnostiche, senza nuovi spread IV−YZ. Spread = 100 × (IV Ref − RV CC) in punti percentuali, arrotondati solo' +
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
         '<button type="button" id="run">Analizza universo</button> ' +
@@ -1130,6 +1133,7 @@
         '<button type="button" id="csv" disabled>Esporta CSV</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
         '<p id="freshness" class="note">Ultimi dati IV/RV: in lettura…</p>' +
+        '<p id="yz-status" class="note">RV Yang–Zhang: lettura separata, solo GET.</p>' +
         '<div id="refresh"></div><div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
         '<input id="search" type="search" placeholder="Cerca simbolo" aria-label="Cerca simbolo">' +
         '<select id="availability" aria-label="Disponibilità"><option value="">Disponibilità: tutte</option>' +
@@ -1235,7 +1239,57 @@
         if (!data) return;
         const rows = sortRows(filterRows(data.rows, view), view.sort.key, view.sort.dir);
         $('count').textContent = rows.length + ' di ' + data.rows.length + ' titoli mostrati.';
-        $('table').innerHTML = renderTable(rows, view.sort, ivCache());
+        $('table').innerHTML = renderTable(rows, view.sort, ivCache(), data.yangZhang?.status ?? 'NOT_READ');
+      }
+
+      // Separate GET-only Yang-Zhang read, never allowed to affect the original
+      // Coverage values, status, timers or IV acquisition. One page at a time.
+      async function loadYangZhang(coverage) {
+        if (!coverage || typeof S === 'undefined' || !S.backendKey || !host) return;
+        const controller = new AbortController();
+        yzCurrent = controller;
+        const readHost = host, signal = controller.signal, pages = [];
+        let timeout = null;
+        try {
+          for (let offset = 0; ;) {
+            if (signal.aborted || host !== readHost || yzCurrent !== controller || data !== coverage) return;
+            if (pages.length >= MAX_PAGES) throw Error('YANG_ZHANG_TOO_MANY_PAGES');
+            $('yz-status').textContent = 'Yang–Zhang: lettura pagina ' + (pages.length + 1) + '/' +
+              Math.ceil(coverage.rows.length / PAGE_SIZE) + ' (GET, nessuna acquisizione)…';
+            timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+            const page = await fetchJson(BACKEND + YZ_PATH + '?offset=' + offset + '&limit=' + PAGE_SIZE +
+              '&universeDigest=' + encodeURIComponent(coverage.universe.digest), S.backendKey, signal);
+            clearTimeout(timeout); timeout = null;
+            checkYangZhangPage(page, offset, coverage);
+            pages.push(page);
+            if (page.nextOffset === null) break;
+            offset = page.nextOffset;
+          }
+          if (signal.aborted || host !== readHost || yzCurrent !== controller || data !== coverage) return;
+          attachYangZhangPages(coverage, pages);
+          $('yz-status').textContent = renderYangZhangStatus(coverage);
+          draw();
+          // Re-render only an already-open detail of the same session and digest.
+          if (detailSnapshot && detailSnapshot.universe?.digest === coverage.universe.digest &&
+              detailSnapshot.asOfSessionDate === coverage.asOfSessionDate) {
+            const r = coverage.rows.find(x => x.symbol === detailSnapshot.symbol);
+            if (r) detail.innerHTML = renderDetail(detailSnapshot, ivCache(),
+              { row: r, status: coverage.yangZhang.status });
+          }
+        } catch (error) {
+          if (host !== readHost || yzCurrent !== controller || data !== coverage) return;
+          coverage.yangZhang = { status: 'ERROR', readError: signal.aborted
+            ? 'TIMEOUT_YANG_ZHANG_PAGE' : String(error?.message || 'YANG_ZHANG_READ_FAILED').slice(0, 160) };
+          $('yz-status').textContent = renderYangZhangStatus(coverage);
+          draw();
+          // Coverage remains intact; never replace missing YZ with Close-to-Close.
+          if (detailSnapshot && detailSnapshot.universe?.digest === coverage.universe.digest &&
+              detailSnapshot.asOfSessionDate === coverage.asOfSessionDate)
+            detail.innerHTML = renderDetail(detailSnapshot, ivCache(), { row: null, status: 'ERROR' });
+        } finally {
+          if (timeout) clearTimeout(timeout);
+          if (yzCurrent === controller) yzCurrent = null;
+        }
       }
       for (const id of ['search', 'availability', 'spread', 'dividend', 'status', 'reason']) {
         $(id).addEventListener(id === 'search' ? 'input' : 'change', () => { view[id] = $(id).value; draw(); });
@@ -1263,7 +1317,13 @@
         try {
           const json = await fetchJson(BACKEND + PATH + '/' + encodeURIComponent(symbol), S.backendKey, controller.signal);
           if (detailCurrent !== controller || host !== runHost) return;
-          detail.innerHTML = renderDetail(json, ivCache());
+          detailSnapshot = json;
+          const matching = data && json.universe?.digest === data.universe.digest &&
+            json.asOfSessionDate === data.asOfSessionDate
+            ? data.rows.find(r => r.symbol === json.symbol && r.universePosition === json.universePosition)
+            : null;
+          detail.innerHTML = renderDetail(json, ivCache(), { row: matching,
+            status: matching ? (data.yangZhang?.status ?? 'NOT_READ') : 'NOT_READ' });
         } catch (error) {
           if (detailCurrent !== controller || host !== runHost) return;
           detail.innerHTML = '<p class="error">' + esc(controller.signal.aborted ? 'Richiesta annullata o scaduta.'
@@ -1320,6 +1380,7 @@
       run.addEventListener('click', () => analyze());
       async function analyze() {
         if (busy) return;
+        if (yzCurrent) { yzCurrent.abort(); yzCurrent = null; }
         if (typeof S === 'undefined' || !S.backendKey) {
           state.textContent = 'Effettua il login APEX per usare la chiave API della sessione.';
           lastReadAttemptAt = Date.now();
@@ -1359,11 +1420,14 @@
           const combined = combinePages(pages);
           if (current !== controller || host !== runHost) return;
           data = combined;
+          data.yangZhang = { status: 'LOADING', readError: null };
           lastReadAt = Date.now();
+          $('yz-status').textContent = renderYangZhangStatus(data);
           $('freshness').innerHTML = renderCoverageFreshness(data, new Date(lastReadAt).toISOString());
           $('summary').innerHTML = renderSummary(data);
           // A detail requested for the prior snapshot cannot overwrite refreshed Coverage.
           if (detailCurrent) { detailCurrent.abort(); detailCurrent = null; }
+          detailSnapshot = null;
           detail.innerHTML = '';
           $('reason').innerHTML = '<option value="">Motivo: tutti</option>' + reasonCodes(data.rows)
             .map(c => '<option value="' + esc(c) + '">' + esc(c) + '</option>').join('');
@@ -1371,6 +1435,7 @@
           $('reason').value = view.reason;
           $('filters').hidden = false;
           draw();
+          void loadYangZhang(data);    // separate bounded GET; failure never invalidates Coverage
           csv.disabled = false;
           const withIv = data.rows.filter(r => num(r.ivRef.value) !== null).length;
           state.textContent = 'Completato: ' + data.rows.length + ' titoli in ' + pages.length +
