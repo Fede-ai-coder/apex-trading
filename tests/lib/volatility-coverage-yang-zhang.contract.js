@@ -7,7 +7,7 @@ const {join}=require('node:path');
 const {
   checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
   yangZhangCell, cc40Cell, spread40Diagnostic, spread40Cell, renderSpread40Detail,
-  ohlcDiagnosticButton, renderYangZhangOhlcAudit,
+  ohlcDiagnosticButton, renderPriceBasisOhlcAudit,
   renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
 }=require('../../devtools/volatility-coverage-monitor.js');
@@ -256,75 +256,91 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
 }
 
 
-// Existing backend :symbol endpoint exposes exact BLOCKED sessions (not the
-// raw O/H/L/C). The client must join read-only audit facts to the exact already
-// validated snapshot, and must reject stale/mismatched/injected response data.
+// Backend's existing price-basis :symbol GET exposes exact dates, deviations,
+// dollar/bp size, and persisted dividend-evidence state. One manual click only,
+// never a price update, never a provider fetch.
 {
   const reason='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG',c=coverage(1),p=page(c,0);
+  const dateFrom={20:'2026-10-05',40:'2026-09-04',60:'2026-08-07'};
+  for(const n of [20,40,60])
+    p.rows[0]['rv'+n+'YZ']={...p.rows[0]['rv'+n+'YZ'],windowFrom:dateFrom[n]};
   for(const n of [40,60]){
     const w=p.rows[0]['rv'+n+'YZ'];
-    p.rows[0]['rv'+n+'YZ']={...w,status:'UNAVAILABLE',value:null,
-      mathematicalValue:null,reason,category:'INVALID_OHLC',blockedSessions:n===40?1:2};
+    p.rows[0]['rv'+n+'YZ']={...w,status:'UNAVAILABLE',value:null,mathematicalValue:null,
+      reason,category:'INVALID_OHLC',blockedSessions:n===40?1:2,inputDigest:null};
   }
   attachYangZhangPages(c,[p]);
   const joined=c.rows[0];
-  const b=(date,shape,role='RETURN_SESSION')=>({
-    sessionDate:date,reason,shape:[shape],role
+  const session=(date,kind,extra={})=>({
+    sessionDate:date,kind,yzStrictOhlcValid:false,source:'dxlink',
+    ...extra
   });
-  const details={
-    20:{...p.rows[0].rv20YZ,blockedSessions:[]},
-    40:{...p.rows[0].rv40YZ,blockedSessions:[b('2026-09-17','CLOSE_BELOW_LOW')]},
-    60:{...p.rows[0].rv60YZ,blockedSessions:[
-      b('2026-08-21','OPEN_OUTSIDE_RANGE'),
-      b('2026-09-17','CLOSE_BELOW_LOW')]},
+  const small=session('2026-09-17','MINOR',{
+    side:'CLOSE_BELOW_LOW',deviation:0.01,reference:148,relativeDeviation:0.01/148,
+    dividendEvidence:null,finding:null
+  });
+  const material=session('2026-08-21','MATERIAL',{
+    side:'CLOSE_BELOW_LOW',deviation:1.22,reference:144,relativeDeviation:1.22/144,
+    dividendEvidence:'DIVIDEND_COMPATIBLE',
+    finding:{status:'DIVIDEND_COMPATIBLE',amount:1.22,eventDate:'2026-08-21'}
+  });
+  const report={
+    symbol:'T0',asOfSessionDate:DATE,version:'RV_PRICE_BASIS_DAILY_ONLY_DIAGNOSTIC_V1',
+    readOnly:true,certified:false,changesPrices:false,readError:null,
+    evidence:{dividendCheckpoint:{state:'COMPLETE'}},
+    rv20:{windowFrom:dateFrom[20],windowThrough:DATE,
+      yz:{status:joined.yangZhang.rv20YZ.status,reason:joined.yangZhang.rv20YZ.reason,
+        inputDigest:joined.yangZhang.rv20YZ.inputDigest},sessions:[]},
+    rv60:{windowFrom:dateFrom[60],windowThrough:DATE,
+      yz:{status:joined.yangZhang.rv60YZ.status,reason:joined.yangZhang.rv60YZ.reason,
+        inputDigest:joined.yangZhang.rv60YZ.inputDigest},sessions:[small,material]},
   };
   const reply={
-    ok:true,readOnly:true,certified:false,notForTrading:true,executionAuthorized:false,
-    auditVersion:'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1',
-    rv40DiagnosticVersion:'RV40_CC_AND_YANG_ZHANG_STORED_1D_PRELIMINARY_V1',
-    universe:{digest:DIGEST,count:1},symbol:'T0',universePosition:0,asOfSessionDate:DATE,
-    row:p.rows[0],yangZhang:{symbol:'T0',asOfSessionDate:DATE,
-      rv20YZ:details[20],rv40YZ:details[40],rv60YZ:details[60]}
+    ok:true,readOnly:true,certified:false,changesPrices:false,notForTrading:true,
+    version:'RV_PRICE_BASIS_DAILY_ONLY_DIAGNOSTIC_V1',
+    asOfSessionDate:DATE,universe:{digest:DIGEST,count:1},report
   };
-  assert.match(ohlcDiagnosticButton(joined,'READY'),/Mostra sedute OHLC incompatibili/);
+  assert.match(ohlcDiagnosticButton(joined,'READY'),/Analizza sedute OHLC e dividendi/);
   assert.equal(ohlcDiagnosticButton(joined,'LOADING'),'');
   assert.equal(ohlcDiagnosticButton({...joined,yangZhang:null},'READY'),'');
-  const html=renderYangZhangOhlcAudit(reply,c,joined);
+  const html=renderPriceBasisOhlcAudit(reply,c,joined);
   assert.match(html,/2026-08-21/);
   assert.match(html,/2026-09-17/);
   assert.match(html,/CLOSE_BELOW_LOW/);
-  assert.match(html,/OPEN_OUTSIDE_RANGE/);
-  assert.match(html,/2 sedute distinte/);
+  assert.match(html,/MATERIAL/);
+  assert.match(html,/MINOR/);
+  assert.match(html,/DIVIDEND_COMPATIBLE/);
+  assert.match(html,/2 sedute anomale distinte/);
   assert.match(html,/RV20 0, RV40 1, RV60 2/);
   assert.match(html,/40\/60/);
-  assert.match(html,/NON i prezzi O\/H\/L\/C grezzi/);
+  assert.match(html,/Nessuna correzione, acquisizione/);
   assert.doesNotMatch(html,/<script|onerror=|onload=/i);
-  assert.ok(html.indexOf('2026-08-21')<html.indexOf('2026-09-17'),'dates are chronological');
-  const bad=x=>throws(()=>renderYangZhangOhlcAudit(x,c,joined),'YZ_OHLC_DETAIL_INCONSISTENT');
+  assert.ok(html.indexOf('2026-08-21')<html.indexOf('2026-09-17'));
+  const bad=x=>throws(()=>renderPriceBasisOhlcAudit(x,c,joined),'PRICE_BASIS_DETAIL_INCONSISTENT');
   bad({...reply,readOnly:false});
-  bad({...reply,executionAuthorized:true});
+  bad({...reply,changesPrices:true});
   bad({...reply,certified:true});
   bad({...reply,universe:{digest:'b'.repeat(64),count:1}});
   bad({...reply,universe:{digest:DIGEST,count:2}});
   bad({...reply,asOfSessionDate:'2026-11-03'});
-  bad({...reply,symbol:'T1'});
-  bad({...reply,universePosition:1});
-  bad({...reply,row:{...reply.row,symbol:'T1'}});
-  bad({...reply,yangZhang:{...reply.yangZhang,symbol:'T1'}});
-  bad({...reply,rv40DiagnosticVersion:null});
-  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{...details[40],reason:'OTHER'}}});
-  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
-    ...details[40],blockedSessions:[]}}});
-  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
-    ...details[40],blockedSessions:[b('2026-09-17','<svg onload=alert(1)>')]}}});
-  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
-    ...details[40],blockedSessions:[b('2027-12-01','CLOSE_BELOW_LOW')]}}});
-  bad({...reply,yangZhang:{...reply.yangZhang,rv40YZ:{
-    ...details[40],blockedSessions:[
-      b('2026-09-17','CLOSE_BELOW_LOW'),b('2026-09-17','CLOSE_BELOW_LOW')]}}});
-  const drift={...joined,yangZhang:{...joined.yangZhang,rv40YZ:{
-    ...joined.yangZhang.rv40YZ,reason:'MISSING_COMPLETED_SESSIONS'}}};
-  throws(()=>renderYangZhangOhlcAudit(reply,c,drift),'YZ_OHLC_DETAIL_INCONSISTENT');
+  bad({...reply,version:'ANOTHER_VERSION'});
+  bad({...reply,report:{...report,symbol:'T1'}});
+  bad({...reply,report:{...report,readOnly:false}});
+  bad({...reply,report:{...report,asOfSessionDate:'2026-11-03'}});
+  bad({...reply,report:{...report,rv40:{}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,
+    yz:{...report.rv60.yz,reason:'MISSING_COMPLETED_SESSIONS'}}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[small,small]}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[
+    {...small,sessionDate:'2027-12-01'},material]}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[
+    {...small,side:'<svg onload=alert(1)>'},material]}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[
+    {...small,yzStrictOhlcValid:true},material]}}});
+  bad({...reply,report:{...report,rv60:{...report.rv60,sessions:[material]}}});
+  const drift={...joined,yangZhang:{...joined.yangZhang,rv60YZ:{
+    ...joined.yangZhang.rv60YZ,reason:'MISSING_COMPLETED_SESSIONS'}}};
+  throws(()=>renderPriceBasisOhlcAudit(reply,c,drift),'PRICE_BASIS_DETAIL_INCONSISTENT');
 }
 
 // HTTP guard: Yang-Zhang is read-only; any attempt to POST to it fails BEFORE fetch.
@@ -343,11 +359,13 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
 const src=readFileSync(join(__dirname,'..','..','devtools','volatility-coverage-monitor.js'),'utf8');
 assert.match(src,/const YZ_PATH = '\/debug\/volatility-carry\/rv-yang-zhang'/);
 assert.match(src,/const RV40_DIAGNOSTIC_VERSION =/);
+assert.match(src,/const PRICE_BASIS_PATH =/);
+assert.match(src,/const PRICE_BASIS_VERSION =/);
 assert.match(src,/if \(yzCurrent\) yzCurrent\.abort\(\)/);
 assert.match(src,/if \(ohlcCurrent\) ohlcCurrent\.abort\(\)/);
 assert.match(src,/detail\.addEventListener\('click', async event =>/);
-assert.match(src,/fetchJson\(BACKEND\+YZ_PATH\+'\/'\+encodeURIComponent\(symbol\)/);
-assert.doesNotMatch(src,/fetchJson\(BACKEND\+YZ_PATH\+'\/'\+encodeURIComponent\(symbol\)[^\n]*,\s*S\.backendKey,\s*controller\.signal,\s*\{/);
+assert.match(src,/fetchJson\(BACKEND\+PRICE_BASIS_PATH\+'\/'\+encodeURIComponent\(symbol\)/);
+assert.doesNotMatch(src,/fetchJson\(BACKEND\+PRICE_BASIS_PATH\+'\/'\+encodeURIComponent\(symbol\)[^\n]*,\s*S\.backendKey,\s*controller\.signal,\s*\{/);
 assert.match(src,/void loadYangZhang\(data\)/);
 assert.match(src,/if \(detailCurrent\) detailCurrent\.abort\(\);\s*\/\/[^\n]*\n[\s\S]*?detailSnapshot = null;\s*const controller = new AbortController\(\);/,
   'changing selected symbol clears the earlier detail before the new request');
