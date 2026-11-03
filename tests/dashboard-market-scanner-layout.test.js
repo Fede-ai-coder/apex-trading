@@ -480,6 +480,8 @@ require('node:test')('coverage monitor: GET plus ONE guarded POST (IV refresh jo
   } finally { global.fetch = realFetch; }
   assert.equal(cov.REFRESH_POLL_MS, 5000);
   assert.equal(cov.REFRESH_MAX_POLLS, 720);
+  assert.equal(cov.COVERAGE_AUTO_READ_MS, 300_000, 'five-minute read-only interval');
+  assert.doesNotMatch(covSource, /void startRefresh\(false\)/, 'no background POST on open');
   assert.equal(html.split('devtools/volatility-coverage-monitor.js').length - 1, 1,
     'index.html names the module once, in the DEV launcher (asserted with the launcher, at the end of this file)');
   assert.doesNotMatch(html, /<script[^>]*volatility-coverage-monitor/, '…and never in a script tag');
@@ -953,7 +955,7 @@ async function testCoverageLifecycle() {
       const el = element();
       if (tag === 'a') el.click = () => { el.clicked = true; };
       if (tag === 'div') {
-        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
+        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'freshness', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element()]));
         const root = { fields, appended: [], getElementById(id) { return fields[id]; },
           querySelector(sel) { assert.equal(sel, '.shade'); return fields.shade; }, appendChild(x) { this.appended.push(x); } };
@@ -1330,11 +1332,12 @@ function launcherPage(hostname, options) {
   const document = {
     readyState: options.readyState || 'complete',
     addEventListener(type, fn, opts) { listeners.push({ type, fn, opts }); },
+    removeEventListener() {},
     getElementById(id) { return mounted.find(el => el.id === id && !el.removed) || null; },
     createElement(tag) {
       const el = element(tag);
       if (tag === 'div') el.attachShadow = () => {
-        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
+        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'freshness', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
         const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
         roots.push(root);
@@ -1348,7 +1351,8 @@ function launcherPage(hostname, options) {
   const spy = name => function () { calls.push(name); };
   const location = { hostname };
   const sandbox = {
-    console: { log() {} }, location, window: { location }, document, S: { backendKey: 'fixture-only-api-key' },
+    console: { log() {} }, location, window: { location, addEventListener() {}, removeEventListener() {} },
+    document, S: { backendKey: 'fixture-only-api-key' },
     AbortController, clearTimeout() {},
     fetch: options.fetch || spy('fetch'), setTimeout: options.setTimeout || spy('setTimeout'),
     XMLHttpRequest: spy('XMLHttpRequest'), WebSocket: spy('WebSocket'), EventSource: spy('EventSource'),
