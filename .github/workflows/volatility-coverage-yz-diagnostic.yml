@@ -16,6 +16,8 @@ jobs:
         node: ['20', '22']
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # permanent extraction contracts require historical commits
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
