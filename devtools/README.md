@@ -109,10 +109,10 @@ authenticated GET**, does not save tokens, and makes no trading decision.
 
 ## Volatility Coverage & Spread Monitor (DEV)
 
-`devtools/volatility-coverage-monitor.js` is a second on-demand DEV panel. It is **not entirely read-only**: besides its
-GET reads, each opening sends **one** authenticated POST that starts or reuses the backend's full-universe IV refresh
-job, and the backend runner then writes that job and its observations to the backend store. It places no order and
-makes no trading decision. The session's `S.backendKey` is sent only as a request header, nothing is stored in the
+`devtools/volatility-coverage-monitor.js` is a DEV panel with **GET-only reads on opening, automatic update, and resume**.
+It never starts an IV acquisition without an explicit click on **Nuova acquisizione IV**, which is the panel's only
+authenticated POST: the backend runner then writes that job and its observations to the backend store. It places no
+order and makes no trading decision. The session's `S.backendKey` is sent only as a request header, nothing is stored in the
 browser, and there is no streaming. The module itself changes neither `index.html` nor `js/**`. Its gate is the RV panel's (exact hostname and exact DEV backend URL)
 plus one exact host, the dev-clean branch deploy `dev-clean--spontaneous-queijadas-118823.netlify.app`, so it can be used
 every day on the stable DEV URL; the production hostname and every other branch deploy are refused. Load it from the
@@ -123,7 +123,14 @@ Console of an authorised DEV host:
 ```
 
 Then click **IV − RV · DEV**. Opening the panel reads `GET /debug/volatility-carry/coverage` at once, 25 symbols at a
-time, in sequence; **Analizza universo** joins a read in progress and otherwise reads again, without a new POST.
+time, in sequence; **Analizza universo** joins a read in progress and otherwise reads again, without a POST.
+With the panel **open and visible**, an automatic read-only refresh repeats every **5 minutes**. When the user returns
+to the browser tab or window after at least 5 minutes since the last attempted/successful read, it re-reads Coverage
+via GET. While the tab is hidden it sends no scheduled Coverage requests; when closed, it cancels the timer and
+removes the resume listeners. There is never a second concurrent Coverage read.
+The panel labels the **latest Coverage read instant (APEX)**, **reference completed RV session date (not per-symbol RV certification)**, **IV date (New York)** and
+**latest IV observation acquired by APEX**, where available. Those timestamps do *not* attest to a provider-side
+calculation update. An unsuccessful re-read keeps the last valid displayed results and export available.
 From page 2 on, every page is pinned to the universe digest of page 1, and a read whose RV
 session date or IV date changes midway is refused. The read is **not an atomic snapshot**: each page is computed at
 its own reference instant (its `generatedAt`). The CSV gives every row the instant of its page (`page_generated_at`:
@@ -133,28 +140,27 @@ applies to each page. Clicking a symbol reads
 `GET /debug/volatility-carry/coverage/:symbol` once. These endpoints come from the matching `apex-backend` change; until
 that change runs on DEV, the panel says *Endpoint non ancora disponibile*.
 
-### Full-universe IV refresh job (started or reused on opening)
+### Full-universe IV refresh job (explicit acquisition only)
 
-After the first complete read of an opening, the panel sends **one** authenticated
-`POST /debug/volatility-carry/iv-refresh/jobs` with `{"universeDigest": "<digest of the read>"}`. The module refuses a
-POST to any other URL before a request is made. The backend answers with the job it started or reused, and the panel
-says which:
+**Opening, clicking «Analizza universo», automatic 5-minute refresh and returning to the tab never issue a POST.**
+Only an explicit click on **Nuova acquisizione IV**, after a successful Coverage read, sends
+`POST /debug/volatility-carry/iv-refresh/jobs` with
+`{"universeDigest": "<digest of the read>", "force": true}`. The module refuses a POST to any other URL before a
+request is made. The backend answers with the job it started or reused, and the panel says which:
 
 - a job of this digest that is `RUNNING` is reused (`reused: "ACTIVE"`): the panel reconnects to it;
-- a `COMPLETE`, `PARTIAL` or `FAILED` job of this digest is reused (`reused: "RECENT"`) only if its `finished_at` is
-  **less than 5 minutes** ago (the backend's `minRefreshIntervalMs`, set in `apex-backend` `server.js`). It is never
-  presented as a new acquisition;
-- otherwise — 5 minutes or more after `finished_at`, after an `INTERRUPTED` job, or with no earlier job — the backend
-  starts a **new acquisition of the whole universe** (HTTP 202). The first DEV job took about 10 minutes for 319 symbols.
+- a `COMPLETE`, `PARTIAL` or `FAILED` job of this digest is reused (`reused: "RECENT"`) if it finished less than
+  **60 seconds** ago (the backend's forced-acquisition duplicate guard); it is never presented as new;
+- otherwise, if at least 60 seconds have passed and no matching `RUNNING` job exists, the backend may start a **new
+  acquisition of the whole universe**. The previous DEV job took about 10 minutes for 319 symbols.
 
-**Nuova acquisizione IV** sends the same POST with `force: true`. Within 60 seconds of a job's `finished_at` (the
-backend's `forceMinIntervalMs`) the backend answers **HTTP 200 reusing that `RECENT` job**, not necessarily HTTP 429;
-later it starts a new job, and a `RUNNING` job is reused even with `force`. The button is disabled while a job runs
-or a request is in flight, so a double click sends one request.
+The button remains disabled during an acquisition request or while its tracked job is running, so a double click
+sends only one request. The five-minute read-only timer never calls this button or the POST helper.
 
 While the job is `RUNNING`, the panel polls only `GET /debug/volatility-carry/iv-refresh/jobs/:jobId`, every 5 s, for
 at most one hour; polling stops when the panel is closed (in-flight requests are aborted), on the first error, and when
-the job ends. When the job ends, the panel reads the coverage again **once**; it sends no second POST. A 403/404 from an
+the job ends. When the job ends, the panel reads the coverage again **once** (or after an in-progress read finishes);
+it sends no second POST. A 403/404 from an
 old or disabled backend is shown once, without a retry, and the values already read stay on screen. While the pages
 are read, a job that progresses or changes is stated as `IV_REFRESH_PROGRESSED_DURING_READ` or
 `IV_REFRESH_JOB_CHANGED_DURING_READ`.
