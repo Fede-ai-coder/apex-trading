@@ -1018,7 +1018,7 @@ async function testCoverageLifecycle() {
 
   // Complete 60-symbol, three-page read; no POST, one periodic timer, visible provenance.
   launcher.click();
-  const ui = roots[1].fields, start = requests.length;
+  const ui = roots[1].fields, start = requests.length - 1; // opening GET already dispatched
   await replyPages(start, pages);
   assert.equal(requests.length, start+3, 'opening does not start provider acquisition');
   assert.equal(pending(period).length, 1);
