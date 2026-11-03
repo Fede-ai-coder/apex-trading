@@ -905,7 +905,7 @@
       ' · <strong>Ultima osservazione IV registrata da APEX:</strong> ' + esc(newest || 'non disponibile') +
       '<span class="sub"> · Le date non attestano l’aggiornamento dei prezzi presso Tastytrade.</span>';
   }
-  
+
   function setupUi() {
     if (document.getElementById('apex-vol-coverage-launcher')) return;
     const trigger = document.createElement('button');
