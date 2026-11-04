@@ -1556,6 +1556,12 @@
         '.b-certified{background:#0d5c4f}.b-preliminary{background:#6a531a}.b-exploratory{background:#5a2f3a}' +
         '.st{font-size:11px;font-weight:700}.st-complete{color:#46d39a}.st-partial{color:#9fd36b}' +
         '.st-unavailable{color:#a6bdc9}.st-stale{color:#f6c66d}.st-error{color:#ff7d7d}' +
+        '.source-freshness{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:7px;margin:10px 0}' +
+        '.source-freshness-item{border:1px solid #36505e;border-radius:7px;padding:9px;background:#1b3442}' +
+        '.source-freshness-item span,.source-freshness-item strong,.source-freshness-item small{display:block}' +
+        '.source-freshness-item strong{color:#e4edf1;font-size:13px;margin:3px 0}' +
+        '.source-freshness-item small{font-size:10px;color:#a6bdc9}' +
+        '.yz-issue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:9px}' +
         '.filters{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.filters input,.filters select{background:#0d1a22;' +
         'color:#d9e6eb;border:1px solid #36505e;border-radius:6px;padding:7px;font-size:12px}' +
         '.reasons{margin:4px 0 4px 18px;padding:0}code{overflow-wrap:anywhere;color:#e4edf1}' +
@@ -1582,8 +1588,9 @@
         '<button type="button" id="recovery-run">Stato recupero candele 1D</button> ' +
         '<button type="button" id="csv" disabled>Esporta CSV</button>' +
         '<p id="state" class="info" role="status" aria-live="polite">Nessuna richiesta ancora effettuata.</p>' +
-        '<p id="freshness" class="note">Ultimi dati IV/RV: in lettura…</p>' +
+        '<div id="freshness" class="note">Ultimi dati IV/RV: in lettura…</div>' +
         '<p id="yz-status" class="note">RV Yang–Zhang: lettura separata, solo GET.</p>' +
+        '<div id="yz-issues"></div>' +
         '<div id="refresh"></div><div id="summary"></div><div id="recovery"></div><div class="filters" id="filters" hidden>' +
         '<input id="search" type="search" placeholder="Cerca simbolo" aria-label="Cerca simbolo">' +
         '<select id="availability" aria-label="Disponibilità"><option value="">Disponibilità: tutte</option>' +
@@ -1745,6 +1752,8 @@
           if (signal.aborted || host !== readHost || yzCurrent !== controller || data !== coverage) return;
           attachYangZhangPages(coverage, pages);
           $('yz-status').textContent = renderYangZhangStatus(coverage);
+          $('yz-issues').innerHTML = renderYangZhangGaps(coverage);
+          $('freshness').innerHTML = renderCoverageFreshness(coverage,new Date(lastReadAt).toISOString());
           draw();
           // Re-render only an already-open detail of the same session and digest.
           if (detailSnapshot) {
@@ -1757,6 +1766,7 @@
           coverage.yangZhang = { status: 'ERROR', readError: signal.aborted
             ? 'TIMEOUT_YANG_ZHANG_PAGE' : String(error?.message || 'YANG_ZHANG_READ_FAILED').slice(0, 160) };
           $('yz-status').textContent = renderYangZhangStatus(coverage);
+          $('yz-issues').innerHTML = '';
           draw();
           // Coverage remains intact; never replace missing YZ with Close-to-Close.
           if (detailSnapshot && matchingYangZhangRowForDetail(detailSnapshot, coverage))
@@ -1951,6 +1961,7 @@
           data.yangZhang = { status: 'LOADING', readError: null };
           lastReadAt = Date.now();
           $('yz-status').textContent = renderYangZhangStatus(data);
+          $('yz-issues').innerHTML = '';
           $('freshness').innerHTML = renderCoverageFreshness(data, new Date(lastReadAt).toISOString());
           $('summary').innerHTML = renderSummary(data);
           // A detail requested for the prior snapshot cannot overwrite refreshed Coverage.
@@ -2017,7 +2028,8 @@
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
       REFRESH_PATH, REFRESH_POLL_MS, REFRESH_PROGRESS_READ_MIN_MS, REFRESH_MAX_POLLS,
-      shouldAutoAcquireIv, COVERAGE_AUTO_READ_MS, renderCoverageFreshness };
+      shouldAutoAcquireIv, COVERAGE_AUTO_READ_MS, renderCoverageFreshness,
+      formattedStamp, renderSourceFreshness, renderSymbolFreshness, renderYangZhangGaps };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
