@@ -1854,6 +1854,43 @@
         }
       }
 
+      // The full read-only YZ :symbol endpoint enumerates missing dates; only
+      // an explicit click can request them. Shared abort prevents overlapping
+      // OHLC and gap diagnostics from racing over the detail panel.
+      detail.addEventListener('click', async event => {
+        const button=event.target?.closest?.('button[data-yz-gap-symbol]');
+        if(!button||!host||!data||data.yangZhang?.status!=='READY')return;
+        const symbol=button.getAttribute('data-yz-gap-symbol');
+        if(!symbol||!SYMBOL.test(symbol)||detailSnapshot?.symbol!==symbol||
+           typeof S==='undefined'||!S.backendKey)return;
+        const joined=matchingYangZhangRowForDetail(detailSnapshot,data);
+        if(!joined||joined.symbol!==symbol||
+           ![40,60].some(n=>joined.yangZhang?.['rv'+n+'YZ']?.reason==='MISSING_COMPLETED_SESSIONS'))return;
+        const slot=detail.querySelector('[data-yz-gap-results]');
+        if(!slot)return;
+        if(ohlcCurrent)ohlcCurrent.abort();
+        const controller=new AbortController();
+        ohlcCurrent=controller;
+        const readHost=host,readData=data,readDetail=detailSnapshot;
+        const timeout=setTimeout(()=>controller.abort(),TIMEOUT_MS);
+        slot.textContent='Lettura date delle sedute assenti di '+symbol+' (GET, nessuna acquisizione)…';
+        try{
+          const reply=await fetchJson(BACKEND+YZ_PATH+'/'+encodeURIComponent(symbol),
+            S.backendKey,controller.signal);
+          if(ohlcCurrent!==controller||host!==readHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-gap-results]')!==slot)return;
+          slot.innerHTML=renderYangZhangMissingDays(reply,readData,joined);
+        }catch(error){
+          if(ohlcCurrent!==controller||host!==readHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-gap-results]')!==slot)return;
+          slot.innerHTML='<p class="error">'+esc(controller.signal.aborted?'Lettura date annullata o scaduta.':
+             error?.message||'YZ_MISSING_SESSIONS_READ_FAILED')+'</p>';
+        }finally{
+          clearTimeout(timeout);
+          if(ohlcCurrent===controller)ohlcCurrent=null;
+        }
+      });
+
       // Explicit per-symbol GET of full Yang-Zhang diagnostics. Never invoked
       // from opening, paginating, auto-refresh or IV acquisition.
       detail.addEventListener('click', async event => {
