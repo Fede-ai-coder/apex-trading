@@ -1172,10 +1172,18 @@ async function testCoverageLifecycle() {
   assert.deepEqual(JSON.parse(requests[postAt].options.body), { universeDigest:COV_DIGEST, force:true });
   requests[postAt].resolve(ok({ok:true,created:true,job:job('RUNNING',20)})); await flush();
   assert.equal(pending(5000).length, 1);
+  clock += 60_100; // a progressed job may be re-read only after the one-minute throttle
   fire(5000); const pollAt = requests.length-1;
   assert.equal(requests[pollAt].url, refresh+'/jobs/job-fixture-0001');
   assert.equal(requests[pollAt].options.method, 'GET');
   requests[pollAt].resolve(ok({ok:true,job:job('RUNNING',40)})); await flush();
+  const partialAt = requests.length-1;
+  assert.equal(requests[partialAt].options.method,'GET','progress triggers one bounded Coverage re-read');
+  const progressPages = covPages(covUniverse(60),(s,i)=>covRow(s,i,{iv:s==='U050'?0.456:null}));
+  await replyPages(partialAt,progressPages);
+  assert.match(ui.table.innerHTML,/45\\.60%/,'in-flight IV is displayed before the full-universe job ends');
+  assert.equal(requests.filter(x=>x.options.method==='POST').length,1,
+    'progress does not start any second acquisition');
   fire(5000); const lastPoll = requests.length-1;
   requests[lastPoll].resolve(ok({ok:true,job:job('COMPLETE',60)})); await flush();
   const reread = lastPoll+1;
