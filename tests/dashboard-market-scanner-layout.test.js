@@ -1007,7 +1007,7 @@ async function testCoverageLifecycle() {
       if (tag === 'a') e.click = () => { e.clicked = true; };
       if (tag === 'div') {
         const fields = Object.fromEntries(['run','refresh-run','refresh','recovery-run','recovery',
-          'csv','state','freshness','yz-status','summary','filters','search','availability','spread','dividend',
+          'csv','state','freshness','yz-status','yz-issues','summary','filters','search','availability','spread','dividend',
           'status','reason','count','table','detail','close','shade'].map(k => [k,element()]));
         const root = { fields, getElementById(k) { return fields[k]; },
           querySelector() { return fields.shade; }, appendChild() {} };
@@ -1107,6 +1107,9 @@ async function testCoverageLifecycle() {
   assert.equal(requests.length, start+3, 'opening does not start provider acquisition');
   assert.equal(yzRequests.length, 3, 'Yang-Zhang independently reads 60 names in three GET pages');
   assert.match(ui['yz-status'].textContent, /Yang–Zhang: RV20/);
+  assert.match(ui['yz-issues'].innerHTML, /Perché mancano RV40\/RV60 Yang–Zhang/);
+  assert.match(ui['yz-issues'].innerHTML, /RV40 Yang–Zhang/);
+  assert.match(ui['yz-issues'].innerHTML, /RV60 Yang–Zhang/);
   assert.match(ui.table.innerHTML, /RV20 YZ/);
   assert.match(ui.table.innerHTML,/RV40 CC/);
   assert.match(ui.table.innerHTML,/RV40 YZ/);
@@ -1123,7 +1126,8 @@ async function testCoverageLifecycle() {
   assert.equal(ui['refresh-run'].disabled, false);
   assert.equal(ui.csv.disabled, false);
   for (const label of ['Ultima lettura Coverage', 'Sessione RV di riferimento', 'Data IV',
-    'Ultima osservazione IV registrata da APEX']) assert.ok(ui.freshness.innerHTML.includes(label));
+    'Ultima osservazione IV registrata da APEX', 'Ultima IV acquisita da APEX',
+    'Ultima option chain acquisita', 'Ultima modifica candele 1D RV']) assert.ok(ui.freshness.innerHTML.includes(label));
   assert.match(ui.freshness.innerHTML, /non attestano l’aggiornamento dei prezzi presso Tastytrade/);
   ui.search.value = 'U05'; ui.search.handlers.input();
   assert.match(ui.count.textContent, /^10 di 60 titoli mostrati/);
@@ -1332,6 +1336,45 @@ require('node:test')('IV auto-open: DEV backend capability, current comparabilit
   assert.equal(cov.REFRESH_PROGRESS_READ_MIN_MS,60_000,'bounded progressive read cadence');
 });
 
+require('node:test')('DEV freshness panel: real APEX write, chain, IV and YZ causes never become provider timestamps',()=>{
+  const fixture=covPages(['AAPL','BAC','AMD'])[0];
+  const [a,b,c]=fixture.rows;
+  a.ivRef={...a.ivRef,observedAt:'2026-11-04T11:58:05.000Z',
+    acquisition:{fetchedAt:'2026-11-04T11:58:05.000Z',chainFetchedAt:'2026-11-04T11:57:32.000Z'}};
+  a.rvStore={source:'APEX_CANDLE_STORE_1D',lastChangedAt:'2026-11-04T11:38:23.000Z',
+    lastSessionDate:'2026-11-03',timestampBasis:'CANDLE_SQLITE_UPDATED_AT_NOT_PROVIDER_ATTESTED'};
+  b.rvStore={source:'APEX_CANDLE_STORE_1D',lastChangedAt:null,lastSessionDate:'2026-11-02'};
+  const render=cov.renderCoverageFreshness({...fixture,rows:fixture.rows,
+    asOfSessionDate:'2026-11-03',generatedTo:'2026-11-04T12:00:00.000Z'},
+    '2026-11-04T12:01:00.000Z');
+  assert.match(render,/Ultima IV acquisita da APEX/);
+  assert.match(render,/Ultima option chain acquisita/);
+  assert.match(render,/Ultima modifica candele 1D RV/);
+  assert.match(render,/04\/11\/2026/);
+  assert.match(render,/12:58:05/);
+  assert.match(render,/CANDLE_SQLITE|Scrittura SQLite APEX/);
+  assert.match(cov.renderSymbolFreshness(a),/ultima modifica candele RV 1D/);
+  assert.match(cov.renderSymbolFreshness(b),/ultima modifica candele RV 1D: <strong>—<\/strong>/);
+  assert.equal(cov.formattedStamp('not-a-timestamp'),'—');
+  assert.equal(cov.formattedStamp(null),'—');
+
+  const w=(status,reason,missingSessions=0)=>({status,reason,missingSessions});
+  a.yangZhang={rv40YZ:w('PRELIMINARY',null),rv60YZ:w('UNAVAILABLE','OHLC_INCOMPATIBLE_WITH_YANG_ZHANG')};
+  b.yangZhang={rv40YZ:w('UNAVAILABLE','MISSING_COMPLETED_SESSIONS',1),
+    rv60YZ:w('UNAVAILABLE','MISSING_COMPLETED_SESSIONS',1)};
+  c.yangZhang={rv40YZ:w('BLOCKED_SESSION_POLICY','SESSION_POLICY_NOT_COVERED'),
+    rv60YZ:w('BLOCKED_SESSION_POLICY','SESSION_POLICY_NOT_COVERED')};
+  const issues=cov.renderYangZhangGaps({rows:fixture.rows,yangZhang:{status:'READY'}});
+  assert.match(issues,/RV40 Yang–Zhang<\/strong> · disponibile 1\/3 · assente 2/);
+  assert.match(issues,/RV60 Yang–Zhang<\/strong> · disponibile 0\/3 · assente 3/);
+  assert.match(issues,/MISSING_COMPLETED_SESSIONS/);
+  assert.match(issues,/OHLC_INCOMPATIBLE_WITH_YANG_ZHANG/);
+  assert.match(issues,/SESSION_POLICY_NOT_COVERED/);
+  assert.match(issues,/1 titoli hanno esattamente una seduta mancante/);
+  assert.equal(cov.renderYangZhangGaps({rows:fixture.rows,yangZhang:{status:'ERROR'}}),'',
+    'a failed unjoined YZ read must never display stale bucket counts');
+});
+
 // Full-universe IV refresh: job validation, status wording and per-row provenance (pure renderers).
 require('node:test')('IV refresh: job shape is checked; status never presents a reused job as new; rows show history apart', () => {
   const job = { jobId: 'job-fixture-0001', state: 'RUNNING', universe: { digest: COV_DIGEST }, requestedAt: '2026-11-01T10:00:00.000Z',
@@ -1433,7 +1476,7 @@ function launcherPage(hostname, options) {
     createElement(tag) {
       const el = element(tag);
       if (tag === 'div') el.attachShadow = () => {
-        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'freshness', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
+        const fields = Object.fromEntries(['run', 'refresh-run', 'refresh', 'recovery-run', 'recovery', 'csv', 'state', 'freshness', 'yz-issues', 'summary', 'filters', 'search', 'availability', 'spread', 'dividend',
           'status', 'reason', 'count', 'table', 'detail', 'close', 'shade'].map(id => [id, element('field')]));
         const root = { fields, getElementById: id => fields[id], querySelector: () => fields.shade, appendChild() {} };
         roots.push(root);
