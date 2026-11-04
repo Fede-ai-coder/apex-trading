@@ -501,6 +501,33 @@
       'né segnale operativo. Serve IV40 del job corrente con controllo temporale verificabile '+
       'e RV40 preliminare non certificata.</p><ul class="reasons">'+items+'</ul>';
   }
+  function renderYangZhangGaps(data) {
+    if (data?.yangZhang?.status !== 'READY') return '';
+    const blocks=[40,60].map(n=>{
+      const reasons=new Map();
+      let available=0,oneSession=0,unreadable=0;
+      for(const row of data.rows){
+        const yz=row?.yangZhang;
+        if(yz?.readError){unreadable++;continue;}
+        const v=yz?.['rv'+n+'YZ'];
+        if(v?.status==='PRELIMINARY'){available++;continue;}
+        const reason=v?.reason||'RV'+n+'_NOT_READABLE';
+        reasons.set(reason,(reasons.get(reason)||0)+1);
+        if(reason==='MISSING_COMPLETED_SESSIONS'&&v?.missingSessions===1)oneSession++;
+      }
+      const items=[...reasons].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))
+        .map(([reason,count])=>'<li><code>'+esc(reason)+'</code>: <strong>'+esc(count)+'</strong></li>').join('');
+      return '<div class="yz-issue"><strong>RV'+n+' Yang–Zhang</strong> · disponibile '+available+'/'+
+        data.rows.length+' · assente '+(data.rows.length-available)+
+        '<ul class="reasons">'+items+
+        (unreadable?'<li>Lettura OHLC non riuscita: '+esc(unreadable)+'</li>':'')+'</ul>'+
+        (oneSession?'<p class="note">'+esc(oneSession)+' titoli hanno esattamente una seduta mancante.</p>':'')+'</div>';
+    });
+    return '<section class="audit-summary" aria-label="Cause valori RV Yang–Zhang mancanti"><h4>Perché mancano RV40/RV60 Yang–Zhang</h4>'+
+      '<p class="note">Cause primarie su tutto l’universo, non sui soli titoli filtrati. Nessun valore mancante stimato. '+ 
+      'Le date delle sedute assenti richiedono una lettura per simbolo.</p>'+
+      '<div class="yz-issue-grid">'+blocks.join('')+'</div></section>';
+  }
   function renderYangZhangStatus(data) {
     const yz = data?.yangZhang;
     if (!yz || yz.status === 'LOADING') return 'RV40 CC e RV20/40/60 Yang–Zhang: lettura separata in corso (solo GET).';
@@ -1345,7 +1372,7 @@
       esc(iv.settlementType || '—') + '</p><p>Snapshot del ' + esc(iv.asOfDate || '—') + ' · osservata ' + esc(iv.observedAt || '—') +
       ' · freschezza: ' + (timing.length ? timing.map(m => reasonHtml(m.reason)).join(' · ') : num(iv.value) !== null ? 'compatibile con la RV' : '—') +
       (r.asOf.datesDiffer ? ' · <span class="warn">data IV ≠ data RV (' + esc(r.asOf.ivAsOfDate) + ' / ' + esc(r.asOf.rvSessionDate) + ')</span>' : '') + '</p>' +
-      '<p>Census: ' + censusText(iv, r.errors) + '</p>' + acquisitionDetail(iv) + renderTenorDetail(r) +
+      '<p>Census: ' + censusText(iv, r.errors) + '</p>' + renderSymbolFreshness(r) + acquisitionDetail(iv) + renderTenorDetail(r) +
       (market ? '<p class="mkt">IV Market (IV index Tastytrade dello scanner, solo informativa, mai usata negli spread): ' +
         esc(formatPct(market.value)) + (market.updatedAt !== null ? ' · ' + esc(new Date(market.updatedAt).toISOString()) : '') + '</p>' : '') +
       '<h4>Spread IV − RV (punti percentuali)</h4><ul class="reasons">' + spreadLine('IV − RV20', r.spreads.ivMinusRv20Pp) +
@@ -1392,6 +1419,49 @@
     throw Error('COVERAGE_HTTP_' + resp.status + ': ' + reason);
   }
 
+  function formattedStamp(value) {
+    if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) return '—';
+    return new Intl.DateTimeFormat('it-IT',{timeZone:'Europe/Rome',day:'2-digit',month:'2-digit',
+      year:'numeric',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false})
+      .format(new Date(value))+' (Roma)';
+  }
+  function newestObserved(values) {
+    const stamps=values.filter(x=>typeof x==='string' && Number.isFinite(Date.parse(x)));
+    return stamps.length?stamps.reduce((a,b)=>Date.parse(b)>Date.parse(a)?b:a):null;
+  }
+  function renderSourceFreshness(data) {
+    const rows=data?.rows||[];
+    const ivAt=newestObserved(rows.map(r=>r?.ivRef?.acquisition?.fetchedAt??r?.asOf?.ivObservedAt));
+    const chainAt=newestObserved(rows.flatMap(r=>[r?.ivRef?.acquisition?.chainFetchedAt,
+      ...TENOR_TARGETS.map(n=>r?.ivTenors?.['iv'+n]?.chainFetchedAt)]));
+    const rvAt=newestObserved(rows.map(r=>r?.rvStore?.lastChangedAt));
+    const lastRvSession=rows.map(r=>r?.rvStore?.lastSessionDate).filter(d=>typeof d==='string'&&DAY.test(d))
+      .sort().at(-1)||'—';
+    const cards=[
+      ['Ultima IV acquisita da APEX',ivAt,'Ricezione IV, non aggiornamento attestato da Tastytrade'],
+      ['Ultima option chain acquisita',chainAt,'Ricezione struttura scadenze, distinta dalle IV'],
+      ['Ultima modifica candele 1D RV',rvAt,'Scrittura SQLite APEX, non attestazione provider o certificazione RV']
+    ];
+    return '<section class="source-freshness" aria-label="Orari aggiornamento dati IV, catena opzioni e RV">'+
+      cards.map(([name,value,note])=>'<div class="source-freshness-item"><span>'+esc(name)+'</span>'+
+        '<strong>'+esc(formattedStamp(value))+'</strong><small>'+esc(note)+'</small></div>').join('')+
+      '</section><p class="note">RV: seduta di riferimento '+esc(data?.asOfSessionDate||'—')+
+      ' · ultima seduta 1D presente tra i simboli '+esc(lastRvSession)+
+      ' · calcolo Coverage letto '+esc(formattedStamp(data?.generatedTo))+
+      (data?.yangZhang?.status==='READY'?' · calcolo Yang–Zhang letto '+esc(formattedStamp(data.yangZhang.generatedTo)):'')+
+      '. Gli orari sopra sono i più recenti dell’universo, non garantiscono che ogni simbolo sia aggiornato.</p>';
+  }
+  function renderSymbolFreshness(row) {
+    const iv=row?.ivRef?.acquisition;
+    const chainAt=newestObserved([iv?.chainFetchedAt,...TENOR_TARGETS.map(n=>row?.ivTenors?.['iv'+n]?.chainFetchedAt)]);
+    return '<section class="audit-detail" aria-label="Aggiornamento delle fonti per simbolo"><h4>Ultimi aggiornamenti APEX del simbolo</h4>'+
+      '<p>IV acquisita: <strong>'+esc(formattedStamp(iv?.fetchedAt??row?.ivRef?.observedAt))+
+      '</strong> · option chain acquisita: <strong>'+esc(formattedStamp(chainAt))+
+      '</strong> · ultima modifica candele RV 1D: <strong>'+esc(formattedStamp(row?.rvStore?.lastChangedAt))+'</strong></p>'+
+      '<p class="note">RV al '+esc(row?.asOf?.rvSessionDate||'—')+
+      ' · ultima seduta 1D nel database '+esc(row?.rvStore?.lastSessionDate||'—')+
+      ' · data/ora della modifica SQLite, non timestamp dell’ultimo aggiornamento del provider o prova di finalità.</p></section>';
+  }
   // Metadata from the persisted Coverage read, not a Tastytrade quote/update timestamp.
   function renderCoverageFreshness(data, readAt) {
     const observed = (data.rows || []).map(r => r?.ivRef?.acquisition?.fetchedAt ?? r?.asOf?.ivObservedAt)
@@ -1401,7 +1471,7 @@
       ' · <strong>Sessione RV di riferimento:</strong> ' + esc(data.asOfSessionDate || '—') +
       ' · <strong>Data IV (NY):</strong> ' + esc(data.ivAsOfDate || '—') +
       ' · <strong>Ultima osservazione IV registrata da APEX:</strong> ' + esc(newest || 'non disponibile') +
-      '<span class="sub"> · Le date non attestano l’aggiornamento dei prezzi presso Tastytrade.</span>';
+      '<span class="sub"> · Le date non attestano l’aggiornamento dei prezzi presso Tastytrade.</span>'+renderSourceFreshness(data);
   }
 
   function setupUi() {
