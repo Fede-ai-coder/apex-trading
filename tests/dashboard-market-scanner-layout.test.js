@@ -1373,6 +1373,27 @@ require('node:test')('DEV freshness panel: real APEX write, chain, IV and YZ cau
   assert.match(issues,/1 titoli hanno esattamente una seduta mancante/);
   assert.equal(cov.renderYangZhangGaps({rows:fixture.rows,yangZhang:{status:'ERROR'}}),'',
     'a failed unjoined YZ read must never display stale bucket counts');
+  assert.match(cov.yzMissingDaysButton(b,'READY'),/data-yz-gap-symbol="BAC"/);
+  assert.equal(cov.yzMissingDaysButton(a,'LOADING'),'');
+  assert.equal(cov.yzMissingDaysButton(a,'READY'),'');
+  const coverage={...fixture,rows:fixture.rows,asOfSessionDate:'2026-10-23'};
+  const full={ok:true,readOnly:true,notForTrading:true,executionAuthorized:false,
+    universe:{digest:COV_DIGEST,count:3},asOfSessionDate:'2026-10-23',
+    symbol:'BAC',universePosition:1,row:{symbol:'BAC'},
+    yangZhang:{asOfSessionDate:'2026-10-23',
+      rv40YZ:{reason:'MISSING_COMPLETED_SESSIONS',missingSessions:['2026-10-22']},
+      rv60YZ:{reason:'MISSING_COMPLETED_SESSIONS',missingSessions:['2026-10-22']}}};
+  assert.match(cov.renderYangZhangMissingDays(full,coverage,b),/2026-10-22/);
+  assert.match(cov.renderYangZhangMissingDays(full,coverage,b),/nessuna acquisizione né correzione automatica/);
+  for(const wrong of [
+    {...full,universe:{digest:'e'.repeat(64),count:3}},
+    {...full,asOfSessionDate:'2026-10-22'},
+    {...full,yangZhang:{...full.yangZhang,rv40YZ:{...full.yangZhang.rv40YZ,
+      missingSessions:['2026-10-22','2026-10-21']}}},
+    {...full,yangZhang:{...full.yangZhang,rv40YZ:{...full.yangZhang.rv40YZ,
+      missingSessions:['<script>alert(1)</script>']}}}
+  ])assert.throws(()=>cov.renderYangZhangMissingDays(wrong,coverage,b),/INCONSISTENT|DRIFT/,
+    'changed snapshots and invalid dates must fail closed without displaying forged gaps');
 });
 
 // Full-universe IV refresh: job validation, status wording and per-row provenance (pure renderers).
