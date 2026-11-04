@@ -524,7 +524,7 @@
         (oneSession?'<p class="note">'+esc(oneSession)+' titoli hanno esattamente una seduta mancante.</p>':'')+'</div>';
     });
     return '<section class="audit-summary" aria-label="Cause valori RV Yang–Zhang mancanti"><h4>Perché mancano RV40/RV60 Yang–Zhang</h4>'+
-      '<p class="note">Cause primarie su tutto l’universo, non sui soli titoli filtrati. Nessun valore mancante stimato. '+ 
+      '<p class="note">Cause primarie su tutto l’universo, non sui soli titoli filtrati. Nessun valore mancante stimato. '+
       'Le date delle sedute assenti richiedono una lettura per simbolo.</p>'+
       '<div class="yz-issue-grid">'+blocks.join('')+'</div></section>';
   }
