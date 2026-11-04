@@ -11,6 +11,8 @@
   'use strict';
   const PATH = '/debug/volatility-carry/coverage';
   const YZ_PATH = '/debug/volatility-carry/rv-yang-zhang';
+  const PRICE_BASIS_PATH = '/debug/volatility-carry/price-basis';
+  const PRICE_BASIS_VERSION = 'RV_PRICE_BASIS_DAILY_ONLY_DIAGNOSTIC_V1';
   const YZ_AUDIT_VERSION = 'RV_YANG_ZHANG_UNIVERSE_AUDIT_READ_ONLY_V1';
   const RV40_DIAGNOSTIC_VERSION = 'RV40_CC_AND_YANG_ZHANG_STORED_1D_PRELIMINARY_V1';
   const YZ_STATES = ['PRELIMINARY', 'BLOCKED_SESSION_POLICY', 'UNAVAILABLE'];
@@ -453,7 +455,120 @@
       'Gli spread IV−RV visualizzati sopra restano quelli calcolati dal backend sulla RV Close-to-Close.</p>' +
       '<div>RV20 YZ: ' + yangZhangCell(row, 20, state) + '</div>' +
       '<div>RV40 YZ: ' + yangZhangCell(row, 40, state) + '</div>' +
-      '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>';
+      '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>' +
+      ohlcDiagnosticButton(row,state);
+  }
+
+
+  // Full OHLC incompatibility dates are already exposed by the existing
+  // backend DEV Yang-Zhang :symbol GET; no provider fetch, store write, repair,
+  // fallback or price adjustment. This optional detail read is user-initiated.
+  const YZ_OHLC_REASON='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG';
+  const YZ_OHLC_SHAPES=new Set(['CLOSE_BELOW_LOW','CLOSE_ABOVE_HIGH','OPEN_OUTSIDE_RANGE','LOW_ABOVE_HIGH']);
+  const PRICE_BASIS_STRUCTURAL_ISSUES=new Set(['NOT_POSITIVE_OR_NON_FINITE_PRICE','LOW_ABOVE_HIGH','OPEN_OUTSIDE_RANGE']);
+  function ohlcDiagnosticButton(row,state) {
+    if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(row.symbol)||
+       ![20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return '';
+    return '<p><button type="button" data-yz-ohlc-symbol="'+esc(row.symbol)+'">'+
+      'Analizza sedute OHLC e dividendi (sola lettura)</button></p>'+
+      '<div data-yz-ohlc-results></div>';
+  }
+  // The backend price-basis report is richer than the bare YZ blocked sessions:
+  // exact session, deviation, materiality, the dividend checkpoint state and
+  // evidence. It remains purely diagnostic; classification tolerance NEVER
+  // changes the strict Yang–Zhang eligibility or stored OHLC values.
+  function renderPriceBasisOhlcAudit(reply,coverage,joined) {
+    const invalid=()=>{throw Error('PRICE_BASIS_DETAIL_INCONSISTENT');};
+    const audit=reply?.report, prior=joined?.yangZhang;
+    if(!coverage||coverage.yangZhang?.status!=='READY'||!joined||!prior||!reply||
+       reply.ok!==true||reply.readOnly!==true||reply.certified!==false||
+       reply.changesPrices!==false||reply.notForTrading!==true||
+       reply.version!==PRICE_BASIS_VERSION||reply.universe?.digest!==coverage.universe?.digest||
+       reply.universe?.count!==coverage.rows.length||reply.asOfSessionDate!==coverage.asOfSessionDate||
+       !audit||audit.version!==PRICE_BASIS_VERSION||audit.readOnly!==true||
+       audit.certified!==false||audit.changesPrices!==false||audit.symbol!==joined.symbol||
+       audit.asOfSessionDate!==coverage.asOfSessionDate||audit.readError!==null)
+      invalid();
+    if(!coverage.rows.some(r=>r===joined&&r.symbol===audit.symbol&&
+       r.universePosition===joined.universePosition&&r.asOf?.rvSessionDate===coverage.asOfSessionDate))
+      invalid();
+    for(const n of [20,60]){
+      const win=audit['rv'+n],snap=prior['rv'+n+'YZ'];
+      if(!win||!snap||!win.yz||
+         win.windowFrom!==snap.windowFrom||win.windowThrough!==snap.windowThrough||
+         win.yz.status!==snap.status||win.yz.reason!==snap.reason||
+         win.yz.inputDigest!==snap.inputDigest||
+         !Array.isArray(win.sessions)||win.sessions.length>n+1)
+        invalid();
+    }
+    const win40=prior.rv40YZ;
+    if(!win40||!DAY.test(String(win40.windowFrom))||!DAY.test(String(win40.windowThrough))||
+       win40.windowFrom<audit.rv60.windowFrom||win40.windowThrough!==audit.rv60.windowThrough)
+      invalid();
+    const arr=audit.rv60.sessions,seen=new Set(),buckets={20:0,40:0,60:0};
+    const observed=[];
+    for(const item of arr){
+      if(!item||typeof item.sessionDate!=='string'||!DAY.test(item.sessionDate)||
+         item.sessionDate<audit.rv60.windowFrom||item.sessionDate>audit.rv60.windowThrough||
+         seen.has(item.sessionDate)||!['MINOR','MATERIAL','STRUCTURAL'].includes(item.kind)||
+         item.yzStrictOhlcValid!==false||
+         (item.kind==='STRUCTURAL' && !PRICE_BASIS_STRUCTURAL_ISSUES.has(item.structuralIssue))||
+         (item.kind!=='STRUCTURAL' && (!YZ_OHLC_SHAPES.has(item.side)||
+           num(item.deviation)===null||item.deviation<0||
+           num(item.reference)===null||item.reference<=0||
+           num(item.relativeDeviation)===null||item.relativeDeviation<0)))
+        invalid();
+      seen.add(item.sessionDate);
+      const in20=item.sessionDate>=audit.rv20.windowFrom && item.sessionDate<=audit.rv20.windowThrough;
+      const in40=item.sessionDate>=win40.windowFrom && item.sessionDate<=win40.windowThrough;
+      buckets[60]++;if(in40)buckets[40]++;if(in20)buckets[20]++;
+      observed.push({item,in20,in40});
+    }
+    // The existing report independently evaluates RV20, using the identical
+    // stored 1D sessions. An inconsistent cross-window read must fail closed.
+    const in20From60=new Map(observed.filter(x=>x.in20).map(x=>[x.item.sessionDate,x.item]));
+    if(audit.rv20.sessions.length!==in20From60.size||
+       audit.rv20.sessions.some(x=>!in20From60.has(x.sessionDate)||
+         x.kind!==in20From60.get(x.sessionDate).kind||
+         x.yzStrictOhlcValid!==false))
+      invalid();
+    for(const n of [20,40,60]){
+      if(prior['rv'+n+'YZ']?.reason===YZ_OHLC_REASON && buckets[n]===0)
+        invalid();
+    }
+    if(!observed.length)invalid();
+    const dateRows=observed.sort((a,b)=>a.item.sessionDate.localeCompare(b.item.sessionDate))
+      .map(({item,in20,in40})=>{
+        const shape=item.kind==='STRUCTURAL'?item.structuralIssue:item.side;
+        const deviation=item.kind==='STRUCTURAL'?'—':String(item.deviation)+' USD';
+        const bp=item.kind==='STRUCTURAL'?'—':String(item.relativeDeviation*10000)+' bp';
+        const finding=item.finding;
+        const divEvidence=item.dividendEvidence??'NON_VALUTATA';
+        const dividendNote=finding
+          ?divEvidence+' · importo '+String(finding.amount??'—')+
+            ' · data evento '+String(finding.eventDate??'—')
+          :divEvidence;
+        return '<tr><td><code>'+esc(item.sessionDate)+'</code></td><td>'+
+          esc(shape)+'</td><td>'+esc(item.kind)+'</td><td>'+
+          esc(deviation)+'</td><td>'+esc(bp)+'</td><td>'+
+          esc([...(in20?['20']:[]),...(in40?['40']:[]),'60'].join('/'))+'</td><td>'+
+          esc(dividendNote)+'</td></tr>';
+      }).join('');
+    return '<section class="audit-detail" data-yz-ohlc-diagnostic>'+
+      '<h4>'+esc(joined.symbol)+' · qualità OHLC e base prezzi 1D</h4>'+
+      '<p class="warn">'+observed.length+' sedute anomale distinte. Nelle finestre: RV20 '+buckets[20]+
+      ', RV40 '+buckets[40]+', RV60 '+buckets[60]+
+      '. Le finestre si sovrappongono: non sommare i conteggi.</p>'+
+      '<p class="note">Checkpoint dividendi: '+esc(audit.evidence?.dividendCheckpoint?.state??'NON_DISPONIBILE')+
+      '. MINOR: deviazione fino a 0,05 USD E 5 bp; MATERIAL oltre almeno una soglia. '+
+      'Anche MINOR resta incompatibile con lo Yang–Zhang rigoroso.</p>'+
+      '<div class="scroll"><table><thead><tr><th>Sessione NY</th><th>Forma OHLC</th>'+
+      '<th>Entità</th><th>Scostamento</th><th>Scostamento bp</th>'+
+      '<th>RV YZ</th><th>Evidenza dividendo</th></tr></thead><tbody>'+
+      dateRows+'</tbody></table></div>'+
+      '<p class="note">Il report è read-only e non restituisce tutti i prezzi OHLC originali. '+
+      'La compatibilità numerica con un dividendo NON attesta la data ex-dividendo o la base prezzi. '+
+      'Nessuna correzione, acquisizione o nuova politica di recupero è stata eseguita.</p></section>';
   }
 
   // ── derived counts: every one is a count of rows the backend returned, nothing estimated ──────────────────────
@@ -1197,7 +1312,7 @@
     trigger.style.cssText = 'position:fixed;bottom:17px;right:150px;z-index:2147482990;' +
       'background:#5b3fa3;color:#fff;border:1px solid #7d63c4;border-radius:9px;' +
       'padding:10px 13px;font:600 12px system-ui;cursor:pointer;box-shadow:0 8px 24px #0004;';
-    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, yzCurrent = null,
+    let host = null, current = null, detailCurrent = null, recoveryCurrent = null, yzCurrent = null, ohlcCurrent = null,
       detailSnapshot = null, busy = false, data = null;
     let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
     let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false, activeAnalyze = null;
@@ -1225,12 +1340,13 @@
       if (detailCurrent) detailCurrent.abort();
       if (recoveryCurrent) recoveryCurrent.abort();
       if (yzCurrent) yzCurrent.abort();
+      if (ohlcCurrent) ohlcCurrent.abort();
       if (refreshCurrent) refreshCurrent.abort();
       if (refreshTimer) clearTimeout(refreshTimer);
       if (coverageTimer !== null) clearTimeout(coverageTimer);
       document.removeEventListener('visibilitychange', onResume);
       window.removeEventListener('focus', onResume);
-      current = null; detailCurrent = null; recoveryCurrent = null; yzCurrent = null;
+      current = null; detailCurrent = null; recoveryCurrent = null; yzCurrent = null; ohlcCurrent = null;
       detailSnapshot = null; busy = false; data = null;
       refreshCurrent = null; refreshTimer = null; coverageTimer = null;
       lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false; activeAnalyze = null;
@@ -1463,6 +1579,7 @@
       });
       async function loadDetail(symbol) {
         if (typeof S === 'undefined' || !S.backendKey) return;
+        if (ohlcCurrent) { ohlcCurrent.abort(); ohlcCurrent = null; }
         if (detailCurrent) detailCurrent.abort();
         // The currently requested symbol owns the detail slot from this point
         // onward. A failed/aborted read must not let a prior symbol reappear
@@ -1493,6 +1610,44 @@
           if (detailCurrent === controller) detailCurrent = null;
         }
       }
+
+      // Explicit per-symbol GET of full Yang-Zhang diagnostics. Never invoked
+      // from opening, paginating, auto-refresh or IV acquisition.
+      detail.addEventListener('click', async event => {
+        const button=event.target?.closest?.('button[data-yz-ohlc-symbol]');
+        if(!button||!host||!data||data.yangZhang?.status!=='READY')return;
+        const symbol=button.getAttribute('data-yz-ohlc-symbol');
+        if(!symbol||!SYMBOL.test(symbol)||detailSnapshot?.symbol!==symbol||
+           typeof S==='undefined'||!S.backendKey)return;
+        const joined=matchingYangZhangRowForDetail(detailSnapshot,data);
+        if(!joined||joined.symbol!==symbol||
+           ![20,40,60].some(n=>joined.yangZhang?.['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return;
+        const slot=detail.querySelector('[data-yz-ohlc-results]');
+        if(!slot)return;
+        if(ohlcCurrent)ohlcCurrent.abort();
+        const controller=new AbortController();
+        ohlcCurrent=controller;
+        const runHost=host, readData=data, readDetail=detailSnapshot;
+        const timeout=setTimeout(()=>controller.abort(),TIMEOUT_MS);
+        slot.textContent='Lettura sedute incompatibili di '+symbol+' (GET, nessuna acquisizione)…';
+        try{
+          const json=await fetchJson(BACKEND+PRICE_BASIS_PATH+'/'+encodeURIComponent(symbol),
+            S.backendKey,controller.signal);
+          if(controller!==ohlcCurrent||host!==runHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
+          slot.innerHTML=renderPriceBasisOhlcAudit(json,readData,joined);
+        }catch(error){
+          if(controller!==ohlcCurrent||host!==runHost||data!==readData||
+             detailSnapshot!==readDetail||detail.querySelector('[data-yz-ohlc-results]')!==slot)return;
+          slot.innerHTML='<p class="error">'+esc(controller.signal.aborted?'Lettura OHLC scaduta o annullata.':
+            (error?.message||'YZ_OHLC_DETAIL_READ_FAILED'))+
+            '. Nessun dato modificato.</p>';
+        }finally{
+          clearTimeout(timeout);
+          if(ohlcCurrent===controller)ohlcCurrent=null;
+        }
+      });
+
       // A second explicit click performs ONE authenticated GET; never run
       // this read automatically on open or during the coverage analysis.
       recoveryRun.addEventListener('click', async () => {
@@ -1540,6 +1695,7 @@
       run.addEventListener('click', () => analyze());
       async function analyze() {
         if (busy) return;
+        if (ohlcCurrent) { ohlcCurrent.abort(); ohlcCurrent = null; }
         if (yzCurrent) {
           yzCurrent.abort();
           yzCurrent = null;
@@ -1640,6 +1796,7 @@
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
       matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, spread40Diagnostic,
+      ohlcDiagnosticButton, renderPriceBasisOhlcAudit,
       spread40Cell, renderSpread40Detail, renderYangZhangStatus, renderYangZhangDetail,
       summarize, filterRows, sortRows, reasonCodes, reasonText,
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
