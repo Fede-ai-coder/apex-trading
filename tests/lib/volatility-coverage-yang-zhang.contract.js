@@ -160,14 +160,17 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.match(table,/\+16\.00 pp/);
   assert.match(table,/\+5\.00 pp/);
   const h20=table.indexOf('data-sort="spread20"'),h60=table.indexOf('data-sort="spread60"');
-  const hCC=table.indexOf('data-sort="spread40CC"'),hYZ=table.indexOf('data-sort="spread40YZ"');
-  assert.ok(h20>=0 && h20<h60 && h60<hCC && hCC<hYZ,
-    'old and new spread table headings must match the actual cell order');
+  const curveKeys=['spread20TenorCC','spread40CC','spread60TenorCC',
+    'spread20TenorYZ','spread40YZ','spread60TenorYZ'];
+  const curvePositions=curveKeys.map(key=>table.indexOf('data-sort="'+key+'"'));
+  assert.ok(h20>=0 && h20<h60 && h60<curvePositions[0] &&
+    curvePositions.every((pos,i)=>pos>=0 && (i===0 || pos>curvePositions[i-1])),
+    'old IV Ref headings stay before CC 20/40/60 and YZ 20/40/60');
   const tableCells=table.split('<tbody>')[1].split('</tr>')[0].split('<td>');
   assert.match(tableCells[11],/\+15\.00 pp/,'legacy 20 spread remains in column 11');
   assert.match(tableCells[12],/\+13\.00 pp/,'legacy 60 spread remains in column 12');
-  assert.match(tableCells[13],/\+16\.00 pp/,'indicative CC40 spread is in column 13');
-  assert.match(tableCells[14],/\+5\.00 pp/,'indicative YZ40 spread is in column 14');
+  assert.match(tableCells[14],/\+16\.00 pp/,'indicative CC40 follows CC20 in column 14');
+  assert.match(tableCells[17],/\+5\.00 pp/,'indicative YZ40 follows YZ20 in column 17');
   assert.match(spread40Cell(r,'CC','READY'),/38 DTE calendario \/ 40 sedute/);
   const detail=renderSpread40Detail(r,r,'READY');
   assert.match(detail,/IV40 − RV40 CC/);
@@ -232,13 +235,15 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   const table=renderTable([r],{key:'position',dir:'asc'},null,'READY');
   for(const label of ['IV20 − RV20 CC','IV20 − RV20 YZ','IV60 − RV60 CC','IV60 − RV60 YZ'])
     assert.ok(table.includes(label),'four new visible headers: '+label);
-  const heads=['spread40YZ','spread20TenorCC','spread20TenorYZ','spread60TenorCC','spread60TenorYZ'];
+  const heads=['spread20TenorCC','spread40CC','spread60TenorCC',
+    'spread20TenorYZ','spread40YZ','spread60TenorYZ'];
   const offsets=heads.map(k=>table.indexOf('data-sort="'+k+'"'));
   assert.ok(offsets.every(x=>x>=0)&&offsets.every((x,i)=>i===0||x>offsets[i-1]),
-    'headings follow actual cell order, after previously shipped columns');
+    'headers follow CC 20/40/60, then YZ 20/40/60, after legacy IV Ref columns');
   const cells=table.split('<tbody>')[1].split('</tr>')[0].split('<td>');
   for(const [i,expected] of [[11,'+15.00 pp'],[12,'+13.00 pp'],
-    [15,'+13.50 pp'],[16,'+2.50 pp'],[17,'+27.00 pp'],[18,'+9.00 pp']])
+    [13,'+13.50 pp'],[14,'+16.00 pp'],[15,'+27.00 pp'],
+    [16,'+2.50 pp'],[17,'+5.00 pp'],[18,'+9.00 pp']])
     assert.ok(cells[i].includes(expected),'correct spread cell at '+i);
   const detail=renderTenorSpreadsDetail(r,r,'READY');
   assert.match(detail,/IV20 − RV20 CC/);assert.match(detail,/IV20 − RV20 YZ/);

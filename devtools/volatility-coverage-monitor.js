@@ -1157,9 +1157,16 @@
   const SORTABLE = [['spread20', 'IV − RV20'], ['spread60', 'IV − RV60']];
   const SORTABLE_YZ = [['rv20YZ','RV20 YZ'], ['rv40YZ','RV40 YZ'], ['rv60YZ','RV60 YZ']];
   const SORTABLE_CC40 = [['rv40CC','RV40 CC']];
-  const SORTABLE_SPREAD40 = [['spread40CC','IV40 − RV40 CC*'],['spread40YZ','IV40 − RV40 YZ*']];
-  const SORTABLE_TENOR_SPREADS = [['spread20TenorCC','IV20 − RV20 CC*'],['spread20TenorYZ','IV20 − RV20 YZ*'],
-    ['spread60TenorCC','IV60 − RV60 CC*'],['spread60TenorYZ','IV60 − RV60 YZ*']];
+  // Read the indicative tenor spreads as two curves: CC 20→40→60, then YZ 20→40→60.
+  // Keep keys and calculation paths unchanged; this list owns both header and cell order.
+  const SORTABLE_CURVE_SPREADS = [
+    ['spread20TenorCC','IV20 − RV20 CC*',20,'CC'],
+    ['spread40CC','IV40 − RV40 CC*',40,'CC'],
+    ['spread60TenorCC','IV60 − RV60 CC*',60,'CC'],
+    ['spread20TenorYZ','IV20 − RV20 YZ*',20,'YZ'],
+    ['spread40YZ','IV40 − RV40 YZ*',40,'YZ'],
+    ['spread60TenorYZ','IV60 − RV60 YZ*',60,'YZ'],
+  ];
   function renderTable(rows, sort, ivCache, yzStatus = 'NOT_READ') {
     const yzHead = SORTABLE_YZ.map(([key, label]) => {
       const active = sort && sort.key === key;
@@ -1173,13 +1180,7 @@
       return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
         esc(label) + (active?(sort.dir==='desc'?' ▼':' ▲'):' ↕') + '</button></th>';
     }).join('');
-    const spread40Head=SORTABLE_SPREAD40.map(([key,label])=>{
-      const active=sort&&sort.key===key;
-      const aria=active?(sort.dir==='desc'?'descending':'ascending'):'none';
-      return '<th scope="col" aria-sort="'+aria+'"><button type="button" class="sort" data-sort="'+key+'">'+
-        esc(label)+(active?(sort.dir==='desc'?' ▼':' ▲'):' ↕')+'</button></th>';
-    }).join('');
-    const tenorSpreadHead=SORTABLE_TENOR_SPREADS.map(([key,label])=>{
+    const curveSpreadHead=SORTABLE_CURVE_SPREADS.map(([key,label])=>{
       const active=sort&&sort.key===key;
       const aria=active?(sort.dir==='desc'?'descending':'ascending'):'none';
       return '<th scope="col" aria-sort="'+aria+'"><button type="button" class="sort" data-sort="'+key+'">'+
@@ -1193,7 +1194,7 @@
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
-      }).join('') + spread40Head + tenorSpreadHead +
+      }).join('') + curveSpreadHead +
       ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
@@ -1202,9 +1203,9 @@
       '</td><td>' + cc40Cell(r, yzStatus) + '</td><td>' + rvCell(r.rv60) + '</td><td>' + yangZhangCell(r, 20, yzStatus) +
       '</td><td>' + yangZhangCell(r, 40, yzStatus) + '</td><td>' + yangZhangCell(r, 60, yzStatus) +
       '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
-      spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + spread40Cell(r,'CC',yzStatus) +
-      '</td><td>' + spread40Cell(r,'YZ',yzStatus) +
-      '</td>' + [20,60].flatMap(n=>['CC','YZ'].map(est=>'<td>'+tenorSpreadCell(r,n,est,yzStatus)+'</td>')).join('') +
+      spreadCell(r.spreads.ivMinusRv60Pp) + '</td>' +
+      SORTABLE_CURVE_SPREADS.map(([, ,n,est])=>'<td>'+
+        (n===40?spread40Cell(r,est,yzStatus):tenorSpreadCell(r,n,est,yzStatus))+'</td>').join('') +
       '<td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
