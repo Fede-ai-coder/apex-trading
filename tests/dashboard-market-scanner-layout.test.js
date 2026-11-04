@@ -481,7 +481,10 @@ require('node:test')('coverage monitor: GET plus ONE guarded POST (IV refresh jo
   assert.equal(cov.REFRESH_POLL_MS, 5000);
   assert.equal(cov.REFRESH_MAX_POLLS, 720);
   assert.equal(cov.COVERAGE_AUTO_READ_MS, 300_000, 'five-minute read-only interval');
-  assert.doesNotMatch(covSource, /void startRefresh\(false\)/, 'no background POST on open');
+  assert.match(covSource, /if \(shouldAutoAcquireIv\(data\)\) void startRefresh\(false\)/,
+    'only a successful authenticated DEV Coverage read may start/join one deduped IV job');
+  assert.equal((covSource.match(/void startRefresh\(false\)/g)||[]).length,1,
+    'exactly one automatic IV acquisition call site per panel open');
   assert.equal(html.split('devtools/volatility-coverage-monitor.js').length - 1, 1,
     'index.html names the module once, in the DEV launcher (asserted with the launcher, at the end of this file)');
   assert.doesNotMatch(html, /<script[^>]*volatility-coverage-monitor/, '…and never in a script tag');
@@ -980,8 +983,8 @@ require('node:test')('coverage monitor: persisted DEV 1D checkpoint is distinct 
   assert.match(xss,/&lt;img src=x onerror=alert\(1\)&gt;/);
 });
 
-// The browser lifecycle, as for the RV panel: a manual run reads pages in order with the pinned digest, a closed
-// panel never advances, a timer never fires a second read, and nothing but GET with the session key is sent.
+// Browser lifecycle: pilot-only openings remain GET-only; enabled DEV refresh
+// opening starts one deduped job after the initial verified read. Close stops polling.
 async function testCoverageLifecycle() {
   // All network traffic, clocks and browser events are virtual; no live provider calls.
   let launcher = null, clock = Date.parse('2026-11-03T09:30:00Z'), seq = 0;
@@ -1157,7 +1160,7 @@ async function testCoverageLifecycle() {
   ui.csv.click(); assert.equal(blobs.length, 1);
   assert.equal(pending(period).length, 1);
 
-  // ONLY the explicit «Nuova acquisizione IV» button sends the POST, force:true; all its polls are GET.
+  // An explicit «Nuova acquisizione IV» click sends force:true; status polls remain GET-only.
   const job = (state,n) => ({ jobId:'job-fixture-0001', state,
     universe:{source:'TEST', digest:COV_DIGEST, count:60}, requestedAt:'2026-11-03T09:45:00Z',
     finishedAt:state==='RUNNING'?null:'2026-11-03T09:48:00Z',
@@ -1226,13 +1229,17 @@ async function testCoverageLifecycle() {
   assert.match(ui.recovery.innerHTML,/Acquisizione e salvataggio 1D/);
   assert.equal(ui['recovery-run'].disabled,false);
 
-  // Manual force within the cooldown reuses the finished job and is NOT reported as a new acquisition.
+  // Manual force within cooldown reuses the finished job, but still reloads Coverage
+  // once: the prior snapshot might predate the stored results.
   const recentAt = requests.length; ui['refresh-run'].click();
   assert.equal(requests[recentAt].options.method,'POST');
   assert.deepEqual(JSON.parse(requests[recentAt].options.body),{universeDigest:COV_DIGEST,force:true});
   requests[recentAt].resolve(ok({ok:true,created:false,reused:'RECENT',job:job('COMPLETE',60)}));
   await flush();
   assert.match(ui.refresh.innerHTML,/Nessuna nuova acquisizione.*meno di 60 secondi/);
+  await replyPages(recentAt+1,pages);
+  assert.equal(requests.filter(r=>r.options.method==='POST').length,2,
+    'reusing a concluded job cannot generate another POST');
   assert.equal(pending(5000).length,0);
 
   // A backend rejecting an explicit POST leaves previous read-only data intact and does not retry on a timer.
@@ -1250,17 +1257,31 @@ async function testCoverageLifecycle() {
   await flush();
   assert.equal(pending(5000).length,1);
 
-  // Close makes timers and browser observers inert; reopening starts a fresh GET only.
+  // Close cancels timers; a later DEV opening with an enabled IV-refresh backend
+  // joins/starts the job ONCE after successful GET, never before digest verification.
   const lastCount=requests.length, lastYzCount=yzRequests.length; ui.close.click();
   assert.equal(pending(period).length, 0);
   assert.equal(pending(5000).length, 0);
   assert.equal(docEvents.size, 0); assert.equal(winEvents.size, 0);
   clock += period*2; assert.equal(requests.length,lastCount);
   assert.equal(yzRequests.length,lastYzCount, 'closed monitor issues no background YZ GET');
-  launcher.click(); assert.equal(requests.length,lastCount+1);
-  await replyPages(lastCount,[small]);
+  const enabledSmall={...small,sources:{...small.sources,ivRefresh:{
+    enabled:true,available:true,jobId:null,jobState:null,progress:null}}};
+  launcher.click(); assert.equal(requests.length,lastCount+1,'start with verified Coverage GET');
+  await replyPages(lastCount,[enabledSmall]);
+  const autoAt=lastCount+1;
+  assert.equal(requests.length,autoAt+1,'eligible opening starts one IV POST after a complete read');
+  assert.equal(requests[autoAt].url,refresh+'/jobs');
+  assert.equal(requests[autoAt].options.method,'POST');
+  assert.deepEqual(JSON.parse(requests[autoAt].options.body),{universeDigest:COV_DIGEST},
+    'opening uses ordinary server-side dedupe (never force)');
+  const autoJob={...job('RUNNING',0),universe:{source:'TEST',digest:COV_DIGEST,count:3},
+    progress:{total:3,processed:0,pending:3,retrying:0,done:0,failed:0,ivAvailable:0,ivUnavailable:0,errors:0}};
+  requests[autoAt].resolve(ok({ok:true,created:true,job:autoJob}));await flush();
+  assert.equal(pending(5000).length,1);
   roots[2].fields.close.click();
-  assert.equal(pending(period).length, 0);
+  assert.equal(pending(period).length,0);
+  assert.equal(pending(5000).length,0);
 
   // The same source does not attach a launcher when backend is PROD.
   launcher=null;
