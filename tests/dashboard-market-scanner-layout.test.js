@@ -694,8 +694,13 @@ require('node:test')('coverage monitor: CSV keeps full precision, timestamps and
   const spread40Fields=['iv40_minus_rv40_cc_pp','iv40_minus_rv40_cc_status',
     'iv40_minus_rv40_cc_reason','iv40_minus_rv40_yz_pp','iv40_minus_rv40_yz_status',
     'iv40_minus_rv40_yz_reason'];
-  assert.deepEqual(header.slice(previousHeader.length+yangZhangFields.length+rv40Fields.length),
-    spread40Fields,'new indicative spreads append after ALL previously shipped columns');
+  const spread40Start=previousHeader.length+yangZhangFields.length+rv40Fields.length;
+  assert.deepEqual(header.slice(spread40Start,spread40Start+spread40Fields.length),
+    spread40Fields,'existing IV40 indicative spreads keep their precise CSV offsets');
+  const tenorSpreadFields=[20,60].flatMap(n=>['cc','yz'].flatMap(est=>
+    ['pp','status','reason'].map(field=>'iv'+n+'_minus_rv'+n+'_'+est+'_'+field)));
+  assert.deepEqual(header.slice(spread40Start+spread40Fields.length),tenorSpreadFields,
+    'the 12 IV20/60 CC/YZ fields append after all previously shipped columns');
   assert.equal(new Set(header).size, header.length, 'no duplicate names');
   const col = name => header.indexOf(name);
   assert.equal(lines[1].split(',')[col('iv_mode')], 'IV_PILOT', 'a pilot read says so in every row');
@@ -764,7 +769,8 @@ require('node:test')('coverage monitor: current-job IV20/40/60 display actual DT
   assert.match(html, /DTE effettivi 74/);
   assert.match(html, /2027-01-15/);
   assert.match(html, /scadenze Standard \(solo informative\)/);
-  assert.match(html, /Non usate per gli spread IV−RV/);
+  assert.match(html, /IV20.60 sono usate solo per gli spread indicativi omonimi quando verificabili/);
+  assert.match(html, /mai al posto della IV Ref/);
 
   const csv = cov.toCsv(data, null);
   const lines = csv.trimEnd().split('\r\n');
@@ -1601,8 +1607,8 @@ test('advisory audit row states and summary do not alter IV/RV or imply certific
   assert.match(sum,/da approfondire.*2/);
   assert.match(sum,/NON significa data ex-dividendo verificata/);
   assert.match(ui.renderTable(reported,{key:'position',dir:'asc'},{}),/Audit dividendi/);
-  assert.match(ui.renderTable([],null,{}),/colspan="23"/,
-    'empty-row span covers all 23 columns, including the two IV40−RV40 indicative spreads');
+  assert.match(ui.renderTable([],null,{}),/colspan="27"/,
+    'empty-row span covers all 27 columns, including IV40 and IV20/60 indicative spreads');
   assert.equal(ui.summarize(reported).ivRef,0);
   assert.equal(ui.summarize(reported).complete,0);
 });
