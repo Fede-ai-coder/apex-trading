@@ -551,6 +551,35 @@
       r.universePosition === detail.universePosition &&
       r.asOf?.rvSessionDate === coverage.asOfSessionDate) ?? null;
   }
+  function yzMissingDaysButton(row,state) {
+    if(state!=='READY'||!SYMBOL.test(String(row?.symbol||''))||
+        ![40,60].some(n=>row?.yangZhang?.['rv'+n+'YZ']?.reason==='MISSING_COMPLETED_SESSIONS'))return '';
+    return '<p><button type="button" data-yz-gap-symbol="'+esc(row.symbol)+'">Mostra date delle sedute YZ mancanti (sola lettura)</button></p>'+
+      '<div data-yz-gap-results></div>';
+  }
+  // The full, existing YZ detail endpoint enumerates the dates. Exact snapshot
+  // identity and compact/full reason/count are checked before displaying them.
+  function renderYangZhangMissingDays(reply,coverage,joined) {
+    if(!reply||reply.ok!==true||reply.readOnly!==true||reply.notForTrading!==true||
+        reply.executionAuthorized!==false||reply.universe?.digest!==coverage?.universe?.digest||
+        reply.universe?.count!==coverage?.rows?.length||reply.asOfSessionDate!==coverage.asOfSessionDate||
+        reply.symbol!==joined?.symbol||reply.universePosition!==joined.universePosition||
+        reply.row?.symbol!==joined.symbol||reply.yangZhang?.asOfSessionDate!==coverage.asOfSessionDate)
+      throw Error('YZ_MISSING_SESSIONS_DETAIL_INCONSISTENT');
+    const lines=[40,60].filter(n=>joined.yangZhang?.['rv'+n+'YZ']?.reason==='MISSING_COMPLETED_SESSIONS')
+      .map(n=>{
+        const brief=joined.yangZhang['rv'+n+'YZ'],full=reply.yangZhang?.['rv'+n+'YZ'];
+        const days=full?.missingSessions;
+        if(full?.reason!==brief.reason||!Array.isArray(days)||days.length!==brief.missingSessions||
+           days.length>n+1||days.some(d=>typeof d!=='string'||!DAY.test(d)||d>coverage.asOfSessionDate)||
+           new Set(days).size!==days.length)
+          throw Error('YZ_MISSING_SESSIONS_DETAIL_DRIFT');
+        return '<li>RV'+n+' YZ: '+days.length+' sedute assenti · <code>'+esc(days.join(', '))+'</code></li>';
+      });
+    return '<p class="note">Sedute che il backend non trova nello store 1D alla data RV '+
+      esc(coverage.asOfSessionDate)+'. Elenco diagnostico: nessuna acquisizione né correzione automatica.</p>'+
+      '<ul class="reasons">'+lines.join('')+'</ul>';
+  }
   function renderYangZhangDetail(row, state) {
     return '<h4>RV40 Close-to-Close (41 chiusure 1D)</h4>' + '<div>RV40 CC: ' + cc40Cell(row, state) + '</div>' +
       '<h4>RV Yang–Zhang (OHLC giornalieri)</h4>' +
@@ -559,7 +588,7 @@
       '<div>RV20 YZ: ' + yangZhangCell(row, 20, state) + '</div>' +
       '<div>RV40 YZ: ' + yangZhangCell(row, 40, state) + '</div>' +
       '<div>RV60 YZ: ' + yangZhangCell(row, 60, state) + '</div>' +
-      ohlcDiagnosticButton(row,state);
+      yzMissingDaysButton(row,state) + ohlcDiagnosticButton(row,state);
   }
 
 
@@ -2029,7 +2058,8 @@
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
       REFRESH_PATH, REFRESH_POLL_MS, REFRESH_PROGRESS_READ_MIN_MS, REFRESH_MAX_POLLS,
       shouldAutoAcquireIv, COVERAGE_AUTO_READ_MS, renderCoverageFreshness,
-      formattedStamp, renderSourceFreshness, renderSymbolFreshness, renderYangZhangGaps };
+      formattedStamp, renderSourceFreshness, renderSymbolFreshness, renderYangZhangGaps,
+      yzMissingDaysButton, renderYangZhangMissingDays };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
