@@ -7,6 +7,7 @@ const {join}=require('node:path');
 const {
   checkYangZhangPage, attachYangZhangPages, matchingYangZhangRowForDetail,
   yangZhangCell, cc40Cell, spread40Diagnostic, spread40Cell, renderSpread40Detail,
+  tenorSpreadDiagnostic, tenorSpreadCell, renderTenorSpreadsDetail,
   ohlcDiagnosticButton, renderPriceBasisOhlcAudit,
   renderYangZhangStatus,
   renderYangZhangDetail, renderTable, renderDetail, toCsv, sortRows, fetchJson
@@ -202,6 +203,101 @@ function throws(f,token){assert.throws(f,new RegExp(token));}
   assert.equal(spread40Diagnostic({...r,ivTenors:undefined},'CC','READY').reason,'IV40_NOT_EXPOSED');
   const sorted=sortRows([r,{...r,universePosition:1,ivTenors:undefined}],'spread40CC','desc');
   assert.equal(sorted[0].universePosition,0);
+}
+
+
+// IV20/IV60 paired with their own RV horizon (NOT legacy IV Ref), indicative only.
+{
+  const c=coverage(2), p=page(c,0);
+  attachYangZhangPages(c,[p]);
+  const r=c.rows[0], s=c.rows[1];
+  r.ivRef={...r.ivRef,observedAt:AFTER,
+    timing:{policyVersion:'IV_RV_TIMING_V1',comparable:true,providerUpdateAttested:false}};
+  const tenor=(n,value,dte)=>({targetDte:n,status:'AVAILABLE',value,
+    optionChainType:'Standard',horizonBasis:'CALENDAR_DTE_NOMINAL_PAIRING_WITH_TRADING_SESSION_RV',
+    selectedDte:dte,selectedExpiration:'2026-12-11',asOfDate:'2026-11-03',observedAt:AFTER});
+  r.ivTenors={iv20:tenor(20,.335,18),iv40:tenor(40,.4,38),iv60:tenor(60,.49,58)};
+  const before=JSON.stringify(r);
+  const vals=[
+    [20,'CC',13.5],[20,'YZ',2.5],[60,'CC',27],[60,'YZ',9]
+  ];
+  for(const [n,est,want] of vals){
+    const sp=tenorSpreadDiagnostic(r,n,est,'READY');
+    assert.equal(sp.status,'INDICATIVE');
+    assert.equal(sp.comparisonBasis,'CALENDAR_DTE_NOMINAL_PAIRING_WITH_TRADING_SESSION_RV');
+    assert.ok(Math.abs(sp.valuePp-want)<1e-9, 'IV'+n+' - RV'+n+' '+est);
+    assert.match(tenorSpreadCell(r,n,est,'READY'),/indicativo/);
+  }
+  assert.equal(JSON.stringify(r),before,'calculation never changes the source row');
+  const table=renderTable([r],{key:'position',dir:'asc'},null,'READY');
+  for(const label of ['IV20 − RV20 CC','IV20 − RV20 YZ','IV60 − RV60 CC','IV60 − RV60 YZ'])
+    assert.ok(table.includes(label),'four new visible headers: '+label);
+  const heads=['spread40YZ','spread20TenorCC','spread20TenorYZ','spread60TenorCC','spread60TenorYZ'];
+  const offsets=heads.map(k=>table.indexOf('data-sort="'+k+'"'));
+  assert.ok(offsets.every(x=>x>=0)&&offsets.every((x,i)=>i===0||x>offsets[i-1]),
+    'headings follow actual cell order, after previously shipped columns');
+  const cells=table.split('<tbody>')[1].split('</tr>')[0].split('<td>');
+  for(const [i,expected] of [[11,'+15.00 pp'],[12,'+13.00 pp'],
+    [15,'+13.50 pp'],[16,'+2.50 pp'],[17,'+27.00 pp'],[18,'+9.00 pp']])
+    assert.ok(cells[i].includes(expected),'correct spread cell at '+i);
+  const detail=renderTenorSpreadsDetail(r,r,'READY');
+  assert.match(detail,/IV20 − RV20 CC/);assert.match(detail,/IV20 − RV20 YZ/);
+  assert.match(detail,/IV60 − RV60 CC/);assert.match(detail,/IV60 − RV60 YZ/);
+  assert.match(detail,/Orizzonti diversi/);assert.match(detail,/Nessun fallback alla IV Ref/);
+  assert.match(renderTenorSpreadsDetail(r,null,'READY'),/RV20_SESSION_MISMATCH/);
+  assert.equal(tenorSpreadDiagnostic(r,20,'CC','LOADING').status,'INDICATIVE',
+    'CC value is independent of the separate YZ GET');
+  assert.equal(tenorSpreadDiagnostic(r,20,'YZ','LOADING').reason,'RV20_READ_LOADING');
+  assert.equal(tenorSpreadDiagnostic(r,60,'YZ','ERROR').reason,'RV60_READ_ERROR');
+  const old=r.ivTenors, oldRef=r.ivRef;
+  const noTenors={...r,ivTenors:undefined};
+  assert.equal(tenorSpreadDiagnostic(noTenors,20,'CC','READY').reason,'IV20_NOT_EXPOSED');
+  assert.equal(tenorSpreadDiagnostic(noTenors,60,'YZ','READY').reason,'IV60_NOT_EXPOSED');
+  assert.equal(tenorSpreadDiagnostic({...r,ivTenors:{...old,iv60:{...old.iv60,status:'NOT_CURRENT',value:null}}},60,'CC','READY').reason,
+    'IV60_NOT_CURRENT');
+  assert.equal(tenorSpreadDiagnostic({...r,ivTenors:{...old,iv20:{...old.iv20,horizonBasis:'OTHER'}}},20,'CC','READY').reason,
+    'IV20_PROVENANCE_UNVERIFIED');
+  assert.equal(tenorSpreadDiagnostic({...r,ivTenors:{...old,iv20:{...old.iv20,observedAt:'2026-11-03T12:00:01Z'}}},20,'CC','READY').reason,
+    'IV20_RV_TIMING_NOT_VERIFIED');
+  assert.equal(tenorSpreadDiagnostic({...r,ivRef:{...oldRef,timing:{policyVersion:'IV_RV_TIMING_V1',comparable:false}}},60,'YZ','READY').reason,
+    'IV60_RV_TIMING_NOT_VERIFIED');
+  assert.equal(tenorSpreadDiagnostic({...r,yangZhang:{...r.yangZhang,asOfSessionDate:'2026-11-01'}},60,'YZ','READY').reason,
+    'RV60_SESSION_MISMATCH');
+  assert.equal(tenorSpreadDiagnostic({...r,yangZhang:{...r.yangZhang,rv20YZ:{
+    ...r.yangZhang.rv20YZ,status:'BLOCKED_SESSION_POLICY',value:null,mathematicalValue:0.31}}},20,'YZ','READY').reason,
+    'RV20_BLOCKED_SESSION_POLICY');
+  assert.equal(tenorSpreadDiagnostic({...r,yangZhang:{...r.yangZhang,rv60YZ:{
+    ...r.yangZhang.rv60YZ,status:'UNAVAILABLE',value:null,reason:'MISSING_COMPLETED_SESSIONS'}}},60,'YZ','READY').reason,
+    'RV60_UNAVAILABLE');
+  assert.equal(tenorSpreadDiagnostic({...r,rv20:{...r.rv20,basis:'EXPLORATORY',value:0.2}},20,'CC','READY').reason,
+    'RV20_EXPLORATORY');
+  assert.equal(tenorSpreadDiagnostic({...r,rv60:{...r.rv60,basis:'UNAVAILABLE',value:null}},60,'CC','READY').reason,
+    'RV60_UNAVAILABLE');
+  assert.equal(tenorSpreadDiagnostic(r,40,'YZ','READY').reason,'TENOR_SPREAD_PAIR_INVALID');
+  assert.equal(JSON.stringify(r),before,'negative tests never mutate source data');
+  // Missing values ALWAYS last, for both sort directions.
+  s.ivTenors=undefined;
+  assert.deepEqual(sortRows([s,r],'spread20TenorCC','desc').map(x=>x.symbol),['T0','T1']);
+  assert.deepEqual(sortRows([s,r],'spread60TenorYZ','asc').map(x=>x.symbol),['T0','T1']);
+  const csv=toCsv(c,null).trimEnd().split('\r\n');
+  const headers=csv[0].split(','),row0=csv[1].split(','),row1=csv[2].split(',');
+  assert.equal(headers.length,row0.length);assert.equal(headers.length,row1.length);
+  const field=(name,row=row0)=>row[headers.indexOf(name)];
+  const prefix= 'iv40_minus_rv40_yz_reason';
+  assert.equal(headers.indexOf('iv20_minus_rv20_cc_pp'),headers.indexOf(prefix)+1,
+    'all pre-existing CSV columns retain their offsets');
+  for(const [n,est,want] of vals){
+    const name='iv'+n+'_minus_rv'+n+'_'+est.toLowerCase();
+    assert.ok(Math.abs(Number(field(name+'_pp'))-want)<1e-9);
+    assert.equal(field(name+'_status'),'INDICATIVE');
+    assert.equal(field(name+'_reason'),'');
+    assert.equal(field(name+'_pp',row1),'');
+    assert.equal(field(name+'_status',row1),'UNAVAILABLE');
+  }
+  assert.equal(field('iv20_minus_rv20_yz_pp'),String(100*(.335-.31)),
+    'CSV keeps full JS numeric precision rather than display rounding');
+  assert.equal(field('iv_minus_rv20_pp'),'15','legacy IV Ref spread unchanged');
+  assert.equal(field('iv_minus_rv60_pp'),'13');
 }
 
 // Policy-blocked mathematical diagnostics must NOT masquerade as usable RV.
