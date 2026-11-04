@@ -54,6 +54,7 @@
   const RECOVERY_VERSION = 'APEX_1D_ALWAYS_ON_RECOVERY_STATE_V1';
   const REFRESH_PATH = '/debug/volatility-carry/iv-refresh';
   const REFRESH_POLL_MS = 5000;                 // status only: a poll never starts an acquisition
+  const REFRESH_PROGRESS_READ_MIN_MS = 60_000; // bounded GET re-read when a running job advances
   const COVERAGE_AUTO_READ_MS = 5 * 60_000;    // GET-only while the panel is open and visible
   const REFRESH_MAX_POLLS = 720;                // one hour of polling at most per panel opening
   const JOB_STATES = ['RUNNING', 'COMPLETE', 'PARTIAL', 'FAILED', 'SUPERSEDED', 'INTERRUPTED'];
@@ -70,6 +71,21 @@
       job.universe && DIGEST.test(String(job.universe.digest)) && p && ['total', 'processed', 'pending', 'retrying', 'done',
       'failed', 'ivAvailable', 'ivUnavailable', 'errors'].every(k => n(p[k])) && p.processed <= p.total ? job : null;
   }
+  // A panel opening may start/join an IV job, but never automatically run another
+  // acquisition once a completed current job already has a temporally comparable
+  // IV observation. Legacy/pilot-only backend responses do not trigger POSTs.
+  // This is a DEV-only opt-in action from the panel opening; periodic GETs are read-only.
+  function shouldAutoAcquireIv(data) {
+    const refresh = data?.ivRefresh;
+    if (!refresh || refresh.enabled !== true || refresh.available !== true ||
+        !DIGEST.test(String(data?.universe?.digest))) return false;
+    if (refresh.jobState === 'RUNNING') return true; // join, never create another parallel job
+    return !((data.rows || []).some(r => r.ivRef?.status === 'AVAILABLE' &&
+      r.ivRef?.acquisition?.freshness === 'CURRENT_JOB' &&
+      r.ivRef?.timing?.policyVersion === 'IV_RV_TIMING_V1' &&
+      r.ivRef?.timing?.comparable === true));
+  }
+
   // What the refresh did for THIS opening, in words: a reused job is never presented as a new acquisition.
   function renderRefreshStatus(job, meta) {
     meta = meta || {};
@@ -1402,6 +1418,7 @@
       detailSnapshot = null, busy = false, data = null;
     let refreshCurrent = null, refreshTimer = null, coverageTimer = null;
     let lastReadAt = 0, lastReadAttemptAt = 0, pendingJobRead = false, activeAnalyze = null;
+    let autoOpenPending = false, progressJobId = null, progressProcessed = 0, progressReadAt = 0;
     function scheduleCoverageRead() {
       if (coverageTimer !== null) clearTimeout(coverageTimer);
       coverageTimer = null;
@@ -1436,11 +1453,13 @@
       detailSnapshot = null; busy = false; data = null;
       refreshCurrent = null; refreshTimer = null; coverageTimer = null;
       lastReadAt = 0; lastReadAttemptAt = 0; pendingJobRead = false; activeAnalyze = null;
+      autoOpenPending = false; progressJobId = null; progressProcessed = 0; progressReadAt = 0;
       if (host) { host.remove(); host = null; }
       trigger.focus();
     }
     function open() {
       if (host) return;
+      autoOpenPending = true; // exactly one automatic start-or-join attempt per opening
       host = document.createElement('div');
       host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;';
       const root = host.attachShadow({ mode: 'open' });
@@ -1548,8 +1567,20 @@
           clearTimeout(timeout);
           if (refreshCurrent === controller && host === runHost) {
             refreshCurrent = null;
-            if (job && job.state === 'RUNNING') schedulePoll(job.jobId, 0);
-            else refreshRun.disabled = !data || busy;
+            if (job && job.state === 'RUNNING') {
+              progressJobId = job.jobId;
+              progressProcessed = job.progress.processed;
+              progressReadAt = Date.now();
+              schedulePoll(job.jobId, 0);
+            } else {
+              refreshRun.disabled = !data || busy;
+              // A concluded/reused job also warrants a fresh read: the initial
+              // Coverage snapshot could have been taken before the POST.
+              if (job && job.state !== 'RUNNING') {
+                if (busy) pendingJobRead = true;
+                else void analyze();
+              }
+            }
           }
         }
       }
@@ -1582,8 +1613,23 @@
           clearTimeout(timeout);
           if (refreshCurrent === controller && host === runHost) {
             refreshCurrent = null;
-            if (job && job.state === 'RUNNING') schedulePoll(jobId, count);
-            else {
+            if (job && job.state === 'RUNNING') {
+              // New batches are persisted before the job finishes. Update the
+              // table on meaningful progress, at most once per minute, GET only.
+              if (progressJobId !== job.jobId) {
+                progressJobId = job.jobId;
+                progressProcessed = 0;
+                progressReadAt = Date.now();
+              }
+              if (job.progress.processed > progressProcessed &&
+                  Date.now() - progressReadAt >= REFRESH_PROGRESS_READ_MIN_MS) {
+                progressProcessed = job.progress.processed;
+                progressReadAt = Date.now();
+                if (busy) pendingJobRead = true;
+                else void analyze();
+              }
+              schedulePoll(jobId, count);
+            } else {
               refreshRun.disabled = !data || busy;
               if (job) {
                 if (busy) pendingJobRead = true; // do not lose the completed-job re-read to another GET
@@ -1853,7 +1899,9 @@
           state.textContent = 'Completato: ' + data.rows.length + ' titoli in ' + pages.length +
             ' pagine · IV Ref presente per ' + withIv + '. Nessun valore stimato o sostituito.';
           if (refreshIdle()) refreshRun.disabled = false;
-          // No POST here. Acquisition requires an explicit click on «Nuova acquisizione IV».
+          // An authorized DEV opening triggers one server-deduped acquisition
+          // only when no comparable current-job IV exists. Periodic reads never
+          // call startRefresh; one explicit click still uses force=true.
         } catch (error) {
           if (current !== controller || host !== runHost) return;
           state.textContent = signal.aborted ? 'Richiesta annullata o scaduta (' + TIMEOUT_MS / 1000 + ' s per pagina).'
@@ -1866,7 +1914,13 @@
             csv.disabled = !data;
             refreshRun.disabled = !data || !refreshIdle();
             if (pendingJobRead) { pendingJobRead = false; void analyze(); }
-            else scheduleCoverageRead();
+            else {
+              scheduleCoverageRead();
+              if (autoOpenPending && data) {
+                autoOpenPending = false;
+                if (shouldAutoAcquireIv(data)) void startRefresh(false);
+              }
+            }
           }
         }
       }
@@ -1875,7 +1929,8 @@
       document.addEventListener('visibilitychange', onResume);
       window.addEventListener('focus', onResume);
       run.focus();
-      // Opening = GET-only Coverage. A new IV acquisition requires the separate manual button.
+      // First GET verifies the universe and existing provenance; then an
+      // eligible DEV opening may start/join ONE deduplicated IV job.
       void analyze();
     }
     trigger.addEventListener('click', open);
@@ -1891,7 +1946,8 @@
       formatPp, formatPct, spreadClass, ivMarketOf, csvCell, toCsv, renderSummary, dividendAuditSummary,
       dividendAuditOf, dividendAuditCell, renderDividendDetail, renderTable, sessionFacts, renderDetail,
       fetchJson, renderRecoveryStatus, PAGE_SIZE, TIMEOUT_MS, checkRefreshJob, renderRefreshStatus, acquisitionCell,
-      REFRESH_PATH, REFRESH_POLL_MS, REFRESH_MAX_POLLS, COVERAGE_AUTO_READ_MS, renderCoverageFreshness };
+      REFRESH_PATH, REFRESH_POLL_MS, REFRESH_PROGRESS_READ_MIN_MS, REFRESH_MAX_POLLS,
+      shouldAutoAcquireIv, COVERAGE_AUTO_READ_MS, renderCoverageFreshness };
   if (typeof document !== 'undefined' && typeof window !== 'undefined' &&
       devContext(window.location && window.location.hostname, typeof BACKEND === 'string' ? BACKEND : '')) {
     if (document.readyState === 'loading')
