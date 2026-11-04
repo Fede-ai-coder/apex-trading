@@ -407,6 +407,66 @@
     return '<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
       '</strong><div class="sub">indicativo · '+esc(x.actualDte)+' DTE calendario / 40 sedute</div>';
   }
+
+  // Nominal DTE IV20/60 paired with 20/60 exchange-session RV: an indicative
+  // annualized-volatility comparison, NOT the legacy IV Ref spread or a
+  // horizon-matched variance risk premium. No backend changes or acquisition.
+  // The same conservative timing and provenance gate used by IV40 applies.
+  function tenorSpreadDiagnostic(row, n, estimator, readStatus='NOT_READ') {
+    const no=reason=>({status:'UNAVAILABLE',reason,valuePp:null});
+    if(![20,60].includes(n)||!['CC','YZ'].includes(estimator))return no('TENOR_SPREAD_PAIR_INVALID');
+    if(estimator==='YZ'&&readStatus!=='READY')return no('RV'+n+'_READ_'+readStatus);
+    const iv=tenorOf(row,n);
+    if(!iv||iv.status!=='AVAILABLE'||num(iv.value)===null||iv.value<=0)
+      return no(iv?'IV'+n+'_'+iv.status:'IV'+n+'_NOT_EXPOSED');
+    if(iv.targetDte!==n||iv.optionChainType!=='Standard'||iv.horizonBasis!==SPREAD40_HORIZON||
+       !Number.isSafeInteger(iv.selectedDte)||iv.selectedDte<=0||
+       typeof iv.selectedExpiration!=='string'||!DAY.test(iv.selectedExpiration)||
+       typeof iv.asOfDate!=='string'||!DAY.test(iv.asOfDate))
+      return no('IV'+n+'_PROVENANCE_UNVERIFIED');
+    const ref=row?.ivRef,timing=ref?.timing;
+    if(!timing||timing.policyVersion!=='IV_RV_TIMING_V1'||timing.comparable!==true||
+       ref?.observedAt!==iv.observedAt||!iv.observedAt||Number.isNaN(Date.parse(iv.observedAt))||
+       iv.asOfDate!==row?.asOf?.ivAsOfDate)
+      return no('IV'+n+'_RV_TIMING_NOT_VERIFIED');
+    if(estimator==='YZ'&&row?.yangZhang?.asOfSessionDate!==row?.asOf?.rvSessionDate)
+      return no('RV'+n+'_SESSION_MISMATCH');
+    const rv=estimator==='CC'?row?.['rv'+n]:yzWindow(row,n);
+    if(estimator==='CC') {
+      if(!rv||!['CERTIFIED','PRELIMINARY'].includes(rv.basis)||num(rv.value)===null||rv.value<0)
+        return no('RV'+n+'_'+(rv?.basis||'UNAVAILABLE'));
+    } else if(!rv||rv.status!=='PRELIMINARY'||num(rv.value)===null||rv.value<0) {
+      return no('RV'+n+'_'+(rv?.status||'UNAVAILABLE'));
+    }
+    return {status:'INDICATIVE',reason:null,valuePp:100*(iv.value-rv.value),
+      actualDte:iv.selectedDte,rvReturns:n,comparisonBasis:SPREAD40_HORIZON,
+      rvBasis:estimator==='CC'?rv.basis:rv.status};
+  }
+  function tenorSpreadCell(row,n,estimator,readStatus) {
+    const x=tenorSpreadDiagnostic(row,n,estimator,readStatus);
+    if(x.valuePp===null)
+      return '<span class="na">—</span><div class="sub"><code>'+esc(x.reason)+'</code></div>';
+    return '<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
+      '</strong><div class="sub">indicativo · '+esc(x.actualDte)+' DTE / '+n+' sedute</div>';
+  }
+  function renderTenorSpreadsDetail(row, joinedYangZhangRow, readStatus) {
+    const paired={...row,yangZhang:joinedYangZhangRow?.yangZhang??null};
+    const list=[20,60].flatMap(n=>['CC','YZ'].map(est=>{
+      const x=tenorSpreadDiagnostic(paired,n,est,readStatus);
+      return '<li>IV'+n+' − RV'+n+' '+est+': '+(x.valuePp===null
+        ?'<span class="na">—</span> <code>'+esc(x.reason)+'</code>'
+        :'<strong class="sp '+spreadClass(x.valuePp)+'">'+esc(formatPp(x.valuePp))+
+          '</strong> · IV '+esc(x.actualDte)+' DTE calendario / RV '+n+' sedute · '+
+          esc(x.rvBasis))+'</li>';
+    })).join('');
+    return '<h4>Spread IV20/IV60 per tenor · sola diagnostica</h4>'+
+      '<p class="note">IV20/60 usano scadenze con DTE effettivi (giorni di calendario); '+
+      'RV20/60 usano rendimenti su sedute di borsa. Orizzonti diversi, confronto solo indicativo, '+
+      'non VRP certificato né segnale di trading. Richiesti provenance e timing verificabili, '+
+      'RV CC disponibile o Yang–Zhang PRELIMINARY. Nessun fallback alla IV Ref.</p>'+
+      '<ul class="reasons">'+list+'</ul>';
+  }
+
   function renderSpread40Detail(row, joinedYangZhangRow, readStatus) {
     // Coverage :symbol detail omits the independent Yang-Zhang result. Reuse
     // only the digest/session/position-verified joined row, NEVER a raw reply.
@@ -654,6 +714,10 @@
     rv40YZ: r => yzWindow(r, 40)?.status === 'PRELIMINARY' ? num(yzWindow(r, 40).value) : null,
     spread40CC: r => spread40Diagnostic(r,'CC','READY').valuePp,
     spread40YZ: r => spread40Diagnostic(r,'YZ','READY').valuePp,
+    spread20TenorCC: r => tenorSpreadDiagnostic(r,20,'CC','READY').valuePp,
+    spread20TenorYZ: r => tenorSpreadDiagnostic(r,20,'YZ','READY').valuePp,
+    spread60TenorCC: r => tenorSpreadDiagnostic(r,60,'CC','READY').valuePp,
+    spread60TenorYZ: r => tenorSpreadDiagnostic(r,60,'YZ','READY').valuePp,
     rv60YZ: r => yzWindow(r, 60)?.status === 'PRELIMINARY' ? num(yzWindow(r, 60).value) : null,
     spread20: r => spreadOf(r, 20), spread60: r => spreadOf(r, 60),
   };
@@ -836,12 +900,21 @@
     ['iv40_minus_rv40_yz_status',(r,d)=>spread40Diagnostic(r,'YZ',d.yangZhang?.status).status],
     ['iv40_minus_rv40_yz_reason',(r,d)=>spread40Diagnostic(r,'YZ',d.yangZhang?.status).reason],
   ];
+  // Append-only: preserve every previously shipped CSV column index.
+  const TENOR_SPREAD_CSV_COLUMNS = [20,60].flatMap(n=>['CC','YZ'].flatMap(est=>{
+    const name='iv'+n+'_minus_rv'+n+'_'+est.toLowerCase();
+    return [
+      [name+'_pp',(r,d)=>tenorSpreadDiagnostic(r,n,est,d.yangZhang?.status).valuePp],
+      [name+'_status',(r,d)=>tenorSpreadDiagnostic(r,n,est,d.yangZhang?.status).status],
+      [name+'_reason',(r,d)=>tenorSpreadDiagnostic(r,n,est,d.yangZhang?.status).reason],
+    ];
+  }));
   function toCsv(data, ivCache) {
     const header = CSV_COLUMNS.map(c => c[0]).concat(['iv_market_informational', 'iv_market_source',
       'iv_market_updated_at', 'page_generated_at', 'generated_from', 'generated_to', 'universe_source', 'universe_digest'])
       .concat(ACQUISITION_COLUMNS.map(c => c[0])).concat(TENOR_CSV_COLUMNS.map(c => c[0]))
       .concat(YZ_CSV_COLUMNS.map(c => c[0])).concat(RV40_CSV_COLUMNS.map(c => c[0]))
-      .concat(SPREAD40_CSV_COLUMNS.map(c => c[0]));
+      .concat(SPREAD40_CSV_COLUMNS.map(c => c[0])).concat(TENOR_SPREAD_CSV_COLUMNS.map(c => c[0]));
     const lines = [header.join(',')];
     for (const row of data.rows) {
       const m = ivMarketOf(row.symbol, ivCache);
@@ -854,7 +927,8 @@
         .concat(TENOR_CSV_COLUMNS.map(c => csvCell(c[1](row))))
         .concat(YZ_CSV_COLUMNS.map(c => csvCell(c[1](row, data))))
         .concat(RV40_CSV_COLUMNS.map(c => csvCell(c[1](row, data))))
-        .concat(SPREAD40_CSV_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
+        .concat(SPREAD40_CSV_COLUMNS.map(c => csvCell(c[1](row, data))))
+        .concat(TENOR_SPREAD_CSV_COLUMNS.map(c => csvCell(c[1](row, data)))).join(','));
     }
     return lines.join('\r\n') + '\r\n';
   }
@@ -1035,7 +1109,7 @@
           t.sharedWithTargets.map(x => esc(x)).join(', IV') : '') + '</li>';
     }).join('');
     return '<h4>IV20 / IV40 / IV60 · scadenze Standard (solo informative)</h4>' +
-      '<p class="note">Target nominali; verificare sempre i DTE effettivi. Non usate per gli spread IV−RV qui mostrati.</p>' +
+      '<p class="note">Target nominali; verificare sempre i DTE effettivi. IV20/60 sono usate solo per gli spread indicativi omonimi quando verificabili, mai al posto della IV Ref.</p>' +
       '<ul class="reasons">' + sections + '</ul>';
   }
   function acquisitionDetail(iv) {
@@ -1084,6 +1158,8 @@
   const SORTABLE_YZ = [['rv20YZ','RV20 YZ'], ['rv40YZ','RV40 YZ'], ['rv60YZ','RV60 YZ']];
   const SORTABLE_CC40 = [['rv40CC','RV40 CC']];
   const SORTABLE_SPREAD40 = [['spread40CC','IV40 − RV40 CC*'],['spread40YZ','IV40 − RV40 YZ*']];
+  const SORTABLE_TENOR_SPREADS = [['spread20TenorCC','IV20 − RV20 CC*'],['spread20TenorYZ','IV20 − RV20 YZ*'],
+    ['spread60TenorCC','IV60 − RV60 CC*'],['spread60TenorYZ','IV60 − RV60 YZ*']];
   function renderTable(rows, sort, ivCache, yzStatus = 'NOT_READ') {
     const yzHead = SORTABLE_YZ.map(([key, label]) => {
       const active = sort && sort.key === key;
@@ -1103,6 +1179,12 @@
       return '<th scope="col" aria-sort="'+aria+'"><button type="button" class="sort" data-sort="'+key+'">'+
         esc(label)+(active?(sort.dir==='desc'?' ▼':' ▲'):' ↕')+'</button></th>';
     }).join('');
+    const tenorSpreadHead=SORTABLE_TENOR_SPREADS.map(([key,label])=>{
+      const active=sort&&sort.key===key;
+      const aria=active?(sort.dir==='desc'?'descending':'ascending'):'none';
+      return '<th scope="col" aria-sort="'+aria+'"><button type="button" class="sort" data-sort="'+key+'">'+
+        esc(label)+(active?(sort.dir==='desc'?' ▼':' ▲'):' ↕')+'</button></th>';
+    }).join('');
     const head = ['Titolo', 'IV Ref', 'IV20', 'IV40', 'IV60', 'RV20 CC']
       .map(h => '<th scope="col">' + esc(h) + '</th>').join('') + cc40Head +
       '<th scope="col">RV60 CC</th>' + yzHead +
@@ -1111,7 +1193,7 @@
         const aria = active ? (sort.dir === 'desc' ? 'descending' : 'ascending') : 'none';
         return '<th scope="col" aria-sort="' + aria + '"><button type="button" class="sort" data-sort="' + key + '">' +
           esc(label) + (active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ' ↕') + '</button></th>';
-      }).join('') + spread40Head +
+      }).join('') + spread40Head + tenorSpreadHead +
       ['Sedute RV20', 'Sedute RV60', 'Non validate 20', 'Non validate 60', 'Motivo', 'Audit dividendi', 'Riferimento', 'Stato']
         .map(h => '<th scope="col">' + esc(h) + '</th>').join('');
     const body = rows.map(r => '<tr><th scope="row"><button type="button" class="sym" data-symbol="' + esc(r.symbol) + '">' +
@@ -1121,14 +1203,16 @@
       '</td><td>' + yangZhangCell(r, 40, yzStatus) + '</td><td>' + yangZhangCell(r, 60, yzStatus) +
       '</td><td>' + spreadCell(r.spreads.ivMinusRv20Pp) + '</td><td>' +
       spreadCell(r.spreads.ivMinusRv60Pp) + '</td><td>' + spread40Cell(r,'CC',yzStatus) +
-      '</td><td>' + spread40Cell(r,'YZ',yzStatus) + '</td><td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
+      '</td><td>' + spread40Cell(r,'YZ',yzStatus) +
+      '</td>' + [20,60].flatMap(n=>['CC','YZ'].map(est=>'<td>'+tenorSpreadCell(r,n,est,yzStatus)+'</td>')).join('') +
+      '<td>' + coverageCell(r.rv20) + '</td><td>' + coverageCell(r.rv60) +
       '</td><td>' + missingCell(r.rv20) + '</td><td>' + missingCell(r.rv60) + '</td><td>' + reasonHtml(r.primaryReason) +
       (r.reasons.length > 1 ? '<div class="sub">+' + (r.reasons.length - 1) + ' altri motivi</div>' : '') + '</td><td>' +
       dividendAuditCell(r) + '</td><td>' + asOfCell(r.asOf) + '</td><td><span class="st st-' + esc(r.status.toLowerCase()) + '">' + esc(statusLabel(r)) +
       '</span>' + (r.status === 'COMPLETE' && !certifiedPair(r) ?
         '<div class="sub">non certificati APEX</div>' : '') + '</td></tr>').join('');
     return '<div class="scroll"><table><thead><tr>' + head + '</tr></thead><tbody>' +
-      (body || '<tr><td colspan="23">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
+      (body || '<tr><td colspan="27">Nessun titolo con questi filtri.</td></tr>') + '</tbody></table></div>';
   }
 
   // How the census and the RV daily store were read for a row: a fact found, a fact of absence, not read, or an error.
@@ -1253,6 +1337,7 @@
       renderWindowDetail('rv60', 60, r.rv60, diag && diag.sessions, diag && diag.corporateActions) +
       renderYangZhangDetail(yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
       renderSpread40Detail(r, yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
+      renderTenorSpreadsDetail(r, yzInfo?.row ?? null, yzInfo?.status ?? 'NOT_READ') +
       renderDividendDetail(detail) + '<h4>Qualità candele</h4>' + (cq ? '<p>Candele salvate ' + esc(cq.storedCandles) + ' · strutturalmente valide ' +
         esc(cq.structurallyValidCandles) + ' · escluse ' + esc(cq.excludedRows) + ' (' +
         esc(Object.entries(cq.excludedByReason || {}).map(([k, v]) => k + ' ' + v).join(', ') || 'nessuna') +
@@ -1397,6 +1482,8 @@
         ' IV40 usa una scadenza opzioni con DTE effettivi indicati: gli orizzonti non sono identici.' +
         ' Spread a 40 aggiunti come confronti indicativi IV40−RV40 CC e IV40−RV40 YZ, soltanto con dati verificabili.' +
         ' Non equivalgono a orizzonti futuri/passati identici o segnali di trading.' +
+        ' Nuovi spread IV20−RV20 CC/YZ e IV60−RV60 CC/YZ indicativi: IV in DTE di calendario e RV in sedute,' +
+        ' solo se provenance, timing e disponibilità della RV sono verificabili. Mai sostituzioni da IV Ref.' +
         ' Spread esistenti = 100 × (IV Ref − RV20/60 CC) in punti percentuali, arrotondati solo' +
         ' a video (il CSV ha la precisione piena). Verde IV &gt; RV, rosso IV &lt; RV, neutro uguali, grigio non disponibile:' +
         ' i colori indicano solo il segno, non sono segnali di trading.</p>' +
@@ -1796,6 +1883,7 @@
   if (typeof module !== 'undefined' && module.exports)
     module.exports = { devContext, checkPage, combinePages, checkYangZhangPage, attachYangZhangPages,
       matchingYangZhangRowForDetail, yangZhangCell, cc40Cell, spread40Diagnostic,
+      tenorSpreadDiagnostic, tenorSpreadCell, renderTenorSpreadsDetail,
       ohlcDiagnosticButton, renderPriceBasisOhlcAudit,
       spread40Cell, renderSpread40Detail, renderYangZhangStatus, renderYangZhangDetail,
       summarize, filterRows, sortRows, reasonCodes, reasonText,
