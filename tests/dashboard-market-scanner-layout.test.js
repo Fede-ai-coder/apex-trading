@@ -1302,6 +1302,28 @@ process.on('exit', () => {
   }
 });
 
+// The opener does not POST for pilot/disabled backends or for a comparable
+// current-job observation; it rejoins a running job and reacquires when stale.
+require('node:test')('IV auto-open: DEV backend capability, current comparability and one-job rejoin gate', () => {
+  const row = { ivRef:{status:'AVAILABLE',acquisition:{freshness:'CURRENT_JOB'},
+    timing:{policyVersion:'IV_RV_TIMING_V1',comparable:true}} };
+  const fresh={universe:{digest:COV_DIGEST},ivRefresh:{enabled:true,available:true,jobState:'COMPLETE'},
+    rows:[row]};
+  assert.equal(cov.shouldAutoAcquireIv(fresh),false,'comparable current IV requires no provider calls');
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,ivRefresh:{...fresh.ivRefresh,jobState:'RUNNING'}}),true,
+    'opening rejoins an existing RUNNING job even when some rows are already updated');
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,rows:[
+    {...row,ivRef:{...row.ivRef,timing:{...row.ivRef.timing,comparable:false}}}]}),true,
+    'RV session advanced beyond the prior IV: a new job is necessary');
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,rows:[]}),true,'no prior observations');
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,ivRefresh:{...fresh.ivRefresh,available:false}}),false);
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,ivRefresh:{...fresh.ivRefresh,enabled:false}}),false);
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,ivRefresh:null}),false,'pilot-only/legacy backend: GET-only');
+  assert.equal(cov.shouldAutoAcquireIv({...fresh,universe:{digest:'invalid'}}),false,
+    'unverified digest cannot authorize even a DEV POST');
+  assert.equal(cov.REFRESH_PROGRESS_READ_MIN_MS,60_000,'bounded progressive read cadence');
+});
+
 // Full-universe IV refresh: job validation, status wording and per-row provenance (pure renderers).
 require('node:test')('IV refresh: job shape is checked; status never presents a reused job as new; rows show history apart', () => {
   const job = { jobId: 'job-fixture-0001', state: 'RUNNING', universe: { digest: COV_DIGEST }, requestedAt: '2026-11-01T10:00:00.000Z',
