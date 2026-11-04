@@ -1181,7 +1181,7 @@ async function testCoverageLifecycle() {
   assert.equal(requests[partialAt].options.method,'GET','progress triggers one bounded Coverage re-read');
   const progressPages = covPages(covUniverse(60),(s,i)=>covRow(s,i,{iv:s==='U050'?0.456:null}));
   await replyPages(partialAt,progressPages);
-  assert.match(ui.table.innerHTML,/45\\.60%/,'in-flight IV is displayed before the full-universe job ends');
+  assert.ok(ui.table.innerHTML.includes('45.60%'),'in-flight IV is displayed before full-universe job ends');
   assert.equal(requests.filter(x=>x.options.method==='POST').length,1,
     'progress does not start any second acquisition');
   fire(5000); const lastPoll = requests.length-1;
