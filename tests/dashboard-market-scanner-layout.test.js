@@ -927,6 +927,34 @@ require('node:test')('coverage monitor: a read is not atomic, and it says when t
   assert.doesNotMatch(cov.renderSummary(cov.combinePages(atomic)), /Lettura NON atomica/, 'the note follows what the pages declare');
 });
 
+require('node:test')('NVDA OHLC diagnostic action is in the rendered detail for blocked YZ40/60', () => {
+  const yz={symbol:'NVDA',universePosition:0,yangZhang:{
+    rv20YZ:{status:'PRELIMINARY',value:0.3569,reason:null},
+    rv40YZ:{status:'UNAVAILABLE',value:null,reason:'OHLC_INCOMPATIBLE_WITH_YANG_ZHANG'},
+    rv60YZ:{status:'UNAVAILABLE',value:null,reason:'OHLC_INCOMPATIBLE_WITH_YANG_ZHANG'},
+    cc:{rv40:{status:'PRELIMINARY',value:0.3034,reason:null}}
+  }};
+  const detail=covDetail(d=>{d.symbol='NVDA'; d.row.symbol='NVDA';});
+  const html=cov.renderDetail(detail,null,{row:yz,status:'READY'});
+  assert.match(html,/RV40 YZ:[\s\S]*OHLC_INCOMPATIBLE_WITH_YANG_ZHANG/);
+  assert.match(html,/data-yz-ohlc-entry/,'diagnostic entry has a visible section of its own');
+  assert.match(html,/<button type="button" data-yz-ohlc-symbol="NVDA">Analizza sedute OHLC e dividendi \(sola lettura\)<\/button>/,
+    'blocked NVDA detail must offer the exact actionable diagnostic button');
+  assert.match(html,/apri la diagnostica per vedere le sedute/);
+  // A normal ready symbol may still request a read-only price-basis audit.
+  const healthy={...yz,yangZhang:{...yz.yangZhang,
+    rv40YZ:{status:'PRELIMINARY',value:0.3,reason:null},
+    rv60YZ:{status:'PRELIMINARY',value:0.4,reason:null}}};
+  assert.match(cov.ohlcDiagnosticButton(healthy,'READY'),/data-yz-ohlc-symbol="NVDA"/);
+  assert.doesNotMatch(cov.ohlcDiagnosticButton(healthy,'READY'),/apri la diagnostica per vedere le sedute/);
+  assert.equal(cov.ohlcDiagnosticButton(yz,'LOADING'),'');
+  assert.equal(cov.ohlcDiagnosticButton(yz,'ERROR'),'');
+  assert.equal(cov.ohlcDiagnosticButton({...yz,symbol:'<script>'},'READY'),'',
+    'untrusted symbol names never produce clickable audit controls');
+  assert.doesNotMatch(cov.renderDetail(detail,null,{row:yz,status:'LOADING'}),/data-yz-ohlc-symbol/,
+    'not-ready snapshots cannot make a price-basis GET available');
+});
+
 require('node:test')('coverage monitor: source states are shown as read, never as "missing"', () => {
   const data = cov.combinePages(covMixed());
   const text = obs => { data.sources.observations = obs; return cov.renderSummary(data); };
