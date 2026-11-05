@@ -673,7 +673,15 @@
       if(prior['rv'+n+'YZ']?.reason===YZ_OHLC_REASON && buckets[n]===0)
         invalid();
     }
-    if(!observed.length)invalid();
+    // The diagnostic is now available for any READY YZ symbol, not just
+    // symbols already known to have anomalies. An honestly empty report is
+    // legitimate after all snapshot/identity/window checks above; when YZ
+    // claims an OHLC blockage, the checks above still reject an empty report.
+    if(!observed.length)
+      return '<section class="audit-detail" data-yz-ohlc-diagnostic>'+
+        '<h4>'+esc(joined.symbol)+' · qualità OHLC e base prezzi 1D</h4>'+
+        '<p>Nessuna incompatibilità OHLC rilevata nelle sedute riportate dalle finestre RV20/RV60.</p>'+
+        '<p class="note">L’assenza di anomalie non certifica la base prezzi, la finalità delle candele né la RV. Nessun dato modificato.</p></section>';
     const dateRows=observed.sort((a,b)=>a.item.sessionDate.localeCompare(b.item.sessionDate))
       .map(({item,in20,in40})=>{
         const shape=item.kind==='STRUCTURAL'?item.structuralIssue:item.side;
