@@ -599,11 +599,16 @@
   const YZ_OHLC_SHAPES=new Set(['CLOSE_BELOW_LOW','CLOSE_ABOVE_HIGH','OPEN_OUTSIDE_RANGE','LOW_ABOVE_HIGH']);
   const PRICE_BASIS_STRUCTURAL_ISSUES=new Set(['NOT_POSITIVE_OR_NON_FINITE_PRICE','LOW_ABOVE_HIGH','OPEN_OUTSIDE_RANGE']);
   function ohlcDiagnosticButton(row,state) {
-    if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(row.symbol)||
-       ![20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return '';
-    return '<p><button type="button" data-yz-ohlc-symbol="'+esc(row.symbol)+'">'+
+    // The forensic endpoint is read-only for ANY symbol in the validated YZ
+    // snapshot. Do not hide the only investigative action behind the very
+    // OHLC-reason classification that the action is meant to explain.
+    if(state!=='READY'||!row?.yangZhang||!SYMBOL.test(String(row.symbol||'')))return '';
+    const anomaly=[20,40,60].some(n=>row.yangZhang['rv'+n+'YZ']?.reason===YZ_OHLC_REASON);
+    return '<section class="audit-detail" data-yz-ohlc-entry><p>'+
+      '<button type="button" data-yz-ohlc-symbol="'+esc(row.symbol)+'">'+
       'Analizza sedute OHLC e dividendi (sola lettura)</button></p>'+
-      '<div data-yz-ohlc-results></div>';
+      (anomaly?'<p class="warn">La RV Yang–Zhang segnala OHLC incompatibili: apri la diagnostica per vedere le sedute.</p>':'')+
+      '<div data-yz-ohlc-results></div></section>';
   }
   // The backend price-basis report is richer than the bare YZ blocked sessions:
   // exact session, deviation, materiality, the dividend checkpoint state and
@@ -1900,8 +1905,8 @@
         if(!symbol||!SYMBOL.test(symbol)||detailSnapshot?.symbol!==symbol||
            typeof S==='undefined'||!S.backendKey)return;
         const joined=matchingYangZhangRowForDetail(detailSnapshot,data);
-        if(!joined||joined.symbol!==symbol||
-           ![20,40,60].some(n=>joined.yangZhang?.['rv'+n+'YZ']?.reason===YZ_OHLC_REASON))return;
+        if(!joined||joined.symbol!==symbol||!joined.yangZhang||
+           ![20,60].every(n=>joined.yangZhang['rv'+n+'YZ']))return;
         const slot=detail.querySelector('[data-yz-ohlc-results]');
         if(!slot)return;
         if(ohlcCurrent)ohlcCurrent.abort();
