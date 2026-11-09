@@ -1153,6 +1153,78 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     await flush();
     ok(calls.length === 0, '5: a chart cleared before the panel runs is not drawn over');
   }
+
+  // ── 6. scanner inline chart: RS vs SPY and MACD follow the window ─────────────
+  section('16.6 scanner inline chart: RS vs SPY and MACD panels follow the window');
+  {
+    const env = makeEnv(); load(env);
+    vm.runInContext(['emA', 'calcMACD', '_schartPanelView', '_schartDrawSubPanels', '_schartDrawMacdPanel']
+      .map((n) => extractFn(HTML, n)).join('\n') + "\nvar _schartPanelState = { '1d': null, '4h': null };", env.sandbox);
+    const { candles, ind } = series(120);
+    const spy = candles.map((c, i) => ({ time: c.time, close: 400 + i * 0.2 }));
+    const macd = env.sandbox.calcMACD(candles.map((c) => c.close));
+    const rsAt = (ci) => { const sRet = (candles[ci].close - candles[ci - 20].close) / candles[ci - 20].close,
+      pRet = (spy[ci].close - spy[ci - 20].close) / spy[ci - 20].close; return (sRet - pRet) * 100; };
+    const fmt = (v) => (v >= 0 ? '+' : '') + v.toFixed(2);
+    const labels = (from, re) => env.log.slice(from).filter((c) => c[0] === 'fillText' && re.test(c[1][0])).map((c) => c[1][0]);
+    const rsLbl = (ci) => 'RS vs SPY: ' + (rsAt(ci) >= 0 ? '+' : '') + rsAt(ci).toFixed(1) + '%';
+
+    const rsCalls = [], macdCalls = [];
+    const realRs = env.sandbox._pfDrawRsPanel, realMacd = env.sandbox._schartDrawMacdPanel;
+    env.sandbox._pfDrawRsPanel = function (id, c, s, len, end) { rsCalls.push([id, len, end]); return realRs.apply(null, arguments); };
+    env.sandbox._schartDrawMacdPanel = function (id, m, vs, ve) { macdCalls.push([id, vs, ve]); return realMacd.apply(null, arguments); };
+
+    // what _schartDrawTf does: state with unresolved SPY, chart with onView, then SPY resolved + panels
+    env.sandbox._schartPanelState['1d'] = { candles, spy: undefined, macd };
+    env.sandbox._drawCandleChart('schart-big-wrap-1d', candles, ind,
+      { source: 'X', onView: (vs, ve) => env.sandbox._schartDrawSubPanels('1d', candles, vs, ve) });
+    ok(rsCalls.length === 0 && macdCalls.length === 0, '6: the first onView (SPY not resolved yet) draws no sub-panel');
+    env.sandbox._schartPanelState['1d'].spy = spy;
+    const pv = env.sandbox._schartPanelView('1d', candles);
+    ok(pv.vs === 45 && pv.ve === 120, '6: the view helper reads the default window from the drawn chart');
+    let from = env.log.length;
+    env.sandbox._schartDrawSubPanels('1d', candles);
+    ok(JSON.stringify(rsCalls.pop()) === JSON.stringify(['schart-rs-1d', 75, 120]) && JSON.stringify(macdCalls.pop()) === JSON.stringify(['schart-macd-1d', 45, 120]),
+      '6: RS and MACD draw the default window');
+    ok(labels(from, /^RS vs SPY/)[0] === rsLbl(119), '6: RS label = RS at the last candle');
+    ok(labels(from, /^MACD\(12,26,9\)/)[0] === 'MACD(12,26,9): ' + fmt(macd.ml[119]), '6: MACD label = MACD line at the last candle');
+
+    // pan / zoom: the chart redraws through its stashed opts and the panels follow
+    const wrap = env.sandbox.document.getElementById('schart-big-wrap-1d');
+    wrap.__chartView.start = 30; wrap.__chartView.end = 90; wrap.__chartView.anchored = false;
+    from = env.log.length;
+    env.sandbox._chartRedraw(wrap);
+    ok(JSON.stringify(rsCalls.pop()) === JSON.stringify(['schart-rs-1d', 60, 90]) && JSON.stringify(macdCalls.pop()) === JSON.stringify(['schart-macd-1d', 30, 90]),
+      '6: after a pan / zoom RS and MACD draw the new window [30,90)');
+    ok(labels(from, /^RS vs SPY/)[0] === rsLbl(89), '6: RS label follows the window (RS at index 89)');
+    ok(labels(from, /^sig /)[0] === 'sig ' + fmt(macd.sf[89]) && labels(from, /^hist /)[0] === 'hist ' + fmt(macd.hist[89]),
+      '6: MACD signal / histogram labels follow the window (index 89)');
+    ok(env.sandbox._schartPanelView('1d', candles).ve === 90, '6: a later SPY arrival (no window given) reuses the window the chart shows');
+
+    // stale callers draw nothing
+    const n0 = rsCalls.length + macdCalls.length;
+    env.sandbox._schartDrawSubPanels('1d', candles.slice(), 0, 10);
+    env.sandbox._schartDrawSubPanels('4h', candles, 0, 10);
+    ok(rsCalls.length + macdCalls.length === n0, '6: other candles than the last draw, or a timeframe never drawn, draw nothing');
+
+    // MACD panel on its own
+    from = env.log.length;
+    env.sandbox._schartDrawMacdPanel('schart-macd-1d', macd, 0, 20);
+    ok(env.log.length === from, '6: a window with no MACD value (first 20 bars) draws no canvas, only the text state');
+    from = env.log.length;
+    env.sandbox._schartDrawMacdPanel('schart-macd-1d', macd, 50, 50);
+    env.sandbox._schartDrawMacdPanel('schart-macd-1d', null, 0, 10);
+    ok(env.log.length === from, '6: empty window / missing MACD draw nothing');
+    from = env.log.length;
+    env.sandbox._schartDrawMacdPanel('schart-macd-1d', macd, 45, 120);
+    const bars = env.log.slice(from).filter((c) => c[0] === 'fillRect').length - 1; // minus background
+    ok(bars === macd.hist.slice(45, 120).filter((v) => v != null).length, '6: one histogram bar per MACD histogram value in the window (' + bars + ')');
+    from = env.log.length;
+    env.sandbox._schartDrawMacdPanel('schart-macd-1d', macd, 0, 60);
+    const bars2 = env.log.slice(from).filter((c) => c[0] === 'fillRect').length - 1;
+    const exp2 = macd.hist.slice(0, 60).filter((v) => v != null).length;
+    ok(exp2 > 0 && exp2 < 60 && bars2 === exp2, '6: bars where the histogram has no value yet are skipped (' + bars2 + ' of 60)');
+  }
 })();
 
 // ── 17. RS vs SPY: the benchmark is read once per TTL and reaches every RS consumer ──
