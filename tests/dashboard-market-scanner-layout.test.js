@@ -927,6 +927,63 @@ require('node:test')('coverage monitor: a read is not atomic, and it says when t
   assert.doesNotMatch(cov.renderSummary(cov.combinePages(atomic)), /Lettura NON atomica/, 'the note follows what the pages declare');
 });
 
+require('node:test')('NVDA OHLC diagnostic action is in the rendered detail for blocked YZ40/60', () => {
+  const yz={symbol:'NVDA',universePosition:0,yangZhang:{
+    rv20YZ:{status:'PRELIMINARY',value:0.3569,reason:null},
+    rv40YZ:{status:'UNAVAILABLE',value:null,reason:'OHLC_INCOMPATIBLE_WITH_YANG_ZHANG'},
+    rv60YZ:{status:'UNAVAILABLE',value:null,reason:'OHLC_INCOMPATIBLE_WITH_YANG_ZHANG'},
+    cc:{rv40:{status:'PRELIMINARY',value:0.3034,reason:null}}
+  }};
+  const detail=covDetail(d=>{d.symbol='NVDA'; d.row.symbol='NVDA';});
+  const html=cov.renderDetail(detail,null,{row:yz,status:'READY'});
+  assert.match(html,/RV40 YZ:[\s\S]*OHLC_INCOMPATIBLE_WITH_YANG_ZHANG/);
+  assert.match(html,/data-yz-ohlc-entry/,'diagnostic entry has a visible section of its own');
+  assert.match(html,/<button type="button" data-yz-ohlc-symbol="NVDA">Analizza sedute OHLC e dividendi \(sola lettura\)<\/button>/,
+    'blocked NVDA detail must offer the exact actionable diagnostic button');
+  assert.match(html,/apri la diagnostica per vedere le sedute/);
+  // A normal ready symbol may still request a read-only price-basis audit.
+  const healthy={...yz,yangZhang:{...yz.yangZhang,
+    rv40YZ:{status:'PRELIMINARY',value:0.3,reason:null},
+    rv60YZ:{status:'PRELIMINARY',value:0.4,reason:null}}};
+  assert.match(cov.ohlcDiagnosticButton(healthy,'READY'),/data-yz-ohlc-symbol="NVDA"/);
+  assert.doesNotMatch(cov.ohlcDiagnosticButton(healthy,'READY'),/apri la diagnostica per vedere le sedute/);
+  assert.equal(cov.ohlcDiagnosticButton(yz,'LOADING'),'');
+  assert.equal(cov.ohlcDiagnosticButton(yz,'ERROR'),'');
+  assert.equal(cov.ohlcDiagnosticButton({...yz,symbol:'<script>'},'READY'),'',
+    'untrusted symbol names never produce clickable audit controls');
+  assert.doesNotMatch(cov.renderDetail(detail,null,{row:yz,status:'LOADING'}),/data-yz-ohlc-symbol/,
+    'not-ready snapshots cannot make a price-basis GET available');
+});
+
+require('node:test')('OHLC diagnostic for a normal YZ window is read-only, never silently rejected', () => {
+  const VERSION='RV_PRICE_BASIS_DAILY_ONLY_DIAGNOSTIC_V1';
+  const win=(from,digest)=>({status:'PRELIMINARY',reason:null,inputDigest:digest,
+    windowFrom:from,windowThrough:'2026-10-23'});
+  const joined={symbol:'NVDA',universePosition:0,asOf:{rvSessionDate:'2026-10-23'},
+    yangZhang:{rv20YZ:win('2026-09-25','digest20'),rv40YZ:win('2026-08-25','digest40'),
+      rv60YZ:win('2026-07-24','digest60')}};
+  const coverage={rows:[joined],universe:{count:1,digest:COV_DIGEST},
+    yangZhang:{status:'READY'},asOfSessionDate:'2026-10-23'};
+  const reply={ok:true,readOnly:true,certified:false,changesPrices:false,notForTrading:true,
+    version:VERSION,universe:{count:1,digest:COV_DIGEST},asOfSessionDate:'2026-10-23',
+    report:{version:VERSION,readOnly:true,certified:false,changesPrices:false,
+      symbol:'NVDA',asOfSessionDate:'2026-10-23',readError:null,
+      rv20:{windowFrom:joined.yangZhang.rv20YZ.windowFrom,windowThrough:'2026-10-23',
+        yz:{status:'PRELIMINARY',reason:null,inputDigest:'digest20'},sessions:[]},
+      rv60:{windowFrom:joined.yangZhang.rv60YZ.windowFrom,windowThrough:'2026-10-23',
+        yz:{status:'PRELIMINARY',reason:null,inputDigest:'digest60'},sessions:[]}}};
+  const empty=cov.renderPriceBasisOhlcAudit(reply,coverage,joined);
+  assert.match(empty,/Nessuna incompatibilità OHLC rilevata/);
+  assert.match(empty,/non certifica la base prezzi/);
+  assert.doesNotMatch(empty,/sedute anomale distinte/);
+  assert.throws(()=>cov.renderPriceBasisOhlcAudit({...reply,universe:{count:1,digest:'d'.repeat(64)}},
+    coverage,joined),/PRICE_BASIS_DETAIL_INCONSISTENT/);
+  joined.yangZhang.rv40YZ.reason='OHLC_INCOMPATIBLE_WITH_YANG_ZHANG';
+  assert.throws(()=>cov.renderPriceBasisOhlcAudit(reply,coverage,joined),
+    /PRICE_BASIS_DETAIL_INCONSISTENT/,
+    'a backend empty report cannot dismiss the previously confirmed YZ40 OHLC blockage');
+});
+
 require('node:test')('coverage monitor: source states are shown as read, never as "missing"', () => {
   const data = cov.combinePages(covMixed());
   const text = obs => { data.sources.observations = obs; return cov.renderSummary(data); };
