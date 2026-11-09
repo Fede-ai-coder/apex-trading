@@ -1568,6 +1568,97 @@ section('41. Enter commits broadened symbols without using raw typing');
 
 
 
+// ── 42. one-shot live quote on lookup chart open ─────────────────────────────
+section('42. lookup chart: one-shot live quote (GET /market/live-once) redraws 1D / 4H');
+{
+  const DAY = 86400000;
+  const NOW = Date.UTC(2026, 10, 9, 17, 0, 0);            // Mon 9 Nov 2026 12:00 ET (RTH)
+  const bars = (n, endMs, step) => Array.from({ length: n }, (_, i) => {
+    const c = 100 + i * 0.1; return { time: endMs - (n - 1 - i) * step, open: c, high: c + 1, low: c - 1, close: c, volume: 1 };
+  });
+  const today1d = bars(30, Date.UTC(2026, 10, 9, 5, 0, 0), DAY);      // last bar = 9 Nov (ET)
+  const stale1d = bars(30, Date.UTC(2026, 10, 6, 5, 0, 0), DAY);      // last bar = 6 Nov (ET)
+  const today4h = bars(30, Date.UTC(2026, 10, 9, 14, 30, 0), 4 * 3600000);
+  let fetchCalls = [], payload = null, rth = true, draws = [], clock = NOW;
+  const sb = {
+    console, Math, JSON, Object, String, Number, isFinite, parseFloat, Promise, Intl,
+    Date: class extends Date { constructor(...a) { if (a.length) super(...a); else super(clock); } static now() { return clock; } },
+    BACKEND: 'https://be', S: { scanData: [] },
+    AbortSignal: { timeout: () => null },
+    _backendAuthHeaders: () => ({}),
+    _runLimited: (pool, fn) => fn(),
+    fetch: (url) => { fetchCalls.push(url); return Promise.resolve(payload === 'http404' ? { ok: false, status: 404 } : { ok: true, json: () => Promise.resolve(payload) }); },
+    isRTHOpen: () => rth,
+    resolveLatestDisplayPrice: () => ({ price: null, source: null }),
+    _scannerGetCachedBackendTfCandles: () => null,
+    _scannerChartSymbol: 'TSLA', _scannerChartSource: 'lookup',
+    _scannerBackendCandleCache: null,
+    _schartDrawTf: (tf, sym, candles, src, price) => draws.push({ tf, sym, price }),
+  };
+  vm.createContext(sb);
+  vm.runInContext(['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', 'fetchLiveQuoteOnce',
+    '_scannerLookupLivePriceFor', '_scannerLookupRefreshLivePrice', '_scannerLookupResolveLivePrice', '_scannerLookupRender4h']
+    .map((n) => extractFn(HTML, n)).join('\n') +
+    '\nvar _scannerLookupLiveMark = Object.create(null); var _scannerLookupLiveMarkInflight = Object.create(null); var _SCANNER_LOOKUP_LIVE_MARK_TTL_MS = 60000;', sb);
+  const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
+  const reset = () => { vm.runInContext('_scannerLookupLiveMark = Object.create(null);', sb); fetchCalls = []; draws = []; };
+
+  // parsing
+  payload = { source: 'DXLINK', isStale: false, quote: { mark: 412.5 } };
+  ok(await sb.fetchLiveQuoteOnce('TSLA') === 412.5 && fetchCalls[0] === 'https://be/market/live-once/TSLA', '42: reads the mark from /market/live-once/:symbol');
+  payload = { source: 'DXLINK', isStale: false, quote: { bidPrice: 10, askPrice: 12 } };
+  ok(await sb.fetchLiveQuoteOnce('X') === 11, '42: no mark -> bid/ask mid');
+  payload = { source: 'DXLINK', isStale: true, quote: { mark: 5 } };
+  ok(await sb.fetchLiveQuoteOnce('X') === null, '42: a stale quote is rejected');
+  payload = { source: 'DXLINK', isStale: false, error: 'QUOTE_NOT_READY', quote: null };
+  ok(await sb.fetchLiveQuoteOnce('X') === null, '42: no quote -> null');
+  payload = 'http404';
+  ok(await sb.fetchLiveQuoteOnce('X') === null, '42: a backend without the route -> null (chart keeps the last close)');
+
+  // RTH gate
+  reset(); rth = false; payload = { source: 'DXLINK', isStale: false, quote: { mark: 412.5 } };
+  ok(sb._scannerLookupRefreshLivePrice('TSLA') === null && fetchCalls.length === 0, '42: outside RTH no live quote is requested');
+  rth = true;
+
+  // mark arrives after both timeframes are drawn -> both redraw with it
+  reset();
+  sb._scannerBackendCandleCache = { symbol: 'TSLA', candles1d: today1d, candles4h: today4h };
+  await sb._scannerLookupRefreshLivePrice('TSLA'); await flush();
+  ok(fetchCalls.length === 1, '42: one request per open');
+  ok(JSON.stringify(draws.map((d) => d.tf + ':' + d.price)) === JSON.stringify(['1D:412.5', '4H:412.5']), '42: 1D and 4H redraw ending on the live mark (' + JSON.stringify(draws) + ')');
+
+  // candles drawn after the mark pick it up
+  ok(sb._scannerLookupResolveLivePrice('TSLA', today1d) === 412.5, '42: later 1D draws resolve to the mark');
+  draws = []; sb._scannerLookupRender4h('TSLA', today4h, 'X', 100.0);
+  ok(draws[0] && draws[0].price === 412.5, '42: a 4H drawn later with an older captured price still ends on the mark');
+
+  // never written into a previous session's bar
+  ok(sb._scannerLookupResolveLivePrice('TSLA', stale1d) === stale1d[29].close, '42: last 1D bar from an earlier session -> mark NOT used, last close kept');
+  // expiry and RTH at use time
+  clock = NOW + 60000;
+  ok(sb._scannerLookupResolveLivePrice('TSLA', today1d) === today1d[29].close, '42: a mark older than the TTL (60 s) is not used');
+  clock = NOW; rth = false;
+  ok(sb._scannerLookupResolveLivePrice('TSLA', today1d) === today1d[29].close, '42: a mark is not used once RTH has closed');
+  rth = true;
+
+  // user moved on before the quote landed: stored, nothing redrawn
+  reset(); sb._scannerChartSymbol = 'AAPL';
+  await sb._scannerLookupRefreshLivePrice('TSLA'); await flush();
+  ok(draws.length === 0, '42: a quote for a chart that is no longer open redraws nothing');
+  sb._scannerChartSymbol = 'TSLA';
+
+  // single flight
+  reset();
+  const p1 = sb._scannerLookupRefreshLivePrice('TSLA'), p2 = sb._scannerLookupRefreshLivePrice('TSLA');
+  await p1; await flush();
+  ok(p1 === p2 && fetchCalls.length === 1, '42: concurrent opens share one request');
+
+  // wiring
+  const open = extractFn(HTML, 'openChartForSymbolLookup');
+  ok(open.indexOf('_scannerLookupRefreshLivePrice(symbol)') > 0 && open.indexOf('_scannerLookupRefreshLivePrice(symbol)') < open.indexOf('_scannerReadBackendCandlesTf !=='),
+    '42: openChartForSymbolLookup asks for the live quote before reading candles');
+}
+
 // ── summary ────────────────────────────────────────────────────────────────
 console.log('\n' + (fail === 0
   ? 'All ' + pass + ' tests passed.'
