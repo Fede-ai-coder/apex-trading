@@ -1653,6 +1653,48 @@ section('42. lookup chart: one-shot live quote (GET /market/live-once) redraws 1
   await p1; await flush();
   ok(p1 === p2 && fetchCalls.length === 1, '42: concurrent opens share one request');
 
+  // scanner-row chart (source 'scanData'): a landed quote re-renders the whole inline chart
+  reset(); let rerenders = [];
+  sb.renderScannerInlineChart = (sym) => rerenders.push(sym);
+  sb._scannerChartSource = 'scanData';
+  await sb._scannerLookupRefreshLivePrice('TSLA'); await flush();
+  ok(JSON.stringify(rerenders) === '["TSLA"]' && draws.length === 0, '42: scanner-row chart re-renders once with the quote (no lookup redraw path)');
+  sb._scannerChartSource = 'other'; rerenders = []; reset();
+  await sb._scannerLookupRefreshLivePrice('TSLA'); await flush();
+  ok(rerenders.length === 0 && draws.length === 0, '42: an unknown chart source redraws nothing');
+  sb._scannerChartSource = 'lookup';
+
+  // renderScannerInlineChart: the fresh mark replaces the row price for BOTH timeframes
+  {
+    const env = {
+      console, Math, JSON, Object, String, Number, isFinite, parseFloat, Intl, Date: sb.Date,
+      S: { scanData: [] }, isRTHOpen: () => rth,
+      _scannerLookupLiveMark: null, _SCANNER_LOOKUP_LIVE_MARK_TTL_MS: 60000,
+      _scannerBackendCandleCache: { symbol: 'TSLA', candles1d: today1d, candles4h: today4h },
+      resolveLatestDisplayPrice: () => ({ price: 300, source: 'row' }),
+      _schart4hStopPoll: () => {}, debugLog: () => {}, getCandleDataSource: () => 'X',
+      getDailyCandles: () => null, getFourHourCandles: () => null,
+      ffPreferBackendCandlesForCharts: () => true, _browser4hFallbackIsWaiting: () => false,
+      document: { getElementById: () => null },
+      _schartDrawTf: (tf, sym, candles, src, price) => env.out.push(tf + ':' + price), out: [],
+    };
+    vm.createContext(env);
+    vm.runInContext(['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_scannerLookupLivePriceFor', 'renderScannerInlineChart']
+      .map((n) => extractFn(HTML, n)).join('\n'), env);
+    env._scannerLookupLiveMark = Object.create(null);
+    env.renderScannerInlineChart('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:300","4H:300"]', '42: no mark -> both timeframes end on the row price (' + JSON.stringify(env.out) + ')');
+    env._scannerLookupLiveMark.TSLA = { price: 412.5, at: NOW, session: '2026-11-09' }; env.out = [];
+    env.renderScannerInlineChart('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:412.5","4H:412.5"]', '42: fresh same-session mark -> both timeframes end on it (' + JSON.stringify(env.out) + ')');
+    env._scannerBackendCandleCache = { symbol: 'TSLA', candles1d: stale1d, candles4h: today4h }; env.out = [];
+    env.renderScannerInlineChart('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:300","4H:300"]', '42: last 1D bar from an earlier session -> row price kept on both (parity)');
+  }
+  const openRow = extractFn(HTML, 'openScannerChart');
+  ok(openRow.indexOf('_scannerLookupRefreshLivePrice(symbol)') > openRow.indexOf("_scannerSetActiveChart(symbol, 'scanData')"),
+    '42: openScannerChart asks for the live quote after making the row chart active');
+
   // wiring
   const open = extractFn(HTML, 'openChartForSymbolLookup');
   ok(open.indexOf('_scannerLookupRefreshLivePrice(symbol)') > 0 && open.indexOf('_scannerLookupRefreshLivePrice(symbol)') < open.indexOf('_scannerReadBackendCandlesTf !=='),

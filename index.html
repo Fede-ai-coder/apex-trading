@@ -5500,6 +5500,8 @@ function openScannerChart(symbol, trigger) {
   _scannerSetActiveChart(symbol, 'scanData');
   var panel = document.getElementById('scannerInlineChartPanel');
   if (!panel) return;
+  // Latest price: one-shot live quote (RTH only); re-renders this chart when it lands.
+  if (typeof _scannerLookupRefreshLivePrice === 'function') _scannerLookupRefreshLivePrice(symbol);
 
   var d  = S.scanData && S.scanData.find(function(x){ return x.ticker === symbol; });
   var ts = (typeof getDirectionalTechnicalState === 'function') ? getDirectionalTechnicalState(symbol) : null;
@@ -5831,6 +5833,12 @@ function renderScannerInlineChart(symbol) {
 
     // 1D chart
     var daily = _scBackend1d || getDailyCandles(symbol);
+    // A one-shot live mark read on open (same session, RTH, fresh) wins over the row price;
+    // one value still feeds BOTH timeframes (1D/4H parity).
+    if (typeof _scannerLookupLivePriceFor === 'function') {
+      var _schartMark = _scannerLookupLivePriceFor(symbol, daily || _scBackend4h, null);
+      if (_schartMark != null) _schartLive = { price: _schartMark, source: 'dxlink_live_once' };
+    }
     var src1d  = _scBackend1d ? 'BACKEND_DXLINK_CANDLES' : getCandleDataSource(symbol, '1D');
     if (daily) {
       _schartDrawTf('1D', symbol, daily, src1d, _schartLive.price);
@@ -5919,7 +5927,8 @@ function _scannerLookupLivePriceFor(symbol, candles, fallback) {
   if (_candleTradingSessionDate(candles[candles.length - 1]) !== m.session) return fallback;
   return m.price;
 }
-// Read the live mark once (RTH only) and redraw the open lookup chart with it.
+// Read the live mark once (RTH only) and redraw the open scanner inline chart with it
+// (lookup source: from the cached backend candles; scanner-row source: full re-render).
 function _scannerLookupRefreshLivePrice(symbol) {
   if (!symbol || (typeof isRTHOpen === 'function' && !isRTHOpen())) return null;
   if (_scannerLookupLiveMarkInflight[symbol]) return _scannerLookupLiveMarkInflight[symbol];
@@ -5927,7 +5936,9 @@ function _scannerLookupRefreshLivePrice(symbol) {
     if (px == null || !isFinite(px) || px <= 0) return null;
     var now = Date.now();
     _scannerLookupLiveMark[symbol] = { price: px, at: now, session: _etDateStr(now) };
-    if (_scannerChartSymbol !== symbol || _scannerChartSource !== 'lookup') return px;
+    if (_scannerChartSymbol !== symbol) return px;
+    if (_scannerChartSource === 'scanData') { if (typeof renderScannerInlineChart === 'function') renderScannerInlineChart(symbol); return px; }
+    if (_scannerChartSource !== 'lookup') return px;
     var c = _scannerBackendCandleCache;
     if (!c || c.symbol !== symbol) return px;
     if (c.candles1d && c.candles1d.length >= 20) _schartDrawTf('1D', symbol, c.candles1d, 'BACKEND_CANDLE_STORE', _scannerLookupResolveLivePrice(symbol, c.candles1d));
