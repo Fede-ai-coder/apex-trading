@@ -1154,6 +1154,73 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     ok(calls.length === 0, '5: a chart cleared before the panel runs is not drawn over');
   }
 
+  // ── 7. RS charts and SFS detail: linked RS vs SPY + MACD follow the window ─────
+  section('16.7 RS / SFS charts: RS vs SPY and MACD linked by id follow the window');
+  {
+    const env = makeEnv(); load(env);
+    vm.runInContext(['emA', 'calcMACD', '_schartDrawMacdPanel', '_chartSubpanelLink', '_chartEnsureMacdEl', '_chartSyncLinkedSubpanels']
+      .map((n) => extractFn(HTML, n)).join('\n') + '\n' + (HTML.match(/^var _CHART_SUBPANEL_LINKS = \[[\s\S]*?\n\];/m) || [''])[0], env.sandbox);
+    const L = env.sandbox._chartSubpanelLink;
+    ok(JSON.stringify(L('rs-big-wrap-1d', 0)) === JSON.stringify({ wrapId: 'rs-big-wrap-1d', rsId: 'rs-rs-1d', macdId: 'rs-macd-1d' }), '7: RS chart wrap -> rs-rs-* / rs-macd-*');
+    ok(JSON.stringify(L('sfs-rs-4h', 1)) === JSON.stringify({ wrapId: 'sfs-big-wrap-4h', rsId: 'sfs-rs-4h', macdId: 'sfs-macd-4h' }), '7: SFS RS id -> its chart and MACD');
+    ok(L('schart-big-wrap-1d', 0) === null && L('rs-1', 1) === null && L('pf-1d-wrap-1', 0) === null && L(null, 0) === null,
+      '7: scanner inline (own wiring), test / portfolio ids and null are not linked');
+    const MARKUP7 = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+    ok(/id="rs-macd-1d"/.test(MARKUP7) && /id="rs-macd-4h"/.test(MARKUP7), '7: the RS chart markup has both MACD containers');
+
+    const { candles, ind } = series(120);
+    const spy = candles.map((c, i) => ({ time: c.time, close: 400 + i * 0.2 }));
+    const macd = env.sandbox.calcMACD(candles.map((c) => c.close));
+    const rsAt = (ci) => { const sRet = (candles[ci].close - candles[ci - 20].close) / candles[ci - 20].close,
+      pRet = (spy[ci].close - spy[ci - 20].close) / spy[ci - 20].close; return (sRet - pRet) * 100; };
+    const rsLbl = (ci) => 'RS vs SPY: ' + (rsAt(ci) >= 0 ? '+' : '') + rsAt(ci).toFixed(1) + '%';
+    const macdLbl = (i) => 'MACD(12,26,9): ' + (macd.ml[i] >= 0 ? '+' : '') + macd.ml[i].toFixed(2);
+    const labels = (from, re) => env.log.slice(from).filter((c) => c[0] === 'fillText' && re.test(c[1][0])).map((c) => c[1][0]);
+
+    for (const [wrapId, rsId] of [['rs-big-wrap-1d', 'rs-rs-1d'], ['sfs-big-wrap-4h', 'sfs-rs-4h']]) {
+      // the caller's sequence: chart, then the trailing-window RS call
+      let from = env.log.length;
+      env.sandbox._drawCandleChart(wrapId, candles, ind, { source: 'X' });
+      ok(labels(from, /^RS vs SPY/).length === 0, '7 ' + wrapId + ': first chart draw leaves RS to the caller (no series yet)');
+      ok(labels(from, /^MACD/)[0] === macdLbl(119), '7 ' + wrapId + ': MACD drawn on the default window (last bar)');
+      from = env.log.length;
+      env.sandbox._pfDrawRsPanel(rsId, candles, spy, 75);
+      const rsSegs = segments(env.log, from).filter((sg) => !(sg[1] === sg[3] && sg[0] === 10));
+      const plotW = W - 10 - 64;
+      ok(near(rsSegs[rsSegs.length - 1][2], 10 + 74 / 78 * plotW), '7 ' + rsId + ': the trailing call is drawn on the chart window grid (64px margin, future slots)');
+      ok(labels(from, /^RS vs SPY/)[0] === rsLbl(119), '7 ' + rsId + ': RS label at the last bar');
+
+      // pan / zoom: both follow
+      const wrap = env.sandbox.document.getElementById(wrapId);
+      wrap.__chartView.start = 30; wrap.__chartView.end = 90; wrap.__chartView.anchored = false;
+      from = env.log.length;
+      env.sandbox._chartRedraw(wrap);
+      ok(labels(from, /^RS vs SPY/)[0] === rsLbl(89), '7 ' + rsId + ': after pan / zoom RS ends at the new right edge (index 89)');
+      ok(labels(from, /^MACD/)[0] === macdLbl(89), '7 ' + wrapId + ': after pan / zoom MACD ends at index 89');
+      // a series for other candles is never drawn on this chart
+      env.sandbox.document.getElementById(rsId).__rsLinked = { candles: candles.slice(), spy };
+      from = env.log.length;
+      env.sandbox._chartRedraw(wrap);
+      ok(labels(from, /^RS vs SPY/).length === 0 && labels(from, /^MACD/).length === 1, '7 ' + rsId + ': a stale RS series (other candles) is not redrawn; MACD still is');
+    }
+    const n0 = env.log.length;
+    env.sandbox._pfDrawRsPanel('rs-1', candles, spy, 60);
+    ok(env.sandbox.document.getElementById('rs-1').__rsLinked === undefined, '7: an unlinked RS id keeps the plain trailing behaviour (nothing stored)');
+  }
+
+  // MACD container created under the SFS RS panel (its markup comes from a byte-pinned module)
+  {
+    const made = [];
+    const rsEl = { id: 'sfs-rs-1d', nextSibling: 'NEXT', parentNode: { insertBefore: (el, ref) => made.push([el.id, el.style.cssText, ref]) } };
+    const ctx = { document: { getElementById: (id) => (id === 'sfs-rs-1d' ? rsEl : null), createElement: () => ({ style: {} }) } };
+    vm.createContext(ctx);
+    vm.runInContext(extractFn(HTML, '_chartEnsureMacdEl'), ctx);
+    const el = ctx._chartEnsureMacdEl('sfs-rs-1d', 'sfs-macd-1d');
+    ok(el && el.id === 'sfs-macd-1d' && JSON.stringify(made) === JSON.stringify([['sfs-macd-1d', 'width:100%;height:56px;margin-top:4px', 'NEXT']]),
+      '7: a missing SFS MACD container is inserted right after the SFS RS panel');
+    ok(ctx._chartEnsureMacdEl('sfs-rs-9x', 'sfs-macd-9x') === null, '7: no RS panel -> no MACD container');
+  }
+
   // ── 6. scanner inline chart: RS vs SPY and MACD follow the window ─────────────
   section('16.6 scanner inline chart: RS vs SPY and MACD panels follow the window');
   {
