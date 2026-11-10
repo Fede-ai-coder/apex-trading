@@ -884,6 +884,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           </div>
           <div id="schart-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
           <div id="schart-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
+          <div id="schart-macd-1d" style="width:100%;height:56px;margin-top:4px"></div>
         </div>
         <!-- 4H section -->
         <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">
@@ -897,6 +898,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           </div>
           <div id="schart-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
           <div id="schart-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
+          <div id="schart-macd-4h" style="width:100%;height:56px;margin-top:4px"></div>
         </div>
       </div>
     </div>
@@ -5256,8 +5258,122 @@ function _schartUpdateRsPanelOnly(tf, symbol){
     var candles = _schartRenderedTfCache[_scannerChartCandleCacheKey(symbol, tf)]; if (!candles || candles.length < 20) return;
     var spy = null; if (tf === '1D' && typeof _rsResolveBackendSpy1dFromCache === 'function') spy = _rsResolveBackendSpy1dFromCache(symbol, 'scanner_inline_chart', candles.length); if (tf === '4H' && typeof _rsResolveBackendSpy4hFromCache === 'function') spy = _rsResolveBackendSpy4hFromCache(symbol, 'scanner_inline_chart', candles.length);
     if (!spy) spy = tf === '1D' ? getDailyCandles('SPY') : getFourHourCandles('SPY');
-    _pfDrawRsPanel('schart-rs-' + (tf === '1D' ? '1d' : '4h'), candles, spy, Math.min(75, candles.length));
+    var sfx = tf === '1D' ? '1d' : '4h', st = _schartPanelState[sfx];
+    if (st && st.candles === candles) { st.spy = spy; _schartDrawSubPanels(sfx, candles); return; }
+    _pfDrawRsPanel('schart-rs-' + sfx, candles, spy, Math.min(75, candles.length));
   } catch(e) {}
+}
+
+// Per-timeframe ('1d'/'4h') state of the scanner chart sub-panels: the candles the chart was
+// drawn with, the SPY benchmark resolved for them, and MACD(12,26,9) of their closes.
+var _schartPanelState = { '1d': null, '4h': null };
+// The window [vs, ve) the candle chart of this timeframe shows for these candles, or the default
+// trailing 75 bars when it has not drawn them.
+function _schartPanelView(sfx, candles) {
+  var w = document.getElementById('schart-big-wrap-' + sfx), c = w && w.__chart;
+  if (c && c.candles === candles) return { vs: c.vs, ve: c.ve };
+  return { vs: candles.length - Math.min(75, candles.length), ve: candles.length };
+}
+// Draw RS vs SPY + MACD on the window [vs, ve) the candle chart shows (read from the chart when
+// not given). A caller holding other candles than the last draw of this timeframe, or a draw whose
+// SPY series is not resolved yet, draws nothing.
+function _schartDrawSubPanels(sfx, candles, vs, ve) {
+  var st = _schartPanelState[sfx];
+  if (!st || st.candles !== candles || st.spy === undefined) return;
+  if (vs == null || ve == null) { var pv = _schartPanelView(sfx, candles); vs = pv.vs; ve = pv.ve; }
+  _pfDrawRsPanel('schart-rs-' + sfx, candles, st.spy, ve - vs, ve);
+  _schartDrawMacdPanel('schart-macd-' + sfx, st.macd, vs, ve);
+}
+
+// MACD(12,26,9) sub-panel: histogram + MACD line + signal line for the window [vs, ve), on the
+// same x grid as the candle chart (same margins and empty "future" slots as _pfDrawRsiPanel).
+function _schartDrawMacdPanel(wrapId, macd, vs, ve) {
+  var wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!macd || !(ve > vs)) return;
+  var ml = macd.ml.slice(vs, ve), sf = macd.sf.slice(vs, ve), hist = macd.hist.slice(vs, ve);
+  var nv = ml.length;
+  var vals = [];
+  for (var i = 0; i < nv; i++) {
+    if (ml[i] != null && isFinite(ml[i])) vals.push(ml[i]);
+    if (sf[i] != null && isFinite(sf[i])) vals.push(sf[i]);
+    if (hist[i] != null && isFinite(hist[i])) vals.push(hist[i]);
+  }
+  if (!vals.length) {
+    wrap.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">MACD: insufficient data</div>';
+    return;
+  }
+  function lastOf(a){ for (var j = a.length - 1; j >= 0; j--) { if (a[j] != null && isFinite(a[j])) return a[j]; } return null; }
+  var lastMl = lastOf(ml), lastSf = lastOf(sf), lastH = lastOf(hist);
+
+  var cv = document.createElement('canvas');
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 56);
+  var ctx = hd.ctx;
+
+  var W = hd.width, H = hd.height;
+  var PAD = {top:14, right:64, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+
+  ctx.fillStyle = '#0e0e18';
+  ctx.fillRect(0, 0, W, H);
+
+  var yMax = Math.max(0, Math.max.apply(null, vals));
+  var yMin = Math.min(0, Math.min.apply(null, vals));
+  var sp = yMax - yMin;
+  if (!(sp > 0)) { sp = 1; yMax += 0.5; yMin -= 0.5; }
+  yMax += sp * 0.08; yMin -= sp * 0.08;
+
+  function xOf(k){ return PAD.left + (k / _chartXSpan(nv)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+  // Zero line
+  var zy = yOf(0);
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(PAD.left, zy); ctx.lineTo(W - PAD.right, zy); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Histogram — green above zero, red below; faded when shrinking vs the previous bar
+  var bw = Math.max(1, (plotW / _chartXSpan(nv)) * 0.6);
+  for (var h = 0; h < nv; h++) {
+    var hv = hist[h];
+    if (hv == null || !isFinite(hv)) continue;
+    var prev = h > 0 ? hist[h - 1] : null;
+    var shrinking = prev != null && isFinite(prev) && Math.abs(hv) < Math.abs(prev);
+    ctx.fillStyle = hv >= 0 ? (shrinking ? 'rgba(0,212,138,.35)' : 'rgba(0,212,138,.75)')
+                            : (shrinking ? 'rgba(232,68,90,.35)' : 'rgba(232,68,90,.75)');
+    var y1 = yOf(hv);
+    ctx.fillRect(xOf(h) - bw / 2, Math.min(y1, zy), bw, Math.max(1, Math.abs(zy - y1)));
+  }
+
+  function line(arr, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.setLineDash([]);
+    var started = false;
+    ctx.beginPath();
+    for (var k = 0; k < nv; k++) {
+      var v = arr[k];
+      if (v == null || !isFinite(v)) { started = false; continue; }
+      if (!started) { ctx.moveTo(xOf(k), yOf(v)); started = true; } else ctx.lineTo(xOf(k), yOf(v));
+    }
+    ctx.stroke();
+  }
+  line(ml, '#4da3ff');
+  line(sf, '#f5a623');
+
+  // Label (values at the right edge of the window)
+  function f(v){ return v != null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '—'; }
+  ctx.font = '9px monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#4da3ff';
+  var lx = PAD.left + 2, t1 = 'MACD(12,26,9): ' + f(lastMl);
+  ctx.fillText(t1, lx, 10); lx += ctx.measureText(t1).width + 8;
+  ctx.fillStyle = '#f5a623';
+  var t2 = 'sig ' + f(lastSf);
+  ctx.fillText(t2, lx, 10); lx += ctx.measureText(t2).width + 8;
+  ctx.fillStyle = lastH == null ? '#6e6e8a' : (lastH >= 0 ? '#00d48a' : '#e8445a');
+  ctx.fillText('hist ' + f(lastH), lx, 10);
 }
 
 window.addEventListener('resize', function(){
@@ -5572,6 +5688,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   var sqzBarId = 'schart-sqzbar-'   + sfx;
   var sqzLblId = 'schart-sqzlbl-'   + sfx;
   var srcElId  = 'schart-src-'      + sfx;
+  var macdId   = 'schart-macd-'     + sfx;
 
   var srcEl = document.getElementById(srcElId);
   if (srcEl) srcEl.textContent = src ? '· ' + src : '';
@@ -5579,6 +5696,9 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   if (!candles || candles.length < 20) {
     var w = document.getElementById(wrapId);
     if (w) w.innerHTML = '<div class="dss-no-data">Chart data not available.</div>';
+    _schartPanelState[sfx] = null;
+    var mw = document.getElementById(macdId);
+    if (mw) mw.innerHTML = '';
     return;
   }
 
@@ -5594,11 +5714,18 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   if (!ind) return;
   var viewLen = Math.min(75, candles.length);
 
+  // RS vs SPY + MACD sub-panels follow the candle chart's zoom/pan window: the chart
+  // reports it through onView after every draw. spy stays undefined until resolved below, so the
+// first (synchronous) onView skips the panels that this function draws itself right after.
+  _schartPanelState[sfx] = { candles: candles, spy: undefined,
+    macd: calcMACD(candles.map(function(c){ return c.close; })) };
+
   // Candle chart with SMA8/20/30, BB, KC, ATR overlays
   _drawCandleChart(wrapId, candles, ind, {
     showSMA8: _scannerChartOverlay.sma8, lastSma8: ind.lastSma8,
     showBB:   _scannerChartOverlay.bb,   showKC:   _scannerChartOverlay.kc,
-    showATR:  _scannerChartOverlay.atr,  source:   src, rsi: ind.lastRsi
+    showATR:  _scannerChartOverlay.atr,  source:   src, rsi: ind.lastRsi,
+    onView: function(vs, ve) { _schartDrawSubPanels(sfx, candles, vs, ve); }
   });
 
   // RSI(14) panel — green >60, red <40, purple in between
@@ -5653,7 +5780,10 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
       }, (typeof _rsBenchmarkDiagFrom4h === 'function' ? _rsBenchmarkDiagFrom4h(_scSpyDiag) : {})));
     }
   }
-  _pfDrawRsPanel(rsId, candles, spyCandles, viewLen);
+  _schartPanelState[sfx].spy = spyCandles;
+  var pv = _schartPanelView(sfx, candles);
+  _pfDrawRsPanel(rsId, candles, spyCandles, pv.ve - pv.vs, pv.ve);
+  _schartDrawMacdPanel(macdId, _schartPanelState[sfx].macd, pv.vs, pv.ve);
 
   // Squeeze bar + label (matches Portfolio style)
   var sqz = ind.lastSqueeze;
