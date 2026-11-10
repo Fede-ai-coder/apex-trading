@@ -1691,6 +1691,45 @@ section('42. lookup chart: one-shot live quote (GET /market/live-once) redraws 1
     env.renderScannerInlineChart('TSLA');
     ok(JSON.stringify(env.out) === '["1D:300","4H:300"]', '42: last 1D bar from an earlier session -> row price kept on both (parity)');
   }
+  // RS chart: a redraw callback replaces the scanner redraw path
+  reset(); let rsRedraws = [];
+  await sb._scannerLookupRefreshLivePrice('TSLA', (sym, px) => rsRedraws.push(sym + ':' + px)); await flush();
+  ok(JSON.stringify(rsRedraws) === '["TSLA:412.5"]' && draws.length === 0, '42: with a redraw callback only that callback runs (RS / other charts)');
+  reset(); rsRedraws = [];
+  const q1 = sb._scannerLookupRefreshLivePrice('TSLA'), q2 = sb._scannerLookupRefreshLivePrice('TSLA', (sym) => rsRedraws.push(sym));
+  await q1; await flush();
+  ok(q1 === q2 && fetchCalls.length === 1 && JSON.stringify(rsRedraws) === '["TSLA"]', '42: a second chart joining an in-flight read gets its redraw too (one request)');
+  {
+    const env = {
+      console, Math, JSON, Object, String, Number, isFinite, parseFloat, Intl, Date: sb.Date,
+      S: { scanData: [], rsChartState: { symbol: 'TSLA', overlay: {} } }, isRTHOpen: () => rth,
+      _SCANNER_LOOKUP_LIVE_MARK_TTL_MS: 60000,
+      _rsBackendCandleCache: { symbol: 'TSLA', candles1d: today1d, candles4h: today4h },
+      resolveLatestDisplayPrice: () => ({ price: 300, source: 'row' }),
+      _rs4hStopPoll: () => {}, debugLog: () => {}, _rsCandleSource: () => 'X',
+      _rsGetDailyCandles: () => null, getFourHourCandles: () => null,
+      ffPreferBackendCandlesForCharts: () => true, _browser4hFallbackIsWaiting: () => false,
+      document: { getElementById: () => null },
+      _rsDrawTf: (tf, sym, candles, src, price) => env.out.push(tf + ':' + price), out: [],
+    };
+    vm.createContext(env);
+    vm.runInContext(['_etDateStr', '_backendCandleStoreChartNormTime', '_candleTradingSessionDate', '_scannerLookupLivePriceFor', 'renderRsCharts']
+      .map((n) => extractFn(HTML, n)).join('\n'), env);
+    env._scannerLookupLiveMark = Object.create(null);
+    env.renderRsCharts('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:300","4H:300"]', '42: RS chart without a mark ends on the row price (' + JSON.stringify(env.out) + ')');
+    env._scannerLookupLiveMark.TSLA = { price: 412.5, at: NOW, session: '2026-11-09' }; env.out = [];
+    env.renderRsCharts('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:412.5","4H:412.5"]', '42: RS chart with a fresh same-session mark ends on it on both timeframes');
+    env._rsBackendCandleCache = { symbol: 'TSLA', candles1d: stale1d, candles4h: today4h }; env.out = [];
+    env.renderRsCharts('TSLA');
+    ok(JSON.stringify(env.out) === '["1D:300","4H:300"]', '42: RS chart, last 1D bar from an earlier session -> row price kept on both');
+  }
+  const openRs = extractFn(HTML, 'openRsChart');
+  ok(/_scannerLookupRefreshLivePrice\(symbol,function\(sym\)\{ if\(S\.rsChartState\.symbol===sym\)renderRsCharts\(sym\); \}\)/.test(openRs)
+    && openRs.indexOf('_scannerLookupRefreshLivePrice') > openRs.indexOf('S.rsChartState.symbol=symbol;'),
+    '42: openRsChart asks for the live quote once the chart is active and re-renders only that RS chart');
+
   const openRow = extractFn(HTML, 'openScannerChart');
   ok(openRow.indexOf('_scannerLookupRefreshLivePrice(symbol)') > openRow.indexOf("_scannerSetActiveChart(symbol, 'scanData')"),
     '42: openScannerChart asks for the live quote after making the row chart active');
