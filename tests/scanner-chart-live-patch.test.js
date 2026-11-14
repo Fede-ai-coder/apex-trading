@@ -115,6 +115,7 @@ const sandbox = {
   _mcxDrawRsi: function () {},
   _schartPanelState: { '1d': null, '4h': null },
   _schartDrawMacdPanel: function () {},
+  _chartDrawStochPanel: function () {},
   _pfDrawRsPanel: function (wrapId, candles, spyCandles, viewLen) {
     rsPanels.push({ via: '_pfDrawRsPanel', wrapId: wrapId, candles: candles });
   },
@@ -133,7 +134,7 @@ vm.createContext(sandbox);
 // orchestrator — all pulled verbatim from index.html.
 vm.runInContext(
   ['_dssResolvePrice', 'resolveLatestDisplayPrice', 'patchLastCandleWithLivePrice',
-   'smA', 'emA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'calcMACD', 'computeCandleIndicators',
+   'smA', 'emA', 'rma', 'calcRSIWilder', 'calcBB', 'calcKC', 'calcSqueeze', 'calcMACD', 'calcSlowStoch', 'computeCandleIndicators',
    '_schartPanelView', '_schartDrawTf', '_rsDrawTf', '_sfsDrawOneTf', '_sfsResolveRenderPrice', '_sfsDrawCharts']
     .map((n) => extractFn(HTML, n)).join('\n'),
   sandbox

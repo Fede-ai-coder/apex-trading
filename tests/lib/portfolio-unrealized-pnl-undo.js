@@ -105,7 +105,7 @@ const INLINE_OPEN = '<script>';
 // replaying the original extraction's immutable, byte-exact historical proof.
 // The only accepted alternative is this one exact Git blob. Every mutation
 // (including one byte of foreign runtime code) still fails closed.
-const JOURNAL_RUNTIME_PATCH_BLOB = '7c8ffc55613500c858d715cb6e8f25fb8368bb87';
+const JOURNAL_RUNTIME_PATCH_BLOB = 'fec385a302482c8656cea7d7127b3758d3e6f4dc';
 const PRE_JOURNAL_RUNTIME_COMMIT = 'c96ab505c43ff040ebc3e5eacb6149ee8454d20b';
 let cachedPreJournalDocument = null;
 function gitBlobSha(source) {
