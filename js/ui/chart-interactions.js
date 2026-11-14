@@ -175,12 +175,15 @@ function _chartDrawHover(wrap, mx, my){
   // ── Build tooltip rows ─────────────────────────────────────────────────────
   var rows = [];
   rows.push({ label: _chartFmtDateTime(c.time, st.intraday), color: '#e8e8f0', head: true });
-  var chg = (c.open ? ((c.close - c.open) / c.open * 100) : 0);
+  // Change vs the PREVIOUS candle's close (st.view is st.candles.slice(st.vs, st.ve), so the
+  // previous candle may sit before the window). The first loaded candle has none: no %.
+  var prevC = st.candles ? st.candles[st.vs + i - 1] : null;
+  var chg = (prevC && prevC.close > 0) ? ((c.close - prevC.close) / prevC.close * 100) : null;
   rows.push({ label: 'O', val: c.open.toFixed(2),  color: '#9a9ab8' });
   rows.push({ label: 'H', val: c.high.toFixed(2),  color: '#9a9ab8' });
   rows.push({ label: 'L', val: c.low.toFixed(2),   color: '#9a9ab8' });
-  rows.push({ label: 'C', val: c.close.toFixed(2) + '  (' + (chg>=0?'+':'') + chg.toFixed(2) + '%)',
-              color: isUp ? '#00d48a' : '#e8445a' });
+  rows.push({ label: 'C', val: c.close.toFixed(2) + (chg != null ? '  (' + (chg>=0?'+':'') + chg.toFixed(2) + '%)' : ''),
+              color: (chg != null ? chg >= 0 : isUp) ? '#00d48a' : '#e8445a' });
   var volTxt = _chartFmtVol(c.volume != null ? c.volume : c.v);
   if (volTxt) rows.push({ label: 'Vol', val: volTxt, color: '#9a9ab8' });
   function pushMa(key, lbl, col){

@@ -91,6 +91,8 @@
 // Everything that makes this helper safe lives in the guards below it.
 // ─────────────────────────────────────────────────────────────────────────────
 const crypto = require('crypto');
+const path = require('path');
+const { execFileSync } = require('child_process');
 
 const TAG = '<script src="./js/ui/chart-interactions.js"></script>\n';
 const ANCHOR_TAG = '<script src="./js/services/scanner-earnings-throttle.js"></script>\n';
@@ -143,10 +145,40 @@ function isApplied(html) {
   return typeof html === 'string' && count(html, TAG) === 1;
 }
 
+// The ONE approved post-extraction edit of the module: the tooltip's per-candle
+// change is measured against the previous candle's close, not the candle's own
+// open. The live module may be exactly that Git blob, and only that one; it is
+// then replaced by the extracted bytes, read from the extraction commit and
+// checked against MODULE_SHA256, before any historical gate below runs. Any
+// other module — including a mutation of the approved one — is passed through
+// unchanged and fails those gates exactly as before.
+const TOOLTIP_PREV_CLOSE_PATCH_BLOB = 'a7b6af001a15649941112f38c33d1a61a2d01baf';
+const EXTRACTION_COMMIT = '5603a945e2fa7e775ef72c236cf24da6338aba73';
+let cachedExtractedModule = null;
+function gitBlobSha(source) {
+  const body = Buffer.from(source, 'utf8');
+  return crypto.createHash('sha1')
+    .update(Buffer.concat([Buffer.from('blob ' + body.length + '\0'), body])).digest('hex');
+}
+function historicalModule(moduleSource) {
+  if (typeof moduleSource !== 'string' || gitBlobSha(moduleSource) !== TOOLTIP_PREV_CLOSE_PATCH_BLOB) {
+    return moduleSource;
+  }
+  if (!cachedExtractedModule) {
+    const original = execFileSync('git', ['show', EXTRACTION_COMMIT + ':js/ui/chart-interactions.js'], {
+      cwd: path.resolve(__dirname, '..', '..'), encoding: 'utf8', maxBuffer: 1024 * 1024,
+    });
+    if (digest(original) !== MODULE_SHA256) throw new Error('CHART_INTERACTIONS_UNDO_MODULE_IDENTITY');
+    cachedExtractedModule = original;
+  }
+  return cachedExtractedModule;
+}
+
 function undoChartInteractions(html, moduleSource) {
   if (typeof html !== 'string' || typeof moduleSource !== 'string') {
     throw new Error('CHART_INTERACTIONS_UNDO_BAD_INPUT');
   }
+  moduleSource = historicalModule(moduleSource);
 
   // 1. The module has exactly the measured size. A truncated, padded or foreign
   //    module stops here — and so does one that ABSORBED the structural
@@ -208,6 +240,7 @@ function undoChartInteractions(html, moduleSource) {
 }
 
 module.exports = {
+  TOOLTIP_PREV_CLOSE_PATCH_BLOB, EXTRACTION_COMMIT, historicalModule,
   TAG, ANCHOR_TAG, INLINE_OPEN, SEPARATOR, SEPARATOR_AT,
   BASE_CHARS, BASE_UTF8, BASE_LF, BASE_SHA256, BASE_LOCAL_SCRIPTS,
   EXTRACTED_CHARS, EXTRACTED_UTF8, EXTRACTED_LF, EXTRACTED_SHA256, EXTRACTED_LOCAL_SCRIPTS,
