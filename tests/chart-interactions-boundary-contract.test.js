@@ -444,7 +444,10 @@ const INDEX = JOURNAL_SNAPSHOT_HELPERS_U.isApplied(PRE_SWING_WEEKLY_CANDLES)
   ? JOURNAL_SNAPSHOT_HELPERS_U.undoJournalSnapshotHelpers(
       PRE_SWING_WEEKLY_CANDLES, fs.readFileSync(path.join(ROOT, 'js/services/journal-snapshot-helpers.js'), 'utf8'))
   : PRE_SWING_WEEKLY_CANDLES;
-const MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+// The extracted module: the live file, or — if it is the one approved tooltip patch —
+// the extracted bytes it was made from (see historicalModule in the undo helper).
+const LIVE_MODULE = fs.readFileSync(path.join(ROOT, MODULE_REL), 'utf8');
+const MODULE = UNDO.historicalModule(LIVE_MODULE);
 const TAGS = APP_LOADER.parseScriptTags(INDEX);
 const LOCALS = TAGS.filter((t) => t.src && /^\.\//.test(t.src)).map((t) => t.src.replace(/^\.\//, ''));
 const LIVE_CODE = TAGS.filter((t) => !t.src && t.inline.length > 1000)[0].inline;
@@ -630,7 +633,8 @@ section('4. Three ends from one start — why this boundary, and where the chain
 
   // Measured over the WHOLE chain, not inferred from the layers nearest to hand.
   eq(CHAIN.length, CHAIN_LENGTH, 'twenty-nine layers ship today');
-  const sources = CHAIN.map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'));
+  // This layer is measured as extracted (MODULE), not as later patched (section 9).
+  const sources = CHAIN.map((rel) => rel === MODULE_REL ? MODULE : fs.readFileSync(path.join(ROOT, rel), 'utf8'));
   const bySize = CHAIN.map((rel, i) => ({ rel, units: sources[i].length }))
     .sort((a, b) => a.units - b.units);
   eq(bySize[0].rel, SMALLEST_MODULE, 'the vega monitor is still the smallest');
@@ -856,6 +860,65 @@ section('8. Exact production scope, and the temporary audit is gone');
     rel === 'js/portfolio/portfolio-technical-parity.js' ||
     rel === 'CLAUDE.md' || rel.startsWith('tests/')),
     'every other changed path is a test artifact');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+section('9. The one approved post-extraction edit of the module');
+// ─────────────────────────────────────────────────────────────────────────────
+{
+  const blob = (s) => {
+    const b = Buffer.from(s, 'utf8');
+    return crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob ' + b.length + '\0'), b])).digest('hex');
+  };
+  ok(sha256(LIVE_MODULE) === UNDO.MODULE_SHA256 || blob(LIVE_MODULE) === UNDO.TOOLTIP_PREV_CLOSE_PATCH_BLOB,
+    'the live module is the extracted bytes or exactly the approved tooltip patch');
+  eq(UNDO.historicalModule(MODULE), MODULE, 'the extracted module maps to itself');
+  eq(sha256(UNDO.historicalModule(LIVE_MODULE)), UNDO.MODULE_SHA256, 'the live module maps to the extracted bytes');
+  // The patch is the previous-close change, and only that: drop it and nothing else differs.
+  if (LIVE_MODULE !== MODULE) {
+    const at = LIVE_MODULE.indexOf('  // Change vs the PREVIOUS candle');
+    ok(at > 0 && LIVE_MODULE.slice(0, at) === MODULE.slice(0, at), 'the patch starts at the tooltip change row');
+    ok(/prevC\.close/.test(LIVE_MODULE) && !/\(c\.close - c\.open\) \/ c\.open/.test(LIVE_MODULE),
+      'the change is measured from the previous close, never from the candle\'s own open');
+  }
+  // Executed: the tooltip's C row on the LIVE module. Candle 1 opens 105 and closes 101 after a
+  // 102 close: -0.98% vs the previous close (the patch), -3.81% vs its own open (the old bug).
+  const tooltip = (vs, ve, mx) => {
+    const texts = [];
+    const octx = new Proxy({}, {
+      get: (o, k) => k === 'fillText' ? (t) => texts.push(String(t))
+        : k === 'measureText' ? (t) => ({ width: String(t).length * 6 })
+        : (k in o ? o[k] : () => {}),
+      set: (o, k, v) => { o[k] = v; return true; },
+    });
+    const ctx3 = {};
+    vm.createContext(ctx3);
+    vm.runInContext(LIVE_MODULE, ctx3);
+    const candles = [
+      { time: Date.UTC(2026, 0, 5, 12), open: 100, high: 103, low: 99, close: 102 },
+      { time: Date.UTC(2026, 0, 6, 12), open: 105, high: 106, low: 100, close: 101 },
+    ];
+    const view = candles.slice(vs, ve), nv = view.length;
+    ctx3._chartDrawHover({ __chart: {
+      octx, overlay: { isConnected: true }, view, candles, vs, ve, vind: {}, opts: {}, rsiView: null,
+      PAD: { top: 10, right: 60, bottom: 20, left: 10 }, W: 400, H: 200, plotW: 330, plotH: 170,
+      minP: 90, maxP: 110, nv, xSpan: nv, intraday: false,
+    } }, mx, 100);
+    const at = texts.indexOf('C');
+    return at >= 0 ? texts[at + 1] : null;   // label and value are drawn separately
+  };
+  eq(tooltip(0, 2, 175), '101.00  (-0.98%)', 'the C row measures the change from the previous close');
+  eq(tooltip(1, 2, 10), '101.00  (-0.98%)',
+    '…including when the previous candle sits before the visible window');
+  eq(tooltip(0, 2, 10), '102.00', '…and the first loaded candle, with no previous close, shows no %');
+  // A mutation of the approved patch is not history: it passes through and fails the gates.
+  if (LIVE_MODULE !== MODULE) {
+    const mutated = LIVE_MODULE.replace('prevC.close > 0', 'prevC.close > 1');
+    ok(mutated !== LIVE_MODULE, 'the control mutation applies');
+    eq(UNDO.historicalModule(mutated), mutated, 'a mutated patch is not mapped to history');
+    throwsWith(() => UNDO.undoChartInteractions(INDEX, mutated),
+      'CHART_INTERACTIONS_UNDO_MODULE_IDENTITY', '…and the undo refuses it');
+  }
 }
 
 console.log('\n' + pass + ' assertions passed.');
