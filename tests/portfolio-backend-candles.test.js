@@ -925,7 +925,7 @@ function makeEnv() {
 }
 
 const FNS = ['_chartPad2', '_chartXSpan', '_chartViewKey', '_chartResolveView', '_chartRedraw', '_chartClearHover', '_chartBindInteractions',
-  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel', '_chartLinkedRsiId', '_chartSyncLinkedRsi'];
+  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel', '_chartLinkedRsiId', '_chartSyncLinkedRsi', '_apexChartBg'];
 const CHART_RSI_LINKS_SRC = (HTML.match(/^var _CHART_RSI_LINKS = \[[\s\S]*?\n\];/m) || [''])[0];
 function load(env) {
   const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;\n' + CHART_RSI_LINKS_SRC;
@@ -1158,7 +1158,7 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
   section('16.7 RS / SFS charts: RS vs SPY and MACD linked by id follow the window');
   {
     const env = makeEnv(); load(env);
-    vm.runInContext(['emA', 'calcMACD', '_schartDrawMacdPanel', '_chartSubpanelLink', '_chartEnsureMacdEl', '_chartSyncLinkedSubpanels']
+    vm.runInContext(['emA', 'calcMACD', '_apexChartBg', '_schartDrawMacdPanel', '_chartSubpanelLink', '_chartEnsureMacdEl', '_chartSyncLinkedSubpanels']
       .map((n) => extractFn(HTML, n)).join('\n') + '\n' + (HTML.match(/^var _CHART_SUBPANEL_LINKS = \[[\s\S]*?\n\];/m) || [''])[0], env.sandbox);
     const L = env.sandbox._chartSubpanelLink;
     ok(JSON.stringify(L('rs-big-wrap-1d', 0)) === JSON.stringify({ wrapId: 'rs-big-wrap-1d', rsId: 'rs-rs-1d', macdId: 'rs-macd-1d' }), '7: RS chart wrap -> rs-rs-* / rs-macd-*');
@@ -1216,7 +1216,7 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     vm.createContext(ctx);
     vm.runInContext(extractFn(HTML, '_chartEnsureMacdEl'), ctx);
     const el = ctx._chartEnsureMacdEl('sfs-rs-1d', 'sfs-macd-1d');
-    ok(el && el.id === 'sfs-macd-1d' && JSON.stringify(made) === JSON.stringify([['sfs-macd-1d', 'width:100%;height:56px;margin-top:4px', 'NEXT']]),
+    ok(el && el.id === 'sfs-macd-1d' && JSON.stringify(made) === JSON.stringify([['sfs-macd-1d', 'width:100%;height:84px;margin-top:4px', 'NEXT']]),
       '7: a missing SFS MACD container is inserted right after the SFS RS panel');
     ok(ctx._chartEnsureMacdEl('sfs-rs-9x', 'sfs-macd-9x') === null, '7: no RS panel -> no MACD container');
   }
@@ -1225,7 +1225,7 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
   section('16.6 scanner inline chart: RS vs SPY and MACD panels follow the window');
   {
     const env = makeEnv(); load(env);
-    vm.runInContext(['emA', 'calcMACD', '_schartPanelView', '_schartDrawSubPanels', '_schartDrawMacdPanel']
+    vm.runInContext(['emA', 'calcMACD', '_apexChartBg', '_schartPanelView', '_schartDrawSubPanels', '_schartDrawMacdPanel']
       .map((n) => extractFn(HTML, n)).join('\n') + "\nvar _schartPanelState = { '1d': null, '4h': null };", env.sandbox);
     const { candles, ind } = series(120);
     const spy = candles.map((c, i) => ({ time: c.time, close: 400 + i * 0.2 }));

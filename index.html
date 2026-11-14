@@ -28,7 +28,17 @@
   --pu:#7c6fff;--pu2:#5548d9;
   --gr:#00d48a;--rd:#ff4d6a;--am:#ffb340;--bl:#4da6ff;--tl:#00d4c8;
   --F:'Syne',sans-serif;--M:'Space Mono',monospace;
+  --chart-bg:#0e0e18;
 }
+/* Selectable background themes (apexSetBgTheme). No attribute = 'nero', the palette above. */
+html[data-bg="blu"]{--bg:#0b1220;--bg2:#111a2c;--bg3:#1a2540;--bg4:#23304f;--chart-bg:#0f1829;}
+html[data-bg="grafite"]{--bg:#17181c;--bg2:#1f2127;--bg3:#292c33;--bg4:#33363e;--chart-bg:#1c1e23;}
+html[data-bg="petrolio"]{--bg:#081419;--bg2:#0e1e25;--bg3:#172b34;--bg4:#1f3742;--chart-bg:#0c1b21;}
+/* SFS RSI / RS panels: their markup lives in the byte-pinned js/ui/sfs-panel.js (inline 56px / 48px),
+   so they take the same sub-panel heights as the other candle charts from here. */
+#sfs-rsi-1d,#sfs-rsi-4h{height:84px!important;}
+#sfs-rs-1d,#sfs-rs-4h{height:72px!important;}
+#bgThemeSel option{background:var(--bg2);color:var(--tx);}
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);}
 ::-webkit-scrollbar{width:6px;height:6px;}
@@ -481,7 +491,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .mcx-card-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
 /* Base sizes (panel fallback, kept for backwards compat) */
 .mcx-chart-wrap{height:200px;border-radius:6px 6px 0 0 !important;}
-.mcx-rsi-wrap{height:56px;background:#0e0e18;border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
+.mcx-rsi-wrap{height:56px;background:var(--chart-bg);border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
 /* Full-page overrides */
 #view-mcx .mcx-chart-wrap{height:280px;}
 #view-mcx .mcx-rsi-wrap{height:64px;}
@@ -672,6 +682,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
     <button class="tbtn" id="accBtn" onclick="showAccountPanel()" style="display:none;color:var(--gr);border-color:var(--gr)">&#9670; ACCOUNT</button>
     <button class="tbtn" id="reconnectTTBtn" onclick="showReconnectPanel()" style="display:none;color:var(--am);border-color:var(--am)">&#9670; LOGIN TT</button>
+    <select class="tbtn" id="bgThemeSel" title="Sfondo" onchange="apexSetBgTheme(this.value)"><option value="nero">SFONDO: NERO</option><option value="blu">SFONDO: BLU NOTTE</option><option value="grafite">SFONDO: GRAFITE</option><option value="petrolio">SFONDO: PETROLIO</option></select>
     <button class="tbtn" onclick="doLogout()">&#8619; OUT</button>
   </div>
   <div class="sysbar" id="sysbar"></div>
@@ -882,9 +893,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div class="dss-big-canvas-wrap" id="schart-big-wrap-1d">
             <div class="dss-no-data">Loading&hellip;</div>
           </div>
-          <div id="schart-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="schart-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
-          <div id="schart-macd-1d" style="width:100%;height:56px;margin-top:4px"></div>
+          <div id="schart-rsi-1d" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-rs-1d" style="width:100%;height:72px;margin-top:4px"></div>
+          <div id="schart-macd-1d" style="width:100%;height:84px;margin-top:4px"></div>
         </div>
         <!-- 4H section -->
         <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">
@@ -896,9 +907,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div class="dss-big-canvas-wrap" id="schart-big-wrap-4h">
             <div class="dss-no-data">Loading&hellip;</div>
           </div>
-          <div id="schart-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="schart-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
-          <div id="schart-macd-4h" style="width:100%;height:56px;margin-top:4px"></div>
+          <div id="schart-rsi-4h" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-rs-4h" style="width:100%;height:72px;margin-top:4px"></div>
+          <div id="schart-macd-4h" style="width:100%;height:84px;margin-top:4px"></div>
         </div>
       </div>
     </div>
@@ -932,9 +943,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="dss-big-canvas-wrap" id="rs-big-wrap-1d">
               <div class="dss-no-data">Loading&hellip;</div>
             </div>
-            <div id="rs-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
-            <div id="rs-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
-            <div id="rs-macd-1d" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rsi-1d" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-rs-1d" style="width:100%;height:72px;margin-top:4px"></div>
+            <div id="rs-macd-1d" style="width:100%;height:84px;margin-top:4px"></div>
           </div>
           <!-- 4H column: chart + RSI panel + RS-vs-SPY panel -->
           <div class="rs-chart-col">
@@ -947,9 +958,9 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="dss-big-canvas-wrap" id="rs-big-wrap-4h">
               <div class="dss-no-data">Loading&hellip;</div>
             </div>
-            <div id="rs-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
-            <div id="rs-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
-            <div id="rs-macd-4h" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rsi-4h" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-rs-4h" style="width:100%;height:72px;margin-top:4px"></div>
+            <div id="rs-macd-4h" style="width:100%;height:84px;margin-top:4px"></div>
           </div>
         </div>
       </div>
@@ -4325,7 +4336,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     var plotH = H - PAD.top  - PAD.bottom;
 
     // Background + border
-    ctx.fillStyle = '#0e0e18';
+    ctx.fillStyle = _apexChartBg();
     ctx.fillRect(0, 0, W, H);
 
     // Resolve the zoom/pan view window (default: last 75 candles). Slicing the
@@ -4812,7 +4823,7 @@ function _chartEnsureMacdEl(rsId, macdId) {
   if (!rsEl || !rsEl.parentNode || typeof document.createElement !== 'function') return null;
   el = document.createElement('div');
   el.id = macdId;
-  el.style.cssText = 'width:100%;height:56px;margin-top:4px';
+  el.style.cssText = 'width:100%;height:84px;margin-top:4px';
   rsEl.parentNode.insertBefore(el, rsEl.nextSibling);
   return el;
 }
@@ -5373,7 +5384,7 @@ function _schartDrawMacdPanel(wrapId, macd, vs, ve) {
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   var yMax = Math.max(0, Math.max.apply(null, vals));
@@ -15934,8 +15945,8 @@ function renderPositionsPanel(portfolioId) {
             '</div>' +
             '<div id="pf-1d-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
             '<div id="pf-1d-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
-            '<div id="pf-1d-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
-            '<div id="pf-1d-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+            '<div id="pf-1d-rsi-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
+            '<div id="pf-1d-rs-' + pos.id + '" style="width:100%;height:72px;margin-top:4px"></div>' +
           '</div>' +
 
           // ── 4H section (separator + chart) ─────────────────────────
@@ -15946,8 +15957,8 @@ function renderPositionsPanel(portfolioId) {
             '</div>' +
             '<div id="pf-4h-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
             '<div id="pf-4h-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
-            '<div id="pf-4h-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
-            '<div id="pf-4h-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+            '<div id="pf-4h-rsi-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
+            '<div id="pf-4h-rs-' + pos.id + '" style="width:100%;height:72px;margin-top:4px"></div>' +
           '</div>' +
 
         '</div>' +
@@ -16395,6 +16406,38 @@ function _pfDrawTf(posId, ticker, tf) {
   _pfUpdateAlignment(posId, ticker);
 }
 
+// ── Background theme ─────────────────────────────────────────────────────────
+// html[data-bg] overrides --bg…--bg4 and --chart-bg (CSS at the top); no attribute = 'nero'.
+// Canvas sub-panels read --chart-bg at draw time; a change redraws through the existing
+// window 'resize' handlers. Persisted per browser in localStorage.
+var APEX_BG_THEMES = ['nero', 'blu', 'grafite', 'petrolio'];
+function _apexChartBg() {
+  try {
+    var v = getComputedStyle(document.documentElement).getPropertyValue('--chart-bg').trim();
+    if (v) return v;
+  } catch(e) {}
+  return '#0e0e18';
+}
+function apexSetBgTheme(name) {
+  if (APEX_BG_THEMES.indexOf(name) < 0) name = 'nero';
+  try {
+    if (name === 'nero') document.documentElement.removeAttribute('data-bg');
+    else document.documentElement.setAttribute('data-bg', name);
+    var sel = document.getElementById('bgThemeSel');
+    if (sel) sel.value = name;
+  } catch(e) {}
+  try { localStorage.setItem('apex_bg_theme', name); } catch(e) {}
+  try { window.dispatchEvent(new Event('resize')); } catch(e) {}
+}
+try {
+  var _apexBgSaved = localStorage.getItem('apex_bg_theme');
+  if (_apexBgSaved && _apexBgSaved !== 'nero' && APEX_BG_THEMES.indexOf(_apexBgSaved) >= 0) {
+    document.documentElement.setAttribute('data-bg', _apexBgSaved);
+    var _apexBgSel = document.getElementById('bgThemeSel');
+    if (_apexBgSel) _apexBgSel.value = _apexBgSaved;
+  }
+} catch(e) {}
+
 // RSI(14) sub-panel of the Portfolio charts: draws the window [vs, ve) of the full RSI series on
 // the SAME x grid as the candle chart above it (same left/right margins, same empty "future"
 // slots), so each RSI point sits under its candle and the line pans/zooms with it. The shared
@@ -16421,7 +16464,7 @@ function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve) {
   var nv = view.length;
   var yMin = 0, yMax = 100;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   function xOf(i){ return PAD.left + (i / _chartXSpan(nv)) * plotW; }
@@ -16521,7 +16564,7 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen, viewEnd) {
   var plotH = H - PAD.top  - PAD.bottom;
   var nv = view.length;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   var validVals = view.filter(function(v){ return v != null; });
