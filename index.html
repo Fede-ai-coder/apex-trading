@@ -28,7 +28,17 @@
   --pu:#7c6fff;--pu2:#5548d9;
   --gr:#00d48a;--rd:#ff4d6a;--am:#ffb340;--bl:#4da6ff;--tl:#00d4c8;
   --F:'Syne',sans-serif;--M:'Space Mono',monospace;
+  --chart-bg:#0e0e18;
 }
+/* Selectable background themes (apexSetBgTheme). No attribute = 'nero', the palette above. */
+html[data-bg="blu"]{--bg:#0b1220;--bg2:#111a2c;--bg3:#1a2540;--bg4:#23304f;--chart-bg:#0f1829;}
+html[data-bg="grafite"]{--bg:#17181c;--bg2:#1f2127;--bg3:#292c33;--bg4:#33363e;--chart-bg:#1c1e23;}
+html[data-bg="petrolio"]{--bg:#081419;--bg2:#0e1e25;--bg3:#172b34;--bg4:#1f3742;--chart-bg:#0c1b21;}
+/* SFS RSI / RS panels: their markup lives in the byte-pinned js/ui/sfs-panel.js (inline 56px / 48px),
+   so they take the same sub-panel heights as the other candle charts from here. */
+#sfs-rsi-1d,#sfs-rsi-4h{height:84px!important;}
+#sfs-rs-1d,#sfs-rs-4h{height:72px!important;}
+#bgThemeSel option{background:var(--bg2);color:var(--tx);}
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;background:var(--bg);color:var(--tx);font-family:var(--F);}
 ::-webkit-scrollbar{width:6px;height:6px;}
@@ -481,7 +491,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
 .mcx-card-title{font-size:8px;font-family:var(--M);color:var(--tx3);letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:6px;}
 /* Base sizes (panel fallback, kept for backwards compat) */
 .mcx-chart-wrap{height:200px;border-radius:6px 6px 0 0 !important;}
-.mcx-rsi-wrap{height:56px;background:#0e0e18;border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
+.mcx-rsi-wrap{height:56px;background:var(--chart-bg);border:1px solid var(--b0);border-top:none;border-radius:0 0 6px 6px;overflow:hidden;margin-bottom:2px;}
 /* Full-page overrides */
 #view-mcx .mcx-chart-wrap{height:280px;}
 #view-mcx .mcx-rsi-wrap{height:64px;}
@@ -672,6 +682,7 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
     <button class="tbtn" onclick="showSecTab('rules')">&#9873; RULES</button>
     <button class="tbtn" id="accBtn" onclick="showAccountPanel()" style="display:none;color:var(--gr);border-color:var(--gr)">&#9670; ACCOUNT</button>
     <button class="tbtn" id="reconnectTTBtn" onclick="showReconnectPanel()" style="display:none;color:var(--am);border-color:var(--am)">&#9670; LOGIN TT</button>
+    <select class="tbtn" id="bgThemeSel" title="Sfondo" onchange="apexSetBgTheme(this.value)"><option value="nero">SFONDO: NERO</option><option value="blu">SFONDO: BLU NOTTE</option><option value="grafite">SFONDO: GRAFITE</option><option value="petrolio">SFONDO: PETROLIO</option></select>
     <button class="tbtn" onclick="doLogout()">&#8619; OUT</button>
   </div>
   <div class="sysbar" id="sysbar"></div>
@@ -882,9 +893,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div class="dss-big-canvas-wrap" id="schart-big-wrap-1d">
             <div class="dss-no-data">Loading&hellip;</div>
           </div>
-          <div id="schart-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="schart-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
-          <div id="schart-macd-1d" style="width:100%;height:56px;margin-top:4px"></div>
+          <div id="schart-rsi-1d" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-rs-1d" style="width:100%;height:72px;margin-top:4px"></div>
+          <div id="schart-macd-1d" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-stoch-1d" style="width:100%;height:84px;margin-top:4px"></div>
         </div>
         <!-- 4H section -->
         <div style="margin-top:16px;border-top:1px solid rgba(255,255,255,.06);padding-top:12px">
@@ -896,9 +908,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
           <div class="dss-big-canvas-wrap" id="schart-big-wrap-4h">
             <div class="dss-no-data">Loading&hellip;</div>
           </div>
-          <div id="schart-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
-          <div id="schart-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
-          <div id="schart-macd-4h" style="width:100%;height:56px;margin-top:4px"></div>
+          <div id="schart-rsi-4h" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-rs-4h" style="width:100%;height:72px;margin-top:4px"></div>
+          <div id="schart-macd-4h" style="width:100%;height:84px;margin-top:4px"></div>
+          <div id="schart-stoch-4h" style="width:100%;height:84px;margin-top:4px"></div>
         </div>
       </div>
     </div>
@@ -932,9 +945,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="dss-big-canvas-wrap" id="rs-big-wrap-1d">
               <div class="dss-no-data">Loading&hellip;</div>
             </div>
-            <div id="rs-rsi-1d" style="width:100%;height:56px;margin-top:4px"></div>
-            <div id="rs-rs-1d" style="width:100%;height:48px;margin-top:4px"></div>
-            <div id="rs-macd-1d" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rsi-1d" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-rs-1d" style="width:100%;height:72px;margin-top:4px"></div>
+            <div id="rs-macd-1d" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-stoch-1d" style="width:100%;height:84px;margin-top:4px"></div>
           </div>
           <!-- 4H column: chart + RSI panel + RS-vs-SPY panel -->
           <div class="rs-chart-col">
@@ -947,9 +961,10 @@ select.jinput option{background:var(--bg3);color:var(--tx);}
             <div class="dss-big-canvas-wrap" id="rs-big-wrap-4h">
               <div class="dss-no-data">Loading&hellip;</div>
             </div>
-            <div id="rs-rsi-4h" style="width:100%;height:56px;margin-top:4px"></div>
-            <div id="rs-rs-4h" style="width:100%;height:48px;margin-top:4px"></div>
-            <div id="rs-macd-4h" style="width:100%;height:56px;margin-top:4px"></div>
+            <div id="rs-rsi-4h" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-rs-4h" style="width:100%;height:72px;margin-top:4px"></div>
+            <div id="rs-macd-4h" style="width:100%;height:84px;margin-top:4px"></div>
+            <div id="rs-stoch-4h" style="width:100%;height:84px;margin-top:4px"></div>
           </div>
         </div>
       </div>
@@ -4325,7 +4340,7 @@ function _drawCandleChart(wrapId, candles, indicators, opts) {
     var plotH = H - PAD.top  - PAD.bottom;
 
     // Background + border
-    ctx.fillStyle = '#0e0e18';
+    ctx.fillStyle = _apexChartBg();
     ctx.fillRect(0, 0, W, H);
 
     // Resolve the zoom/pan view window (default: last 75 candles). Slicing the
@@ -4778,19 +4793,19 @@ function _chartSyncLinkedRsi(wrapId, rsiSeries) {
     var w = document.getElementById(wrapId);
     var c = w && w.__chart;
     if (c !== chart0) return;
-    _pfDrawRsiPanel(rsiId, rsiSeries, c.vs, c.ve);
+    _pfDrawRsiPanel(rsiId, rsiSeries, c.vs, c.ve, c.candles);
   });
 }
 
-// Candle wraps whose RS vs SPY and MACD panels sit under them by id convention:
-// [candle wrap prefix, RS wrap prefix, MACD wrap prefix]. Their callers draw RS with the trailing-
+// Candle wraps whose RS vs SPY, MACD and Slow Stochastic panels sit under them by id convention:
+// [candle wrap prefix, RS wrap prefix, MACD wrap prefix, Stochastic wrap prefix]. Their callers draw RS with the trailing-
 // window form _pfDrawRsPanel(rsId, candles, spy, viewLen) (SFS from a byte-pinned module), so
 // _pfDrawRsPanel recognises these RS ids, keeps the SPY series it was handed and draws the
 // chart's own window; the chart then redraws RS and MACD on every pan / zoom / reset. The
 // scanner inline chart is not listed: it wires its sub-panels through onView itself.
 var _CHART_SUBPANEL_LINKS = [
-  ['rs-big-wrap-',  'rs-rs-',  'rs-macd-'],    // RS charts
-  ['sfs-big-wrap-', 'sfs-rs-', 'sfs-macd-']    // SFS detail
+  ['rs-big-wrap-',  'rs-rs-',  'rs-macd-',  'rs-stoch-'],    // RS charts
+  ['sfs-big-wrap-', 'sfs-rs-', 'sfs-macd-', 'sfs-stoch-']    // SFS detail
 ];
 function _chartSubpanelLink(id, col) {
   id = String(id || '');
@@ -4798,7 +4813,7 @@ function _chartSubpanelLink(id, col) {
     var l = _CHART_SUBPANEL_LINKS[i];
     if (id.indexOf(l[col]) === 0) {
       var sfx = id.slice(l[col].length);
-      return { wrapId: l[0] + sfx, rsId: l[1] + sfx, macdId: l[2] + sfx };
+      return { wrapId: l[0] + sfx, rsId: l[1] + sfx, macdId: l[2] + sfx, stochId: l[3] + sfx };
     }
   }
   return null;
@@ -4812,11 +4827,24 @@ function _chartEnsureMacdEl(rsId, macdId) {
   if (!rsEl || !rsEl.parentNode || typeof document.createElement !== 'function') return null;
   el = document.createElement('div');
   el.id = macdId;
-  el.style.cssText = 'width:100%;height:56px;margin-top:4px';
+  el.style.cssText = 'width:100%;height:84px;margin-top:4px';
   rsEl.parentNode.insertBefore(el, rsEl.nextSibling);
   return el;
 }
-// Redraw the linked MACD and RS panels on the window the chart is showing. RS only when the
+// The Slow Stochastic container under a linked MACD panel; created right after it when the
+// markup has none (SFS).
+function _chartEnsureStochEl(macdId, stochId) {
+  var el = document.getElementById(stochId);
+  if (el) return el;
+  var macdEl = document.getElementById(macdId);
+  if (!macdEl || !macdEl.parentNode || typeof document.createElement !== 'function') return null;
+  el = document.createElement('div');
+  el.id = stochId;
+  el.style.cssText = 'width:100%;height:84px;margin-top:4px';
+  macdEl.parentNode.insertBefore(el, macdEl.nextSibling);
+  return el;
+}
+// Redraw the linked MACD, Slow Stochastic and RS panels on the window the chart is showing. RS only when the
 // caller already handed that panel a SPY series for THESE candles (a first draw leaves RS to the
 // caller, which runs right after and is redirected to this window by _pfDrawRsPanel).
 function _chartSyncLinkedSubpanels(wrapId, candles) {
@@ -4829,6 +4857,10 @@ function _chartSyncLinkedSubpanels(wrapId, candles) {
       w.__macd = { candles: candles, macd: calcMACD(candles.map(function(k){ return k.close; })) };
     }
     _schartDrawMacdPanel(lk.macdId, w.__macd.macd, c.vs, c.ve);
+    if (_chartEnsureStochEl(lk.macdId, lk.stochId)) {
+      if (!w.__stoch || w.__stoch.candles !== candles) w.__stoch = { candles: candles, stoch: calcSlowStoch(candles) };
+      _chartDrawStochPanel(lk.stochId, w.__stoch.stoch, c.vs, c.ve);
+    }
   }
   var rsEl = document.getElementById(lk.rsId), st = rsEl && rsEl.__rsLinked;
   if (st && st.candles === candles) _pfDrawRsPanel(lk.rsId, candles, st.spy, c.ve - c.vs, c.ve);
@@ -5320,7 +5352,8 @@ function _schartUpdateRsPanelOnly(tf, symbol){
 }
 
 // Per-timeframe ('1d'/'4h') state of the scanner chart sub-panels: the candles the chart was
-// drawn with, the SPY benchmark resolved for them, and MACD(12,26,9) of their closes.
+// drawn with, the SPY benchmark resolved for them, MACD(12,26,9) of their closes and the
+// Slow Stochastic(14,3,3) of their bars.
 var _schartPanelState = { '1d': null, '4h': null };
 // The window [vs, ve) the candle chart of this timeframe shows for these candles, or the default
 // trailing 75 bars when it has not drawn them.
@@ -5338,6 +5371,7 @@ function _schartDrawSubPanels(sfx, candles, vs, ve) {
   if (vs == null || ve == null) { var pv = _schartPanelView(sfx, candles); vs = pv.vs; ve = pv.ve; }
   _pfDrawRsPanel('schart-rs-' + sfx, candles, st.spy, ve - vs, ve);
   _schartDrawMacdPanel('schart-macd-' + sfx, st.macd, vs, ve);
+  _chartDrawStochPanel('schart-stoch-' + sfx, st.stoch, vs, ve);
 }
 
 // MACD(12,26,9) sub-panel: histogram + MACD line + signal line for the window [vs, ve), on the
@@ -5373,7 +5407,7 @@ function _schartDrawMacdPanel(wrapId, macd, vs, ve) {
   var plotW = W - PAD.left - PAD.right;
   var plotH = H - PAD.top  - PAD.bottom;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   var yMax = Math.max(0, Math.max.apply(null, vals));
@@ -5429,6 +5463,111 @@ function _schartDrawMacdPanel(wrapId, macd, vs, ve) {
   ctx.fillText(t2, lx, 10); lx += ctx.measureText(t2).width + 8;
   ctx.fillStyle = lastH == null ? '#6e6e8a' : (lastH >= 0 ? '#00d48a' : '#e8445a');
   ctx.fillText('hist ' + f(lastH), lx, 10);
+}
+
+// Slow Stochastic(n, kSmooth, dSmooth), default (14,3,3), aligned to the candles:
+//   fast %K = 100 * (close - lowest low n) / (highest high n - lowest low n)
+//   slow %K = SMA(kSmooth) of fast %K;  %D = SMA(dSmooth) of slow %K.
+// null where the window is incomplete, a bar is not finite, or the range is flat (high == low):
+// no value is invented for those bars.
+function calcSlowStoch(candles, n, kSmooth, dSmooth) {
+  n = n || 14; kSmooth = kSmooth || 3; dSmooth = dSmooth || 3;
+  var len = candles ? candles.length : 0, fast = [];
+  for (var i = 0; i < len; i++) {
+    fast.push(null);
+    if (i < n - 1) continue;
+    var hh = -Infinity, ll = Infinity, valid = true;
+    for (var j = i - n + 1; j <= i; j++) {
+      var h = +candles[j].high, l = +candles[j].low;
+      if (!isFinite(h) || !isFinite(l)) { valid = false; break; }
+      if (h > hh) hh = h;
+      if (l < ll) ll = l;
+    }
+    var c = +candles[i].close;
+    if (valid && isFinite(c) && hh > ll) fast[i] = (c - ll) / (hh - ll) * 100;
+  }
+  function sma(a, p) {
+    var out = [];
+    for (var i = 0; i < a.length; i++) {
+      var v = null;
+      if (i >= p - 1) {
+        var sum = 0;
+        for (var j = i - p + 1; j <= i; j++) { if (a[j] == null) { sum = null; break; } sum += a[j]; }
+        if (sum != null) v = sum / p;
+      }
+      out.push(v);
+    }
+    return out;
+  }
+  var k = sma(fast, kSmooth);
+  return { k: k, d: sma(k, dSmooth), n: n, kSmooth: kSmooth, dSmooth: dSmooth };
+}
+
+// Slow Stochastic sub-panel: %K and %D for the window [vs, ve) on a fixed 0..100 scale with the
+// 80 / 20 bands, on the same x grid as the candle chart (same margins and future slots as MACD).
+function _chartDrawStochPanel(wrapId, stoch, vs, ve) {
+  var wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  if (!stoch || !(ve > vs)) return;
+  var k = stoch.k.slice(vs, ve), d = stoch.d.slice(vs, ve);
+  var nv = k.length;
+  var tag = 'STOCH(' + stoch.n + ',' + stoch.kSmooth + ',' + stoch.dSmooth + ')';
+  function lastOf(a){ for (var j = a.length - 1; j >= 0; j--) { if (a[j] != null && isFinite(a[j])) return a[j]; } return null; }
+  var lastK = lastOf(k), lastD = lastOf(d);
+  if (lastK == null) {
+    wrap.innerHTML = '<div style="display:flex;align-items:center;height:100%;padding-left:10px;font-size:9px;font-family:var(--M);color:var(--tx3)">' + tag + ': insufficient data</div>';
+    return;
+  }
+
+  var cv = document.createElement('canvas');
+  cv.style.cssText = 'width:100%;height:100%;display:block;';
+  wrap.appendChild(cv);
+  var hd  = prepareHiDPICanvas(cv, wrap.offsetWidth || 280, wrap.offsetHeight || 84);
+  var ctx = hd.ctx;
+
+  var W = hd.width, H = hd.height;
+  var PAD = {top:14, right:64, bottom:4, left:10};
+  var plotW = W - PAD.left - PAD.right;
+  var plotH = H - PAD.top  - PAD.bottom;
+
+  ctx.fillStyle = _apexChartBg();
+  ctx.fillRect(0, 0, W, H);
+
+  function xOf(i){ return PAD.left + (i / _chartXSpan(nv)) * plotW; }
+  function yOf(v){ return PAD.top  + (1 - v / 100) * plotH; }
+
+  // Overbought 80 (red-tinted) / oversold 20 (green-tinted)
+  [[80,'rgba(232,68,90,.2)','rgba(232,68,90,.35)'], [20,'rgba(0,212,138,.2)','rgba(0,212,138,.35)']].forEach(function(r){
+    ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = r[2]; ctx.font = '8px monospace'; ctx.textAlign = 'right';
+    ctx.fillText(r[0], W - 2, yOf(r[0]) + 3);
+  });
+
+  function line(arr, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; ctx.setLineDash([]);
+    var started = false;
+    ctx.beginPath();
+    for (var q = 0; q < nv; q++) {
+      var v = arr[q];
+      if (v == null || !isFinite(v)) { started = false; continue; }
+      if (!started) { ctx.moveTo(xOf(q), yOf(v)); started = true; } else ctx.lineTo(xOf(q), yOf(v));
+    }
+    ctx.stroke();
+  }
+  line(k, '#4da3ff');
+  line(d, '#f5a623');
+
+  // Label (values at the right edge of the window)
+  function f(v){ return v != null ? v.toFixed(1) : '—'; }
+  ctx.font = '9px monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = '#4da3ff';
+  var lx = PAD.left + 2, t1 = tag + ': %K ' + f(lastK);
+  ctx.fillText(t1, lx, 10); lx += ctx.measureText(t1).width + 8;
+  ctx.fillStyle = '#f5a623';
+  ctx.fillText('%D ' + f(lastD), lx, 10);
 }
 
 window.addEventListener('resize', function(){
@@ -5746,6 +5885,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   var sqzLblId = 'schart-sqzlbl-'   + sfx;
   var srcElId  = 'schart-src-'      + sfx;
   var macdId   = 'schart-macd-'     + sfx;
+  var stochId  = 'schart-stoch-'    + sfx;
 
   var srcEl = document.getElementById(srcElId);
   if (srcEl) srcEl.textContent = src ? '· ' + src : '';
@@ -5756,6 +5896,8 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
     _schartPanelState[sfx] = null;
     var mw = document.getElementById(macdId);
     if (mw) mw.innerHTML = '';
+    var kw = document.getElementById(stochId);
+    if (kw) kw.innerHTML = '';
     return;
   }
 
@@ -5775,7 +5917,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   // reports it through onView after every draw. spy stays undefined until resolved below, so the
 // first (synchronous) onView skips the panels that this function draws itself right after.
   _schartPanelState[sfx] = { candles: candles, spy: undefined,
-    macd: calcMACD(candles.map(function(c){ return c.close; })) };
+    macd: calcMACD(candles.map(function(c){ return c.close; })), stoch: calcSlowStoch(candles) };
 
   // Candle chart with SMA8/20/30, BB, KC, ATR overlays
   _drawCandleChart(wrapId, candles, ind, {
@@ -5841,6 +5983,7 @@ function _schartDrawTf(tf, symbol, candles, src, livePrice) {
   var pv = _schartPanelView(sfx, candles);
   _pfDrawRsPanel(rsId, candles, spyCandles, pv.ve - pv.vs, pv.ve);
   _schartDrawMacdPanel(macdId, _schartPanelState[sfx].macd, pv.vs, pv.ve);
+  _chartDrawStochPanel(stochId, _schartPanelState[sfx].stoch, pv.vs, pv.ve);
 
   // Squeeze bar + label (matches Portfolio style)
   var sqz = ind.lastSqueeze;
@@ -15934,8 +16077,9 @@ function renderPositionsPanel(portfolioId) {
             '</div>' +
             '<div id="pf-1d-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
             '<div id="pf-1d-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
-            '<div id="pf-1d-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
-            '<div id="pf-1d-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+            '<div id="pf-1d-rsi-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
+            '<div id="pf-1d-rs-' + pos.id + '" style="width:100%;height:72px;margin-top:4px"></div>' +
+            '<div id="pf-1d-stoch-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
           '</div>' +
 
           // ── 4H section (separator + chart) ─────────────────────────
@@ -15946,8 +16090,9 @@ function renderPositionsPanel(portfolioId) {
             '</div>' +
             '<div id="pf-4h-sqzbar-' + pos.id + '" style="height:3px;border-radius:2px;background:#3a3a4a;margin-bottom:8px"></div>' +
             '<div id="pf-4h-wrap-' + pos.id + '" style="width:100%;height:280px"></div>' +
-            '<div id="pf-4h-rsi-' + pos.id + '" style="width:100%;height:56px;margin-top:4px"></div>' +
-            '<div id="pf-4h-rs-' + pos.id + '" style="width:100%;height:48px;margin-top:4px"></div>' +
+            '<div id="pf-4h-rsi-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
+            '<div id="pf-4h-rs-' + pos.id + '" style="width:100%;height:72px;margin-top:4px"></div>' +
+            '<div id="pf-4h-stoch-' + pos.id + '" style="width:100%;height:84px;margin-top:4px"></div>' +
           '</div>' +
 
         '</div>' +
@@ -16294,6 +16439,7 @@ function _pfDrawTf(posId, ticker, tf) {
   var wrapId   = pfx + 'wrap-'   + posId;
   var rsiId    = pfx + 'rsi-'    + posId;
   var rsId     = pfx + 'rs-'     + posId;
+  var stochId  = pfx + 'stoch-'  + posId;
   var sqzBarId = pfx + 'sqzbar-' + posId;
   var sqzLblId = pfx + 'sqzlbl-' + posId;
 
@@ -16358,10 +16504,12 @@ function _pfDrawTf(posId, ticker, tf) {
   // scroll and zoom with the candles instead of staying on the trailing bars. If the chart
   // could not draw (too few candles / no container) they fall back to the default window.
   var panelsDrawn = false;
+  var stoch = calcSlowStoch(candles);
   var drawPanels = function(vs, ve) {
     panelsDrawn = true;
-    _pfDrawRsiPanel(rsiId, ind.rsi, vs, ve);
+    _pfDrawRsiPanel(rsiId, ind.rsi, vs, ve, candles);
     _pfDrawRsPanel(rsId, candles, spyCandles, ve - vs, ve);
+    _chartDrawStochPanel(stochId, stoch, vs, ve);
   };
   _drawCandleChart(wrapId, candles, ind, {
     showSMA8: true, lastSma8: ind.lastSma8,
@@ -16395,14 +16543,55 @@ function _pfDrawTf(posId, ticker, tf) {
   _pfUpdateAlignment(posId, ticker);
 }
 
+// ── Background theme ─────────────────────────────────────────────────────────
+// html[data-bg] overrides --bg…--bg4 and --chart-bg (CSS at the top); no attribute = 'nero'.
+// Canvas sub-panels read --chart-bg at draw time; a change redraws through the existing
+// window 'resize' handlers. Persisted per browser in localStorage.
+var APEX_BG_THEMES = ['nero', 'blu', 'grafite', 'petrolio'];
+function _apexChartBg() {
+  try {
+    var v = getComputedStyle(document.documentElement).getPropertyValue('--chart-bg').trim();
+    if (v) return v;
+  } catch(e) {}
+  return '#0e0e18';
+}
+function apexSetBgTheme(name) {
+  if (APEX_BG_THEMES.indexOf(name) < 0) name = 'nero';
+  try {
+    if (name === 'nero') document.documentElement.removeAttribute('data-bg');
+    else document.documentElement.setAttribute('data-bg', name);
+    var sel = document.getElementById('bgThemeSel');
+    if (sel) sel.value = name;
+  } catch(e) {}
+  try { localStorage.setItem('apex_bg_theme', name); } catch(e) {}
+  try { window.dispatchEvent(new Event('resize')); } catch(e) {}
+}
+try {
+  var _apexBgSaved = localStorage.getItem('apex_bg_theme');
+  if (_apexBgSaved && _apexBgSaved !== 'nero' && APEX_BG_THEMES.indexOf(_apexBgSaved) >= 0) {
+    document.documentElement.setAttribute('data-bg', _apexBgSaved);
+    var _apexBgSel = document.getElementById('bgThemeSel');
+    if (_apexBgSel) _apexBgSel.value = _apexBgSaved;
+  }
+} catch(e) {}
+
 // RSI(14) sub-panel of the Portfolio charts: draws the window [vs, ve) of the full RSI series on
 // the SAME x grid as the candle chart above it (same left/right margins, same empty "future"
 // slots), so each RSI point sits under its candle and the line pans/zooms with it. The shared
 // _mcxDrawRsi (extracted module) can only show the trailing N points, hence this one.
-function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve) {
+function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve, candles) {
   var wrap = document.getElementById(rsiWrapId);
   if (!wrap) return;
   wrap.innerHTML = '';
+  // User RSI settings: with the candles at hand the series is recomputed for the chosen period;
+  // without them (no caller does that today) the given 14-period series is drawn as RSI(14).
+  var rp = _rsiGetParams();
+  var period = 14;
+  if (candles && candles.length && rp.period !== 14) {
+    rsiSeries = _rsiSeriesFor(candles, rp.period);
+    period = rp.period;
+  }
+  var upper = rp.upper, lower = rp.lower;
   if (!rsiSeries || !(ve > vs)) return;
   var view = rsiSeries.slice(vs, ve);
   var lastVal = null;
@@ -16421,14 +16610,14 @@ function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve) {
   var nv = view.length;
   var yMin = 0, yMax = 100;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   function xOf(i){ return PAD.left + (i / _chartXSpan(nv)) * plotW; }
   function yOf(v){ return PAD.top  + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
 
-  // Reference lines at 40 (red-tinted) and 60 (green-tinted)
-  [[60,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [40,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
+  // Reference lines: upper (green-tinted), 50 midline (neutral), lower (red-tinted)
+  [[upper,'rgba(0,212,138,.2)','rgba(0,212,138,.35)'], [50,'rgba(200,200,224,.22)','rgba(200,200,224,.4)'], [lower,'rgba(232,68,90,.2)','rgba(232,68,90,.35)']].forEach(function(r){
     ctx.strokeStyle = r[1]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     ctx.beginPath(); ctx.moveTo(PAD.left, yOf(r[0])); ctx.lineTo(W - PAD.right, yOf(r[0])); ctx.stroke();
     ctx.setLineDash([]);
@@ -16444,15 +16633,125 @@ function _pfDrawRsiPanel(rsiWrapId, rsiSeries, vs, ve) {
     var x = xOf(i), y = yOf(v);
     if (!started) { started = true; px = x; py = y; pv = v; return; }
     var mid = (pv + v) / 2;
-    ctx.strokeStyle = mid > 60 ? 'rgba(0,212,138,.9)' : mid < 40 ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
+    ctx.strokeStyle = mid > upper ? 'rgba(0,212,138,.9)' : mid < lower ? 'rgba(232,68,90,.9)' : 'rgba(124,111,255,.75)';
     ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
     px = x; py = y; pv = v;
   });
 
   // Label (value at the right edge of the window)
-  var lc = lastVal != null ? (lastVal > 60 ? '#00d48a' : lastVal < 40 ? '#e8445a' : '#7c6fff') : '#6e6e8a';
+  var lc = lastVal != null ? (lastVal > upper ? '#00d48a' : lastVal < lower ? '#e8445a' : '#7c6fff') : '#6e6e8a';
   ctx.font = '9px monospace'; ctx.fillStyle = lc; ctx.textAlign = 'left';
-  ctx.fillText('RSI(14): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+  ctx.fillText('RSI(' + period + '): ' + (lastVal != null ? lastVal.toFixed(1) : '—'), PAD.left + 2, 10);
+  _rsiAddSettingsButton(wrap);
+}
+
+// ── RSI settings (period, overbought, oversold) ───────────────────────────────
+// Stored per browser in localStorage ('apex_rsi_params'); a stored value that is not a valid set
+// is ignored, never partially applied. They change only the RSI sub-panels: the scanner scores,
+// the candle-chart legend and the tooltip keep the 14-period RSI their code computes.
+var RSI_DEFAULT_PARAMS = { period: 14, upper: 60, lower: 40 };
+var _rsiSeriesCache = null;
+function _rsiValidParams(p) {
+  if (!p || typeof p !== 'object') return null;
+  var period = Number(p.period), upper = Number(p.upper), lower = Number(p.lower);
+  if (!(Math.floor(period) === period && period >= 2 && period <= 100)) return null;
+  if (!(isFinite(upper) && isFinite(lower) && lower > 0 && upper < 100 && lower < upper)) return null;
+  return { period: period, upper: upper, lower: lower };
+}
+function _rsiGetParams() {
+  try {
+    var v = _rsiValidParams(JSON.parse(localStorage.getItem('apex_rsi_params') || 'null'));
+    if (v) return v;
+  } catch(e) {}
+  return { period: RSI_DEFAULT_PARAMS.period, upper: RSI_DEFAULT_PARAMS.upper, lower: RSI_DEFAULT_PARAMS.lower };
+}
+// Wilder RSI of the closes for any period (calcRSIWilder is the same formula fixed at 14).
+function _calcRSIWilderN(c, p) {
+  var res = c.map(function(){ return null; });
+  if (c.length <= p) return res;
+  var g = [], l = [];
+  for (var i = 1; i < c.length; i++) { var d = c[i] - c[i-1]; g.push(d > 0 ? d : 0); l.push(d < 0 ? -d : 0); }
+  var ag = 0, al = 0;
+  for (var j = 0; j < p; j++) { ag += g[j]; al += l[j]; }
+  ag /= p; al /= p;
+  res[p] = al === 0 ? 100 : 100 - (100 / (1 + ag / al));
+  for (var k = p + 1; k < c.length; k++) {
+    ag = (ag * (p - 1) + g[k-1]) / p; al = (al * (p - 1) + l[k-1]) / p;
+    res[k] = al === 0 ? 100 : 100 - (100 / (1 + ag / al));
+  }
+  return res;
+}
+function _rsiSeriesFor(candles, period) {
+  if (_rsiSeriesCache && _rsiSeriesCache.candles === candles && _rsiSeriesCache.period === period) return _rsiSeriesCache.series;
+  var series = _calcRSIWilderN(candles.map(function(k){ return k.close; }), period);
+  _rsiSeriesCache = { candles: candles, period: period, series: series };
+  return series;
+}
+function _rsiSaveParams(p) {
+  var v = _rsiValidParams(p);
+  if (!v) return false;
+  try { localStorage.setItem('apex_rsi_params', JSON.stringify(v)); } catch(e) { return false; }
+  _rsiRedrawAll();
+  return true;
+}
+function _rsiResetParams() {
+  try { localStorage.removeItem('apex_rsi_params'); } catch(e) {}
+  _rsiRedrawAll();
+}
+// Every drawn candle chart redraws in place; its RSI panel follows (onView / linked RSI).
+function _rsiRedrawAll() {
+  try {
+    var els = document.querySelectorAll('[id*="wrap-"]');
+    for (var i = 0; i < els.length; i++) { if (els[i].__chart) _chartRedraw(els[i]); }
+  } catch(e) {}
+}
+function _rsiAddSettingsButton(wrap) {
+  try {
+    if (getComputedStyle(wrap).position === 'static') wrap.style.position = 'relative';
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.title = 'Parametri RSI';
+    b.textContent = '\u2699';
+    b.style.cssText = 'position:absolute;top:1px;right:4px;padding:0 4px;font-size:11px;line-height:13px;background:transparent;border:none;color:var(--tx3);cursor:pointer;';
+    b.onclick = function(ev){ if (ev && ev.stopPropagation) ev.stopPropagation(); _rsiOpenSettings(b); };
+    wrap.appendChild(b);
+  } catch(e) {}
+}
+function _rsiOpenSettings(anchor) {
+  var old = document.getElementById('rsi-settings-pop');
+  if (old) old.parentNode.removeChild(old);
+  var p = _rsiGetParams();
+  var pop = document.createElement('div');
+  pop.id = 'rsi-settings-pop';
+  var r = anchor.getBoundingClientRect();
+  pop.style.cssText = 'position:fixed;z-index:9999;top:' + Math.round(r.bottom + 4) + 'px;left:' + Math.max(8, Math.round(r.right - 210)) + 'px;width:210px;' +
+    'background:var(--bg2);border:1px solid var(--b2);border-radius:6px;padding:10px;font-family:var(--M);font-size:10px;color:var(--tx2);box-shadow:0 6px 18px rgba(0,0,0,.4);';
+  var inp = 'width:60px;background:var(--bg3);border:1px solid var(--b1);border-radius:4px;color:var(--tx);font-family:var(--M);font-size:10px;padding:2px 4px;';
+  var row = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';
+  pop.innerHTML = '<div style="color:var(--tx);margin-bottom:8px">PARAMETRI RSI</div>' +
+    '<label style="' + row + '">Periodo <input id="rsi-p-period" type="number" min="2" max="100" step="1" style="' + inp + '" value="' + p.period + '"></label>' +
+    '<label style="' + row + '">Ipercomprato <input id="rsi-p-upper" type="number" min="1" max="99" step="1" style="' + inp + '" value="' + p.upper + '"></label>' +
+    '<label style="' + row + '">Ipervenduto <input id="rsi-p-lower" type="number" min="1" max="99" step="1" style="' + inp + '" value="' + p.lower + '"></label>' +
+    '<div id="rsi-p-err" style="color:var(--rd);min-height:12px;margin-bottom:4px"></div>' +
+    '<div style="display:flex;gap:6px;justify-content:flex-end">' +
+      '<button type="button" class="tbtn" id="rsi-p-reset" style="padding:3px 7px">DEFAULT</button>' +
+      '<button type="button" class="tbtn" id="rsi-p-cancel" style="padding:3px 7px">ANNULLA</button>' +
+      '<button type="button" class="tbtn" id="rsi-p-save" style="padding:3px 7px;color:var(--gr);border-color:var(--gr)">SALVA</button>' +
+    '</div>';
+  document.body.appendChild(pop);
+  function close(){ if (pop.parentNode) pop.parentNode.removeChild(pop); }
+  document.getElementById('rsi-p-cancel').onclick = close;
+  document.getElementById('rsi-p-reset').onclick = function(){ _rsiResetParams(); close(); };
+  document.getElementById('rsi-p-save').onclick = function(){
+    var v = { period: Number(document.getElementById('rsi-p-period').value),
+              upper:  Number(document.getElementById('rsi-p-upper').value),
+              lower:  Number(document.getElementById('rsi-p-lower').value) };
+    if (!_rsiValidParams(v)) {
+      document.getElementById('rsi-p-err').textContent = 'Periodo intero 2-100; 0 < ipervenduto < ipercomprato < 100';
+      return;
+    }
+    _rsiSaveParams(v); close();
+  };
 }
 
 // RS vs SPY panel — rolling 20-day excess return rendered as a color-coded line.
@@ -16521,7 +16820,7 @@ function _pfDrawRsPanel(wrapId, candles, spyCandles, viewLen, viewEnd) {
   var plotH = H - PAD.top  - PAD.bottom;
   var nv = view.length;
 
-  ctx.fillStyle = '#0e0e18';
+  ctx.fillStyle = _apexChartBg();
   ctx.fillRect(0, 0, W, H);
 
   var validVals = view.filter(function(v){ return v != null; });

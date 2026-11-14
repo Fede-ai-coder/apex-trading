@@ -550,7 +550,7 @@ section('12. QQQ expanded row uses active-symbol backend 1D candles, not SPY/fan
   sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(25).fill(55), lastSqueeze: false, squeeze: new Array(25).fill(false) });
   sandbox.getCandleDataSource = () => 'FRONTEND_DXLINK_BUFFER';
   sandbox._drawCandleChart = (wrapId, candles, ind, opts) => { calls.draw.push({ wrapId, candles, opts }); };
-  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox.calcSlowStoch = () => null; sandbox._chartDrawStochPanel = () => {};
   sandbox._pfDrawRsPanel = () => {};
   sandbox._pfUpdateAlignment = () => {};
   sandbox.prepareHiDPICanvas = () => ({ ctx: {}, width: 320, height: 180 });
@@ -814,7 +814,7 @@ section('14. Portfolio charts end on one session-proven price; the position pric
   sandbox._portfolioFetchBackendCandlesForChart = async () => ({ ok: true, source: 'BACKEND_CANDLE_STORE', candles1d: c1, candles4h: c4 });
   sandbox._recordBackendCandleProvenance = () => {};
   sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(25).fill(55), lastSqueeze: false, squeeze: new Array(25).fill(false) });
-  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox.calcSlowStoch = () => null; sandbox._chartDrawStochPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
   sandbox.getCandleDataSource = () => 'FRONTEND'; sandbox.positionManager = { getById: () => ({ underlyingPrice: 235.98 }) };
   sandbox._drawCandleChart = () => {};
   await sandbox._pfDrawChart(202, 'IBM');
@@ -925,10 +925,12 @@ function makeEnv() {
 }
 
 const FNS = ['_chartPad2', '_chartXSpan', '_chartViewKey', '_chartResolveView', '_chartRedraw', '_chartClearHover', '_chartBindInteractions',
-  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel', '_chartLinkedRsiId', '_chartSyncLinkedRsi'];
+  '_drawCandleChart', '_pfDrawRsiPanel', '_pfDrawRsPanel', '_chartLinkedRsiId', '_chartSyncLinkedRsi', '_apexChartBg',
+  '_rsiValidParams', '_rsiGetParams', '_calcRSIWilderN', '_rsiSeriesFor', '_rsiAddSettingsButton'];
 const CHART_RSI_LINKS_SRC = (HTML.match(/^var _CHART_RSI_LINKS = \[[\s\S]*?\n\];/m) || [''])[0];
 function load(env) {
-  const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;\n' + CHART_RSI_LINKS_SRC;
+  const consts = 'var _CHART_DEFAULT_VISIBLE = 75; var _CHART_MIN_VISIBLE = 20; var _CHART_RIGHT_PAD_SLOTS = 4; var _chartDragState = null; var _chartDragBound = false;\n' +
+    'var RSI_DEFAULT_PARAMS = { period: 14, upper: 60, lower: 40 }; var _rsiSeriesCache = null;\n' + CHART_RSI_LINKS_SRC;
   vm.runInContext(consts + '\n' + FNS.map((n) => { try { return extractFn(HTML, n); } catch (e) { return ''; } }).join('\n'), env.sandbox);
 }
 
@@ -1058,7 +1060,8 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
   {
     const body = extractFn(HTML, '_pfDrawTf');
     ok(/onView: drawPanels,/.test(body), '4: _pfDrawTf passes onView to the candle chart');
-    ok(/_pfDrawRsiPanel\(rsiId, ind\.rsi, vs, ve\);/.test(body) && /_pfDrawRsPanel\(rsId, candles, spyCandles, ve - vs, ve\);/.test(body), '4: the callback redraws both panels with the reported window');
+    ok(/_pfDrawRsiPanel\(rsiId, ind\.rsi, vs, ve, candles\);/.test(body) && /_pfDrawRsPanel\(rsId, candles, spyCandles, ve - vs, ve\);/.test(body), '4: the callback redraws both panels with the reported window');
+    ok(/_chartDrawStochPanel\(stochId, stoch, vs, ve\);/.test(body) && /var stoch = calcSlowStoch\(candles\);/.test(body), '4: ... and the Slow Stochastic panel, computed once per draw');
     ok(/if \(!panelsDrawn\) drawPanels\(candles\.length - viewLen, candles\.length\);/.test(body), '4: fallback draws the default window when the chart did not report one');
     ok(!/_mcxDrawRsi\(/.test(body), '4: the trailing-only shared RSI drawer is no longer used by the Portfolio charts');
     ok(body.indexOf('var spyCandles = null;') < body.indexOf('_drawCandleChart(wrapId'), '4: SPY series is resolved before the chart is drawn (the callback needs it)');
@@ -1158,15 +1161,17 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
   section('16.7 RS / SFS charts: RS vs SPY and MACD linked by id follow the window');
   {
     const env = makeEnv(); load(env);
-    vm.runInContext(['emA', 'calcMACD', '_schartDrawMacdPanel', '_chartSubpanelLink', '_chartEnsureMacdEl', '_chartSyncLinkedSubpanels']
+    vm.runInContext(['emA', 'calcMACD', '_apexChartBg', '_schartDrawMacdPanel', 'calcSlowStoch', '_chartDrawStochPanel', '_chartSubpanelLink', '_chartEnsureMacdEl', '_chartEnsureStochEl', '_chartSyncLinkedSubpanels']
       .map((n) => extractFn(HTML, n)).join('\n') + '\n' + (HTML.match(/^var _CHART_SUBPANEL_LINKS = \[[\s\S]*?\n\];/m) || [''])[0], env.sandbox);
     const L = env.sandbox._chartSubpanelLink;
-    ok(JSON.stringify(L('rs-big-wrap-1d', 0)) === JSON.stringify({ wrapId: 'rs-big-wrap-1d', rsId: 'rs-rs-1d', macdId: 'rs-macd-1d' }), '7: RS chart wrap -> rs-rs-* / rs-macd-*');
-    ok(JSON.stringify(L('sfs-rs-4h', 1)) === JSON.stringify({ wrapId: 'sfs-big-wrap-4h', rsId: 'sfs-rs-4h', macdId: 'sfs-macd-4h' }), '7: SFS RS id -> its chart and MACD');
+    ok(JSON.stringify(L('rs-big-wrap-1d', 0)) === JSON.stringify({ wrapId: 'rs-big-wrap-1d', rsId: 'rs-rs-1d', macdId: 'rs-macd-1d', stochId: 'rs-stoch-1d' }), '7: RS chart wrap -> rs-rs-* / rs-macd-* / rs-stoch-*');
+    ok(JSON.stringify(L('sfs-rs-4h', 1)) === JSON.stringify({ wrapId: 'sfs-big-wrap-4h', rsId: 'sfs-rs-4h', macdId: 'sfs-macd-4h', stochId: 'sfs-stoch-4h' }), '7: SFS RS id -> its chart, MACD and Stochastic');
     ok(L('schart-big-wrap-1d', 0) === null && L('rs-1', 1) === null && L('pf-1d-wrap-1', 0) === null && L(null, 0) === null,
       '7: scanner inline (own wiring), test / portfolio ids and null are not linked');
     const MARKUP7 = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
     ok(/id="rs-macd-1d"/.test(MARKUP7) && /id="rs-macd-4h"/.test(MARKUP7), '7: the RS chart markup has both MACD containers');
+    ok(/id="rs-stoch-1d"/.test(MARKUP7) && /id="rs-stoch-4h"/.test(MARKUP7) && /id="schart-stoch-1d"/.test(MARKUP7) && /id="schart-stoch-4h"/.test(MARKUP7),
+      '7: the RS chart and scanner inline markup have both Stochastic containers');
 
     const { candles, ind } = series(120);
     const spy = candles.map((c, i) => ({ time: c.time, close: 400 + i * 0.2 }));
@@ -1175,6 +1180,8 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
       pRet = (spy[ci].close - spy[ci - 20].close) / spy[ci - 20].close; return (sRet - pRet) * 100; };
     const rsLbl = (ci) => 'RS vs SPY: ' + (rsAt(ci) >= 0 ? '+' : '') + rsAt(ci).toFixed(1) + '%';
     const macdLbl = (i) => 'MACD(12,26,9): ' + (macd.ml[i] >= 0 ? '+' : '') + macd.ml[i].toFixed(2);
+    const stoch = env.sandbox.calcSlowStoch(candles);
+    const stochLbl = (i) => 'STOCH(14,3,3): %K ' + stoch.k[i].toFixed(1);
     const labels = (from, re) => env.log.slice(from).filter((c) => c[0] === 'fillText' && re.test(c[1][0])).map((c) => c[1][0]);
 
     for (const [wrapId, rsId] of [['rs-big-wrap-1d', 'rs-rs-1d'], ['sfs-big-wrap-4h', 'sfs-rs-4h']]) {
@@ -1183,6 +1190,7 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
       env.sandbox._drawCandleChart(wrapId, candles, ind, { source: 'X' });
       ok(labels(from, /^RS vs SPY/).length === 0, '7 ' + wrapId + ': first chart draw leaves RS to the caller (no series yet)');
       ok(labels(from, /^MACD/)[0] === macdLbl(119), '7 ' + wrapId + ': MACD drawn on the default window (last bar)');
+      ok(labels(from, /^STOCH/)[0] === stochLbl(119), '7 ' + wrapId + ': Slow Stochastic drawn on the default window (last bar)');
       from = env.log.length;
       env.sandbox._pfDrawRsPanel(rsId, candles, spy, 75);
       const rsSegs = segments(env.log, from).filter((sg) => !(sg[1] === sg[3] && sg[0] === 10));
@@ -1197,6 +1205,8 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
       env.sandbox._chartRedraw(wrap);
       ok(labels(from, /^RS vs SPY/)[0] === rsLbl(89), '7 ' + rsId + ': after pan / zoom RS ends at the new right edge (index 89)');
       ok(labels(from, /^MACD/)[0] === macdLbl(89), '7 ' + wrapId + ': after pan / zoom MACD ends at index 89');
+      ok(labels(from, /^STOCH/)[0] === stochLbl(89) && labels(from, /^%D /)[0] === '%D ' + stoch.d[89].toFixed(1),
+        '7 ' + wrapId + ': after pan / zoom the Stochastic %K / %D end at index 89');
       // a series for other candles is never drawn on this chart
       env.sandbox.document.getElementById(rsId).__rsLinked = { candles: candles.slice(), spy };
       from = env.log.length;
@@ -1216,16 +1226,27 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     vm.createContext(ctx);
     vm.runInContext(extractFn(HTML, '_chartEnsureMacdEl'), ctx);
     const el = ctx._chartEnsureMacdEl('sfs-rs-1d', 'sfs-macd-1d');
-    ok(el && el.id === 'sfs-macd-1d' && JSON.stringify(made) === JSON.stringify([['sfs-macd-1d', 'width:100%;height:56px;margin-top:4px', 'NEXT']]),
+    ok(el && el.id === 'sfs-macd-1d' && JSON.stringify(made) === JSON.stringify([['sfs-macd-1d', 'width:100%;height:84px;margin-top:4px', 'NEXT']]),
       '7: a missing SFS MACD container is inserted right after the SFS RS panel');
     ok(ctx._chartEnsureMacdEl('sfs-rs-9x', 'sfs-macd-9x') === null, '7: no RS panel -> no MACD container');
+  }
+  {
+    const made = [];
+    const macdEl = { id: 'sfs-macd-1d', nextSibling: 'NEXT', parentNode: { insertBefore: (el, ref) => made.push([el.id, el.style.cssText, ref]) } };
+    const ctx = { document: { getElementById: (id) => (id === 'sfs-macd-1d' ? macdEl : null), createElement: () => ({ style: {} }) } };
+    vm.createContext(ctx);
+    vm.runInContext(extractFn(HTML, '_chartEnsureStochEl'), ctx);
+    const el = ctx._chartEnsureStochEl('sfs-macd-1d', 'sfs-stoch-1d');
+    ok(el && el.id === 'sfs-stoch-1d' && JSON.stringify(made) === JSON.stringify([['sfs-stoch-1d', 'width:100%;height:84px;margin-top:4px', 'NEXT']]),
+      '7: a missing SFS Stochastic container is inserted right after the SFS MACD panel');
+    ok(ctx._chartEnsureStochEl('sfs-macd-9x', 'sfs-stoch-9x') === null, '7: no MACD panel -> no Stochastic container');
   }
 
   // ── 6. scanner inline chart: RS vs SPY and MACD follow the window ─────────────
   section('16.6 scanner inline chart: RS vs SPY and MACD panels follow the window');
   {
     const env = makeEnv(); load(env);
-    vm.runInContext(['emA', 'calcMACD', '_schartPanelView', '_schartDrawSubPanels', '_schartDrawMacdPanel']
+    vm.runInContext(['emA', 'calcMACD', '_apexChartBg', '_schartPanelView', '_schartDrawSubPanels', '_schartDrawMacdPanel', 'calcSlowStoch', '_chartDrawStochPanel']
       .map((n) => extractFn(HTML, n)).join('\n') + "\nvar _schartPanelState = { '1d': null, '4h': null };", env.sandbox);
     const { candles, ind } = series(120);
     const spy = candles.map((c, i) => ({ time: c.time, close: 400 + i * 0.2 }));
@@ -1242,7 +1263,8 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     env.sandbox._schartDrawMacdPanel = function (id, m, vs, ve) { macdCalls.push([id, vs, ve]); return realMacd.apply(null, arguments); };
 
     // what _schartDrawTf does: state with unresolved SPY, chart with onView, then SPY resolved + panels
-    env.sandbox._schartPanelState['1d'] = { candles, spy: undefined, macd };
+    const stoch6 = env.sandbox.calcSlowStoch(candles);
+    env.sandbox._schartPanelState['1d'] = { candles, spy: undefined, macd, stoch: stoch6 };
     env.sandbox._drawCandleChart('schart-big-wrap-1d', candles, ind,
       { source: 'X', onView: (vs, ve) => env.sandbox._schartDrawSubPanels('1d', candles, vs, ve) });
     ok(rsCalls.length === 0 && macdCalls.length === 0, '6: the first onView (SPY not resolved yet) draws no sub-panel');
@@ -1264,6 +1286,7 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     ok(JSON.stringify(rsCalls.pop()) === JSON.stringify(['schart-rs-1d', 60, 90]) && JSON.stringify(macdCalls.pop()) === JSON.stringify(['schart-macd-1d', 30, 90]),
       '6: after a pan / zoom RS and MACD draw the new window [30,90)');
     ok(labels(from, /^RS vs SPY/)[0] === rsLbl(89), '6: RS label follows the window (RS at index 89)');
+    ok(labels(from, /^STOCH\(14,3,3\)/)[0] === 'STOCH(14,3,3): %K ' + stoch6.k[89].toFixed(1), '6: the Stochastic follows the window (%K at index 89)');
     ok(labels(from, /^sig /)[0] === 'sig ' + fmt(macd.sf[89]) && labels(from, /^hist /)[0] === 'hist ' + fmt(macd.hist[89]),
       '6: MACD signal / histogram labels follow the window (index 89)');
     ok(env.sandbox._schartPanelView('1d', candles).ve === 90, '6: a later SPY arrival (no window given) reuses the window the chart shows');
@@ -1291,6 +1314,109 @@ const dataSegs = (segs) => segs.filter((s) => !(s[1] === s[3] && s[0] === 10));
     const bars2 = env.log.slice(from).filter((c) => c[0] === 'fillRect').length - 1;
     const exp2 = macd.hist.slice(0, 60).filter((v) => v != null).length;
     ok(exp2 > 0 && exp2 < 60 && bars2 === exp2, '6: bars where the histogram has no value yet are skipped (' + bars2 + ' of 60)');
+  }
+
+  // ── 8. Slow Stochastic: values and panel ─────────────────────────────────────
+  section('16.8 Slow Stochastic(14,3,3): values and panel');
+  {
+    const env = makeEnv(); load(env);
+    vm.runInContext(['_apexChartBg', 'calcSlowStoch', '_chartDrawStochPanel'].map((n) => extractFn(HTML, n)).join('\n'), env.sandbox);
+    const S = env.sandbox.calcSlowStoch;
+    // Hand-computed with (n, kSmooth, dSmooth) = (3, 2, 2):
+    //   fast %K: [-, -, 75, 0, 33.33, 33.33]; slow %K: [-, -, -, 37.5, 16.67, 33.33]; %D: [-, -, -, -, 27.08, 25]
+    const bars = [[10, 8, 9], [11, 9, 10], [12, 10, 11], [12, 9, 9], [10, 9, 10], [10, 10, 10]]
+      .map(([high, low, close]) => ({ high, low, close }));
+    const r = S(bars, 3, 2, 2);
+    const same = (a, b) => a.length === b.length && a.every((v, i) => (v === null ? b[i] === null : b[i] !== null && near(v, b[i], 1e-9)));
+    ok(same(r.k, [null, null, null, 37.5, 50 / 3, 100 / 3]), '8: slow %K = SMA of fast %K (close - lowest low) / (highest high - lowest low)');
+    ok(same(r.d, [null, null, null, null, (37.5 + 50 / 3) / 2, (50 / 3 + 100 / 3) / 2]), '8: %D = SMA of slow %K');
+    // n = 1: fast %K exists from bar 0, so a p-bar SMA must exist from bar p - 1 (not bar p).
+    ok(same(S(bars, 1, 2, 1).k.slice(0, 2), [null, 50]), '8: the first smoothed value sits at bar p - 1 once its window is complete');
+    const flat = S([1, 2, 3, 4, 5].map(() => ({ high: 5, low: 5, close: 5 })), 3, 1, 1);
+    ok(flat.k.every((v) => v === null), '8: a flat range (high == low) yields no value, not an invented 0 / 50');
+    const gap = S(bars.map((b, i) => (i === 1 ? { high: NaN, low: 9, close: 10 } : b)), 3, 1, 1);
+    ok(gap.k[2] === null && gap.k[3] === null && near(gap.k[4], 100 / 3, 1e-9), '8: a non-finite bar voids only the windows that contain it');
+    const { candles } = series(120);
+    const d = S(candles);
+    ok(d.n === 14 && d.kSmooth === 3 && d.dSmooth === 3, '8: the default is (14,3,3)');
+    ok(d.k.findIndex((v) => v != null) === 15 && d.d.findIndex((v) => v != null) === 17, '8: first %K at bar 15, first %D at bar 17');
+    ok(d.k.every((v) => v == null || (v >= 0 && v <= 100)), '8: %K stays within 0..100');
+
+    // panel
+    let from = env.log.length;
+    env.sandbox._chartDrawStochPanel('schart-stoch-1d', d, 45, 120);
+    const texts = env.log.slice(from).filter((c) => c[0] === 'fillText').map((c) => String(c[1][0]));
+    ok(texts.includes('80') && texts.includes('20'), '8: the 80 / 20 bands are labelled');
+    ok(texts.includes('STOCH(14,3,3): %K ' + d.k[119].toFixed(1)) && texts.includes('%D ' + d.d[119].toFixed(1)), '8: the label shows %K and %D at the right edge');
+    from = env.log.length;
+    env.sandbox._chartDrawStochPanel('schart-stoch-1d', d, 0, 10);
+    ok(env.log.length === from, '8: a window with no %K yet draws no canvas, only the text state');
+    env.sandbox._chartDrawStochPanel('schart-stoch-1d', d, 50, 50);
+    env.sandbox._chartDrawStochPanel('schart-stoch-1d', null, 0, 10);
+    ok(env.log.length === from, '8: empty window / missing series draw nothing');
+  }
+
+  // ── 9. RSI settings (period / overbought / oversold, stored) and the 50 midline ──
+  section('16.9 RSI panel: user settings, stored, and the dashed 50 line');
+  {
+    const env = makeEnv(); load(env);
+    const store = {};
+    env.sandbox.localStorage = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: (k) => { delete store[k]; } };
+    const redrawn = [];
+    env.sandbox._chartRedraw = (w) => redrawn.push(w.id);
+    vm.runInContext(['_rsiSaveParams', '_rsiResetParams', '_rsiRedrawAll'].map((n) => extractFn(HTML, n)).join('\n'), env.sandbox);
+    const IND = fs.readFileSync(path.join(__dirname, '..', 'js/utils/indicators.js'), 'utf8');
+    vm.runInContext(extractFn(IND, 'calcRSIWilder'), env.sandbox);
+    const sb = env.sandbox;
+    const { candles } = series(120);
+    const closes = candles.map((c) => c.close);
+
+    ok(JSON.stringify(sb._calcRSIWilderN(closes, 14)) === JSON.stringify(sb.calcRSIWilder(closes)), '9: the N-period Wilder RSI at 14 equals calcRSIWilder exactly');
+    const r7 = sb._calcRSIWilderN(closes, 7);
+    ok(r7.findIndex((v) => v != null) === 7 && JSON.stringify(r7) !== JSON.stringify(sb.calcRSIWilder(closes)), '9: period 7 starts at bar 7 and differs from 14');
+    ok(sb._calcRSIWilderN([1, 2, 3], 5).every((v) => v === null), '9: too few closes -> all null');
+
+    const V = sb._rsiValidParams;
+    ok(JSON.stringify(V({ period: 14, upper: 60, lower: 40 })) === JSON.stringify({ period: 14, upper: 60, lower: 40 }), '9: a valid set is accepted');
+    ok([{ period: 1, upper: 60, lower: 40 }, { period: 101, upper: 60, lower: 40 }, { period: 14.5, upper: 60, lower: 40 },
+      { period: 14, upper: 40, lower: 40 }, { period: 14, upper: 100, lower: 40 }, { period: 14, upper: 60, lower: 0 },
+      { period: 14, upper: NaN, lower: 40 }, null, 'x'].every((p) => V(p) === null), '9: out-of-range, fractional, inverted or missing values are refused');
+
+    ok(JSON.stringify(sb._rsiGetParams()) === JSON.stringify({ period: 14, upper: 60, lower: 40 }), '9: nothing stored -> defaults 14 / 60 / 40');
+    store.apex_rsi_params = '{bad json';
+    ok(sb._rsiGetParams().period === 14, '9: unreadable stored value -> defaults');
+    store.apex_rsi_params = JSON.stringify({ period: 9, upper: 30, lower: 70 });
+    ok(sb._rsiGetParams().period === 14, '9: an invalid stored set is ignored whole, not partially applied');
+
+    const wrapA = sb.document.getElementById('pf-1d-wrap-1'); wrapA.__chart = {};
+    sb.document.querySelectorAll = () => [wrapA, sb.document.getElementById('pf-1d-rsi-1')];
+    ok(sb._rsiSaveParams({ period: 7, upper: 70, lower: 30 }) === true && JSON.parse(store.apex_rsi_params).period === 7, '9: a valid set is saved');
+    ok(JSON.stringify(redrawn) === JSON.stringify(['pf-1d-wrap-1']), '9: saving redraws every drawn chart (and only those)');
+    ok(sb._rsiSaveParams({ period: 7, upper: 30, lower: 70 }) === false && JSON.parse(store.apex_rsi_params).upper === 70, '9: an invalid set is refused and the stored one kept');
+
+    const texts = (from) => env.log.slice(from).filter((c) => c[0] === 'fillText').map((c) => String(c[1][0]));
+    let from = env.log.length;
+    sb._pfDrawRsiPanel('pf-1d-rsi-1', sb.calcRSIWilder(closes), 45, 120, candles);
+    let t = texts(from);
+    ok(t.includes('RSI(7): ' + r7[119].toFixed(1)), '9: with candles the panel draws the stored period (RSI(7) at the last bar)');
+    ok(t.includes('70') && t.includes('30') && t.includes('50') && !t.includes('60') && !t.includes('40'), '9: the reference lines are the stored levels plus 50');
+    // the 50 line: a dashed horizontal segment at y(50)
+    const y50 = 14 + 0.5 * (H - 14 - 4);
+    const L = env.log.slice(from);
+    const at = L.findIndex((c) => c[0] === 'moveTo' && c[1][0] === 10 && Math.abs(c[1][1] - y50) < 1e-9);
+    let dash = null; for (let k = at; k >= 0; k--) { if (L[k][0] === 'setLineDash') { dash = L[k][1][0]; break; } }
+    ok(at >= 0 && JSON.stringify(dash) === '[3,3]', '9: the 50 line is drawn dashed across the plot');
+    store.apex_rsi_params = JSON.stringify({ period: 9, upper: 70, lower: 30 });
+    from = env.log.length;
+    sb._pfDrawRsiPanel('pf-1d-rsi-1', sb.calcRSIWilder(closes), 45, 120, candles);
+    ok(texts(from).includes('RSI(9): ' + sb._calcRSIWilderN(closes, 9)[119].toFixed(1)), '9: a new period on the same candles is recomputed, not served from the cache');
+    const btn = sb.document.getElementById('pf-1d-rsi-1').children.slice(-1)[0];
+    ok(btn && btn.textContent === '\u2699' && btn.title === 'Parametri RSI', '9: the panel carries its settings button');
+    from = env.log.length;
+    sb._pfDrawRsiPanel('pf-1d-rsi-1', sb.calcRSIWilder(closes), 45, 120);
+    ok(texts(from).includes('RSI(14): ' + sb.calcRSIWilder(closes)[119].toFixed(1)), '9: without candles the given 14-period series is labelled RSI(14)');
+    sb._rsiResetParams();
+    ok(!('apex_rsi_params' in store) && sb._rsiGetParams().period === 14, '9: reset clears the stored set');
   }
 })();
 
@@ -1356,7 +1482,7 @@ section('17. SPY benchmark: fetched once per TTL, shared by the RS panel and the
   sandbox.computeCandleIndicators = () => ({ lastSma8: 1, lastRsi: 55, rsi: new Array(40).fill(55), lastSqueeze: false, squeeze: new Array(40).fill(false) });
   sandbox.getCandleDataSource = () => 'X';
   sandbox._drawCandleChart = () => {};
-  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
+  sandbox._mcxDrawRsi = () => {}; sandbox._pfDrawRsiPanel = () => {}; sandbox.calcSlowStoch = () => null; sandbox._chartDrawStochPanel = () => {}; sandbox._pfDrawRsPanel = () => {}; sandbox._pfUpdateAlignment = () => {};
   sandbox.prepareHiDPICanvas = () => ({ ctx: {}, width: 320, height: 180 });
 
   setSpy(null); sandbox._pfSpyLastAttemptAt = 0;
